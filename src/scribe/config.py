@@ -22,8 +22,11 @@ class Settings(BaseSettings):
     # "minimal" is rejected by the API (codex default tools need >= low).
     codex_reasoning: str = "low"
 
-    # go.oklabs.uk shortener
+    # go.oklabs.uk shortener (Chhoto on Edgebox). api_url/api_key are env-driven
+    # (never hardcode credentials); shortlink_base is the public resolver host.
     shortlink_base: str = "http://go.oklabs.uk"
+    shortlink_api_url: str = ""
+    shortlink_api_key: str = ""
 
     # public URL of this service (for shortlink targets / web-UI links)
     public_base_url: str = "http://localhost:8000"
