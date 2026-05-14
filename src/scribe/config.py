@@ -16,7 +16,11 @@ class Settings(BaseSettings):
 
     # Summary backend — codex CLI (MVP)
     codex_bin: str = "codex"
-    codex_model: str = "gpt-5.4-nano"
+    # empty = use the codex config.toml model (gpt-5.x family). gpt-5.4-nano/mini
+    # are NOT available via a ChatGPT-account codex.
+    codex_model: str = ""
+    # "minimal" is rejected by the API (codex default tools need >= low).
+    codex_reasoning: str = "low"
 
     # go.oklabs.uk shortener
     shortlink_base: str = "http://go.oklabs.uk"
