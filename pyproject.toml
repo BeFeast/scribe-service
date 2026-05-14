@@ -14,6 +14,7 @@ dependencies = [
     "httpx>=0.28",
     "python-multipart>=0.0.20",
     "yt-dlp>=2026.3.17",
+    "markdown>=3.10.2",
 ]
 
 [build-system]

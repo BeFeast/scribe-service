@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ t.title }} — scribe{% endblock %}
+{% block subtitle %}transcript #{{ t.id }}{% endblock %}
+{% block content %}
+<h1 style="margin-bottom:.2rem">{{ t.title }}</h1>
+<div class="meta">
+  <span>{{ t.lang or "?" }}</span>
+  {% if t.duration_seconds %}· <span>{{ "%d:%02d"|format(t.duration_seconds // 60, t.duration_seconds % 60) }}</span>{% endif %}
+  · <span>{{ t.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
+</div>
+<div class="meta">
+  <a href="https://youtu.be/{{ t.video_id }}">youtube ↗</a>
+  <a href="/transcripts/{{ t.id }}/summary.md">summary.md</a>
+  <a href="/transcripts/{{ t.id }}/transcript.md">transcript.md</a>
+  {% if t.summary_shortlink %}<a href="{{ t.summary_shortlink }}">{{ t.summary_shortlink }}</a>{% endif %}
+</div>
+{% if t.tags %}<div class="tags" style="margin-bottom:1rem">{% for tag in t.tags %}<span class="tag">{{ tag }}</span>{% endfor %}</div>{% endif %}
+
+<section>
+  <h2>Summary</h2>
+  <div class="body">{{ summary_html|safe }}</div>
+</section>
+
+<section>
+  <h2>Transcript</h2>
+  <div class="body">{{ transcript_html|safe }}</div>
+</section>
+{% endblock %}

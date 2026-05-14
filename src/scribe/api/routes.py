@@ -1,4 +1,9 @@
-"""HTTP API — submit jobs, poll status, browse transcripts."""
+"""HTTP API — submit jobs, poll status, browse transcripts.
+
+Note: GET /transcripts/{id} is served as HTML by web/views.py (the worker
+mints the summary shortlink against that path). The JSON API here keeps the
+job endpoints, the transcript list, and the raw .md endpoints.
+"""
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -7,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from scribe.api.schemas import JobCreate, JobView, TranscriptBrief, TranscriptFull
+from scribe.api.schemas import JobCreate, JobView, TranscriptBrief
 from scribe.db.models import Job, JobStatus, Transcript
 from scribe.db.session import SessionLocal
 from scribe.pipeline.downloader import DownloadError, extract_video_id
@@ -97,15 +102,6 @@ def _require_transcript(transcript_id: int, session: Session) -> Transcript:
     if t is None:
         raise HTTPException(status_code=404, detail=f"transcript {transcript_id} not found")
     return t
-
-
-@router.get("/transcripts/{transcript_id}", response_model=TranscriptFull)
-def get_transcript(transcript_id: int, session: Session = Depends(get_session)) -> TranscriptFull:
-    t = _require_transcript(transcript_id, session)
-    return TranscriptFull(
-        **_brief(t).model_dump(), job_id=t.job_id,
-        transcript_md=t.transcript_md, summary_md=t.summary_md,
-    )
 
 
 @router.get("/transcripts/{transcript_id}/transcript.md")
