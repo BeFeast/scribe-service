@@ -1,0 +1,13 @@
+# scribe — deploy on DevBox /opt/stacks/scribe/. TODO(task#12): finalize.
+services:
+  scribe:
+    build: .
+    image: scribe:local
+    ports:
+      - "13120:8000"   # TODO(task#12): confirm port
+    env_file: .env
+    volumes:
+      - ./data/codex-auth:/root/.codex          # codex auth JSON (transferred)
+      - /mnt/nfs/scribe-tmp:/data/tmp           # TODO(task#12): NFS mount of TrueNAS
+    restart: unless-stopped
+    # network: reach db-dev Postgres — TODO(task#12)
