@@ -47,7 +47,7 @@ def index(request: Request, session: Session = Depends(get_session)) -> HTMLResp
         select(Transcript).order_by(Transcript.id.desc()).limit(200)
     ).all()
     return _TEMPLATES.TemplateResponse(
-        "list.html", {"request": request, "transcripts": rows}
+        request, "list.html", {"transcripts": rows}
     )
 
 
@@ -61,9 +61,9 @@ def detail(
     if t is None:
         raise HTTPException(status_code=404, detail=f"transcript {transcript_id} not found")
     return _TEMPLATES.TemplateResponse(
+        request,
         "detail.html",
         {
-            "request": request,
             "t": t,
             "summary_html": _render_md(t.summary_md),
             "transcript_html": _render_md(t.transcript_md),
