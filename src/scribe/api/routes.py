@@ -12,7 +12,7 @@ import datetime as dt
 from collections.abc import Iterator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from scribe.api.schemas import JobCreate, JobView, TranscriptBrief
@@ -24,6 +24,10 @@ from scribe.pipeline import shortlinks, summarizer
 from scribe.pipeline.downloader import DownloadError, extract_video_id
 
 router = APIRouter()
+
+# Postgres advisory-lock key used to serialise the daily-spend-cap check.
+# Arbitrary 8-byte int derived from the literal so it's stable across deploys.
+_CAP_LOCK_KEY = 0x5C8B_E5F3_A402_C0A8
 
 _ACTIVE = (
     JobStatus.queued,
@@ -69,15 +73,19 @@ def _latest_transcript_for_video(session: Session, video_id: str) -> Transcript 
     )
 
 
-def _recent_vast_spend_usd(session: Session, hours: int = 24) -> float:
-    """Sum of transcripts.vast_cost over the rolling window. Skips NULL
+def _vast_spend_usd_since(session: Session, since: dt.datetime) -> float:
+    """Sum of transcripts.vast_cost since the given timestamp. Skips NULL
     (warm-pool / mock runs that did not pay Vast)."""
-    since = dt.datetime.now(dt.UTC) - dt.timedelta(hours=hours)
     total = session.scalar(
         select(func.coalesce(func.sum(Transcript.vast_cost), 0.0))
         .where(Transcript.created_at >= since, Transcript.vast_cost.is_not(None))
     )
     return float(total or 0.0)
+
+
+def _recent_vast_spend_usd(session: Session, hours: int = 24) -> float:
+    """Convenience wrapper — rolling N-hour spend."""
+    return _vast_spend_usd_since(session, dt.datetime.now(dt.UTC) - dt.timedelta(hours=hours))
 
 
 @router.post("/jobs", response_model=JobView, status_code=201)
@@ -104,9 +112,22 @@ def create_job(body: JobCreate, session: Session = Depends(get_session)) -> JobV
         return JobView(job_id=active.id, url=active.url, video_id=video_id,
                        status=active.status.value, deduplicated=True)
 
-    # Only fresh submissions trigger the rolling spend cap. cap<=0 disables.
+    # Resume-path bypass: a partial transcript exists for this video_id
+    # (whisper done, summary pending). The worker will skip download+whisper,
+    # so the cap doesn't apply — and *blocking* this submission would make
+    # the job permanently unrecoverable until enough spend rolls off.
+    partial_exists = session.scalar(
+        select(Transcript.id)
+        .where(Transcript.video_id == video_id, Transcript.summary_md.is_(None))
+        .limit(1)
+    ) is not None
+
+    # Only fresh, non-resume submissions trigger the rolling spend cap.
     cap = settings.daily_spend_cap_usd
-    if cap > 0:
+    if cap > 0 and not partial_exists:
+        # Serialise the check+insert so two concurrent POSTs can't both pass.
+        # Transaction-scoped advisory lock — cheap; auto-released at commit.
+        session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _CAP_LOCK_KEY})
         spent = _recent_vast_spend_usd(session)
         if spent >= cap:
             raise HTTPException(
@@ -276,10 +297,9 @@ def daily_report(session: Session = Depends(get_session), days: int = Query(1, g
         select(func.count()).select_from(Job).where(Job.status.in_(_ACTIVE))
     ) or 0
 
-    vast_spend = session.scalar(
-        select(func.coalesce(func.sum(Transcript.vast_cost), 0.0))
-        .where(Transcript.created_at >= since, Transcript.vast_cost.is_not(None))
-    ) or 0.0
+    vast_spend_window = _vast_spend_usd_since(session, since)
+    rolling_24h_since = dt.datetime.now(dt.UTC) - dt.timedelta(hours=24)
+    vast_spend_24h = _vast_spend_usd_since(session, rolling_24h_since)
 
     return {
         "window_days": days,
@@ -288,7 +308,7 @@ def daily_report(session: Session = Depends(get_session), days: int = Query(1, g
         "transcripts_done": int(transcripts_done),
         "transcripts_partial": int(transcripts_partial),
         "current_queue_depth": int(queue_depth),
-        "vast_spend_usd_window": round(float(vast_spend), 4),
-        "vast_spend_usd_rolling_24h": round(_recent_vast_spend_usd(session), 4),
+        "vast_spend_usd_window": round(vast_spend_window, 4),
+        "vast_spend_usd_rolling_24h": round(vast_spend_24h, 4),
         "daily_spend_cap_usd": settings.daily_spend_cap_usd,
     }

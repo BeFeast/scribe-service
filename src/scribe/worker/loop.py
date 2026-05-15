@@ -160,7 +160,7 @@ def process_job(session, job: Job) -> None:
                 tags=None,
                 duration_seconds=int(duration) if duration else None,
                 lang=tr.detected_language,
-                vast_cost=tr.vast_cost or None,
+                vast_cost=tr.vast_cost if tr.vast_cost is not None else None,
             )
             session.add(transcript)
             session.commit()
