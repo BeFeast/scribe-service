@@ -1,0 +1,2 @@
+# scribe-backups — nightly at 03:00 (container TZ).
+0 3 * * * . /etc/environment; /usr/local/bin/scribe-backup >> /backups/_cron.log 2>&1
