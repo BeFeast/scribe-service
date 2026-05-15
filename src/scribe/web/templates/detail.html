@@ -36,6 +36,7 @@
   <h2>Summary
     <form class="regenerate" method="post" action="/transcripts/{{ t.id }}/resummarize"
           style="float:right">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit">Regenerate</button>
     </form>
   </h2>
@@ -78,6 +79,8 @@
         const resp = await fetch(form.action, {
           method: "POST",
           headers: { "Accept": "application/json" },
+          body: new FormData(form),
+          credentials: "same-origin",
         });
         if (!resp.ok) {
           let detail = "Regenerate failed (HTTP " + resp.status + ")";
@@ -91,10 +94,19 @@
         const page = await fetch(window.location.pathname, {
           headers: { "Accept": "text/html" },
           cache: "no-store",
+          credentials: "same-origin",
         });
+        if (!page.ok) {
+          setFlash("error", "Summary regenerated, but refresh failed (HTTP " + page.status + ").");
+          return;
+        }
         const doc = new DOMParser().parseFromString(await page.text(), "text/html");
         const fresh = doc.getElementById("summary-body");
-        if (fresh) body.innerHTML = fresh.innerHTML;
+        if (!fresh) {
+          setFlash("error", "Summary regenerated, but refresh failed.");
+          return;
+        }
+        body.innerHTML = fresh.innerHTML;
         setFlash("success", "Summary regenerated.");
       } catch (err) {
         setFlash("error", "Regenerate failed: " + err.message);

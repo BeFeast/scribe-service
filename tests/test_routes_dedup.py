@@ -5,6 +5,7 @@ uses ARRAY[Text] which SQLite cannot represent). Skipped by default; CI
 provides a postgres service container."""
 from __future__ import annotations
 
+import re
 from urllib.parse import unquote
 
 import pytest
@@ -130,8 +131,13 @@ def test_resummarize_html_redirects_with_flash_cookie(client, db_session, monkey
     'redirect + flash message'."""
     _stub_summarizer(monkeypatch, summary_md="fresh summary", tags=["topic-a"])
     _, transcript = _seed_partial_transcript(db_session, video_id="resumhtmll12")
+    detail = client.get(f"/transcripts/{transcript.id}")
+    assert detail.status_code == 200
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', detail.text)
+    assert csrf is not None
     resp = client.post(
         f"/transcripts/{transcript.id}/resummarize",
+        data={"csrf_token": csrf.group(1)},
         headers={"Accept": "text/html"},
         follow_redirects=False,
     )
@@ -146,6 +152,17 @@ def test_resummarize_html_redirects_with_flash_cookie(client, db_session, monkey
     db_session.refresh(transcript)
     assert transcript.summary_md == "fresh summary"
     assert transcript.tags == ["topic-a"]
+
+
+def test_resummarize_html_rejects_missing_csrf(client, db_session, monkeypatch):
+    _stub_summarizer(monkeypatch)
+    _, transcript = _seed_partial_transcript(db_session, video_id="resumcsrf12")
+    resp = client.post(
+        f"/transcripts/{transcript.id}/resummarize",
+        headers={"Accept": "text/html"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 403
 
 
 def test_resummarize_json_still_returns_brief(client, db_session, monkeypatch):
@@ -174,8 +191,20 @@ def test_detail_page_renders_regenerate_button_and_flash(client, db_session):
     assert resp.status_code == 200
     html = resp.text
     assert f'action="/transcripts/{transcript.id}/resummarize"' in html
+    assert 'name="csrf_token"' in html
     assert "Regenerate" in html
     assert "Summary regenerated." in html
     # The detail view consumes the cookie on render so the flash is one-shot.
     set_cookie = resp.headers.get("set-cookie", "")
     assert routes_module.FLASH_COOKIE in set_cookie
+    assert routes_module.CSRF_COOKIE in set_cookie
+
+
+def test_detail_flash_tampered_level_falls_back_to_info(client, db_session):
+    _, transcript = _seed_done_transcript(db_session, video_id="flashlevel12")
+    client.cookies.set(routes_module.FLASH_COOKIE, "surprise|Careful%20now.")
+    resp = client.get(f"/transcripts/{transcript.id}")
+    client.cookies.clear()
+    assert resp.status_code == 200
+    assert 'class="flash info"' in resp.text
+    assert "Careful now." in resp.text

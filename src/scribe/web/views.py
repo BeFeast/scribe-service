@@ -14,6 +14,7 @@ import datetime as dt
 import email.utils
 import html
 import re
+import secrets
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -24,12 +25,13 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from scribe.api.routes import FLASH_COOKIE, get_session
+from scribe.api.routes import CSRF_COOKIE, FLASH_COOKIE, get_session
 from scribe.config import settings
 from scribe.db.models import Transcript
 
 router = APIRouter(tags=["web"])
 _TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+_FLASH_LEVELS = frozenset({"success", "error", "info"})
 
 # Hard cap on the rows the home page renders. Keeps the page fast even after
 # years of accretion; older entries are still reachable by tag/search.
@@ -105,7 +107,10 @@ def _pop_flash(request: Request) -> tuple[str, str] | None:
         return None
     level, sep, encoded = raw.partition("|")
     if not sep:
-        return ("info", unquote(raw))
+        encoded = level
+        level = "info"
+    if level not in _FLASH_LEVELS:
+        level = "info"
     return (level or "info", unquote(encoded))
 
 
@@ -119,6 +124,7 @@ def detail(
     if t is None:
         raise HTTPException(status_code=404, detail=f"transcript {transcript_id} not found")
     flash = _pop_flash(request)
+    csrf_token = secrets.token_urlsafe(32)
     response = _TEMPLATES.TemplateResponse(
         request,
         "detail.html",
@@ -127,10 +133,18 @@ def detail(
             "summary_html": _render_md(t.summary_md or ""),
             "transcript_html": _render_md(t.transcript_md),
             "flash": flash,
+            "csrf_token": csrf_token,
         },
     )
     if flash is not None:
         response.delete_cookie(FLASH_COOKIE)
+    response.set_cookie(
+        CSRF_COOKIE,
+        csrf_token,
+        max_age=3600,
+        httponly=True,
+        samesite="strict",
+    )
     return response
 
 

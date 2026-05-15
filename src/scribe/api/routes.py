@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import secrets
 import time
 from collections.abc import Iterator
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -222,7 +223,9 @@ _RESUMMARIZE_LOCK_TIMEOUT_S = 120.0
 # contains a space or other token-illegal char (RFC 6265 §4.1.1), which would
 # otherwise leak raw quotes back to the client and the template.
 FLASH_COOKIE = "scribe_flash"
+CSRF_COOKIE = "scribe_csrf"
 _FLASH_MAX_AGE = 30
+_FLASH_LEVELS = frozenset({"success", "error", "info"})
 
 
 def _accepts_html(request: Request) -> bool:
@@ -233,6 +236,8 @@ def _accepts_html(request: Request) -> bool:
 
 
 def _flash_redirect(transcript_id: int, message: str, *, level: str = "success") -> RedirectResponse:
+    if level not in _FLASH_LEVELS:
+        level = "info"
     response = RedirectResponse(url=f"/transcripts/{transcript_id}", status_code=303)
     response.set_cookie(
         FLASH_COOKIE,
@@ -244,6 +249,12 @@ def _flash_redirect(transcript_id: int, message: str, *, level: str = "success")
     return response
 
 
+def _validate_csrf(request: Request, csrf_token: str | None) -> None:
+    cookie_token = request.cookies.get(CSRF_COOKIE)
+    if not cookie_token or not csrf_token or not secrets.compare_digest(cookie_token, csrf_token):
+        raise HTTPException(status_code=403, detail="invalid CSRF token")
+
+
 @router.post(
     "/transcripts/{transcript_id}/resummarize",
     response_model=TranscriptBrief,
@@ -252,6 +263,7 @@ def _flash_redirect(transcript_id: int, message: str, *, level: str = "success")
 async def resummarize(
     transcript_id: int,
     request: Request,
+    csrf_token: str | None = Form(None),
     session: Session = Depends(get_session),
 ):
     """Re-run the summarizer on an existing transcript (partial or done) and
@@ -265,6 +277,8 @@ async def resummarize(
     window (up to 600s) plus any lock-wait — the actual blocking work runs in
     `asyncio.to_thread`, and the codex lock acquisition is bounded by
     `_RESUMMARIZE_LOCK_TIMEOUT_S` (worker keeps the unbounded wait)."""
+    if _accepts_html(request) or csrf_token is not None:
+        _validate_csrf(request, csrf_token)
     t = _require_transcript(transcript_id, session)
     title = t.title
     transcript_md = t.transcript_md
