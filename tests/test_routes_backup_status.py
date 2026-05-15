@@ -67,6 +67,19 @@ def test_backup_status_unreadable_value_returns_stale(tmp_path, monkeypatch):
     assert "unreadable" in body["error"]
 
 
+def test_backup_status_out_of_range_value_returns_stale(tmp_path, monkeypatch):
+    """Numerically valid but out-of-range timestamps (e.g. ms-epoch) must not 500."""
+    path = tmp_path / "_last_success_ts"
+    path.write_text("99999999999999")  # year ~5138138; overflows datetime.fromtimestamp
+    with _client(monkeypatch, path=path) as client:
+        resp = client.get("/admin/backup-status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["last_success_ts"] is None
+    assert body["stale"] is True
+    assert "unreadable" in body["error"]
+
+
 def test_backup_status_threshold_zero_disables_staleness(tmp_path, monkeypatch):
     path = tmp_path / "_last_success_ts"
     # Ancient heartbeat — would normally be stale, but threshold=0 disables it.

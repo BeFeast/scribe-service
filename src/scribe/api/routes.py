@@ -308,22 +308,19 @@ def backup_status() -> dict:
     }
     try:
         ts = int(path.read_text().strip())
+        now = int(time.time())
+        age = max(0, now - ts)
+        threshold = settings.backup_stale_after_seconds
+        payload.update(
+            last_success_ts=ts,
+            last_success_iso=dt.datetime.fromtimestamp(ts, tz=dt.UTC).isoformat(timespec="seconds"),
+            age_seconds=age,
+            stale=bool(threshold) and age >= threshold,
+        )
     except FileNotFoundError:
         payload["error"] = "no backup recorded yet"
-        return payload
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, OverflowError) as exc:
         payload["error"] = f"unreadable heartbeat: {exc}"
-        return payload
-
-    now = int(time.time())
-    age = max(0, now - ts)
-    threshold = settings.backup_stale_after_seconds
-    payload.update(
-        last_success_ts=ts,
-        last_success_iso=dt.datetime.fromtimestamp(ts, tz=dt.UTC).isoformat(timespec="seconds"),
-        age_seconds=age,
-        stale=bool(threshold) and age >= threshold,
-    )
     return payload
 
 
