@@ -71,6 +71,25 @@ gunzip < /var/backups/scribe/db/scribe-<stamp>.sql.gz \
 │   │   ├── summary.md
 │   │   └── transcript.md
 │   └── ...
-├── _latest.log       single line: "<iso> ok db=<bytes> transcripts=<count>"
-└── _cron.log         appended on every cron run
+├── _latest.log         single line: "<iso> ok db=<bytes> transcripts=<count>"
+├── _last_success_ts    epoch seconds of the last successful run; consumed
+│                       by scribe's GET /admin/backup-status
+└── _cron.log           appended on every cron run
 ```
+
+## Healthcheck
+
+After each successful run `backup.sh` writes `/backups/_last_success_ts` (epoch
+seconds). Mount the same volume read-only into the scribe container and curl
+`GET /admin/backup-status`:
+
+```bash
+curl -fs http://scribe:8000/admin/backup-status
+# {"path":"/backups/_last_success_ts","last_success_ts":1747000800,
+#  "last_success_iso":"2026-05-15T03:00:00+00:00","age_seconds":3600,
+#  "stale_after_seconds":90000,"stale":false}
+```
+
+The endpoint returns 200 unconditionally; alert on the `stale` flag (true when
+the heartbeat is missing, unreadable, or older than
+`SCRIBE_BACKUP_STALE_AFTER_SECONDS`, default ~25h).

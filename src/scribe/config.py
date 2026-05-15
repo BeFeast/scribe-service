@@ -50,5 +50,15 @@ class Settings(BaseSettings):
     # When exceeded, POST /jobs returns 429 until the rolling window opens up.
     daily_spend_cap_usd: float = 0.0
 
+    # Path the scribe-backups sidecar writes after each successful run; surfaced
+    # by GET /admin/backup-status for healthcheck curl-polling (PRD §4.12).
+    # The default lives on a volume that scribe-backups bind-mounts; for the
+    # scribe API to see it, the same path must be mounted into the scribe
+    # container (read-only is fine).
+    backup_status_path: str = "/backups/_last_success_ts"
+    # Backups run nightly; flag as stale once the heartbeat is >25h old (one
+    # missed cron tick). 0 disables the staleness check.
+    backup_stale_after_seconds: int = 90_000
+
 
 settings = Settings()
