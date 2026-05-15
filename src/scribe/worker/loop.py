@@ -44,8 +44,11 @@ _WEBHOOK_TIMEOUT_S = 10.0
 _WEBHOOK_RETRY_BACKOFFS_S = (1.0, 4.0, 16.0)
 
 
-def _count_webhook_attempt(outcome: str) -> None:
+def _count_webhook_delivery(outcome: str) -> None:
     metrics.webhook_deliveries_total.labels(outcome=outcome).inc()
+
+
+def _count_webhook_attempt(outcome: str) -> None:
     metrics.webhook_attempts_total.labels(outcome=outcome).inc()
 
 
@@ -53,15 +56,12 @@ def _deliver_webhook(session, job: Job) -> None:
     """Best-effort POST of the JobView JSON to job.callback_url. Never
     raises — failures land in webhook metrics and the log."""
     if not job.callback_url:
-        metrics.webhook_deliveries_total.labels(outcome="skipped").inc()
+        _count_webhook_delivery("skipped")
         return
     body = render_job_view(session, job).model_dump(mode="json")
     data = json.dumps(body).encode("utf-8")
     for attempt, backoff_s in enumerate((*_WEBHOOK_RETRY_BACKOFFS_S, None), start=1):
         try:
-            # Request() validates the URL; a malformed callback_url raises
-            # ValueError here — count it as a net_error like any other
-            # delivery failure rather than escaping the "never raises" contract.
             req = urllib.request.Request(
                 job.callback_url, data=data,
                 headers={"Content-Type": "application/json"}, method="POST",
@@ -71,6 +71,7 @@ def _deliver_webhook(session, job: Job) -> None:
                 resp.read()
             metrics.webhook_delivery_latency_seconds.observe(time.monotonic() - start)
             _count_webhook_attempt("ok")
+            _count_webhook_delivery("ok")
             log.info(
                 "webhook delivered",
                 extra={"job_id": job.id, "callback_url": job.callback_url, "attempt": attempt},
@@ -87,7 +88,28 @@ def _deliver_webhook(session, job: Job) -> None:
                     "attempt": attempt,
                 },
             )
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            if exc.code != 429 and not 500 <= exc.code <= 599:
+                _count_webhook_delivery("http_error")
+                return
+            if backoff_s is None:
+                _count_webhook_delivery("http_error")
+                return
+            time.sleep(backoff_s)
+            continue
+        except ValueError as exc:
+            _count_webhook_attempt("net_error")
+            _count_webhook_delivery("net_error")
+            log.warning(
+                "webhook delivery invalid URL: %s -> %s", job.callback_url, exc,
+                extra={
+                    "job_id": job.id,
+                    "callback_url": job.callback_url,
+                    "error": str(exc),
+                    "attempt": attempt,
+                },
+            )
+            return
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
             _count_webhook_attempt("net_error")
             log.warning(
                 "webhook delivery network error: %s -> %s", job.callback_url, exc,
@@ -98,7 +120,9 @@ def _deliver_webhook(session, job: Job) -> None:
                     "attempt": attempt,
                 },
             )
-        if backoff_s is not None:
+            if backoff_s is None:
+                _count_webhook_delivery("net_error")
+                return
             time.sleep(backoff_s)
 
 
