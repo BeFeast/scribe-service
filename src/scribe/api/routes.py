@@ -7,6 +7,7 @@ re-summarize endpoint, and the ops endpoints (/metrics, /admin/daily-report).
 """
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 from collections.abc import Iterator
 
@@ -148,16 +149,44 @@ def get_summary_md(transcript_id: int, session: Session = Depends(get_session)) 
     return Response(content=t.summary_md, media_type="text/markdown; charset=utf-8")
 
 
+_RESUMMARIZE_LOCK_TIMEOUT_S = 120.0
+
+
 @router.post("/transcripts/{transcript_id}/resummarize", response_model=TranscriptBrief)
-def resummarize(transcript_id: int, session: Session = Depends(get_session)) -> TranscriptBrief:
+async def resummarize(
+    transcript_id: int, session: Session = Depends(get_session)
+) -> TranscriptBrief:
     """Re-run the summarizer on an existing transcript (partial or done) and
-    UPDATE the row. Useful when codex was down at the time of the original job."""
+    UPDATE the row. Useful when codex was down at the time of the original job.
+
+    Async to avoid pinning a FastAPI sync-handler thread for the full codex
+    window (up to 600s) plus any lock-wait — the actual blocking work runs in
+    `asyncio.to_thread`, and the codex lock acquisition is bounded by
+    `_RESUMMARIZE_LOCK_TIMEOUT_S` (worker keeps the unbounded wait)."""
     t = _require_transcript(transcript_id, session)
+    title = t.title
+    transcript_md = t.transcript_md
     try:
-        result = summarizer.summarize(t.transcript_md, title=t.title)
+        result = await asyncio.to_thread(
+            summarizer.summarize,
+            transcript_md,
+            title=title,
+            lock_timeout=_RESUMMARIZE_LOCK_TIMEOUT_S,
+        )
+    except summarizer.LockTimeoutError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"summarizer busy (codex job in flight): {exc}",
+        ) from exc
     except summarizer.SummarizeError as exc:
         raise HTTPException(status_code=502, detail=f"summarizer failed: {exc}") from exc
+
+    # Re-read after the lock wait: the worker may have promoted this transcript
+    # from partial to done while we were queued, in which case `was_partial`
+    # would otherwise be stale-True and we'd double-count + overwrite.
+    session.refresh(t)
     was_partial = t.summary_md is None
+
     t.summary_md = result.summary_md
     t.tags = result.tags or None
     base = settings.public_base_url.rstrip("/")
@@ -167,9 +196,19 @@ def resummarize(transcript_id: int, session: Session = Depends(get_session)) -> 
         t.transcript_shortlink = shortlinks.make_shortlink(
             f"{base}/transcripts/{t.id}/transcript.md", verify=False
         )
-    session.commit()
+
     if was_partial:
+        # Promote the owning job from failed to done so dedup (POST /jobs) and
+        # GET /jobs/<id> stay consistent — without this, dedup returns done
+        # while the job_id still reports failed with the old error.
+        owning_job = session.get(Job, t.job_id)
+        if owning_job is not None and owning_job.status == JobStatus.failed:
+            owning_job.status = JobStatus.done
+            owning_job.error = None
+            metrics.job_status_transitions.labels(status=JobStatus.done.value).inc()
         metrics.transcripts_total.labels(kind="promoted").inc()
+
+    session.commit()
     return _brief(t)
 
 

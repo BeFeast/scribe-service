@@ -29,6 +29,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -59,6 +60,33 @@ class SummarizeError(RuntimeError):
 class CodexTokenRevokedError(SummarizeError):
     """codex OAuth token is revoked / un-refreshable. Operator must re-login
     inside the container before any further summary runs will succeed."""
+
+
+class LockTimeoutError(SummarizeError):
+    """Could not acquire the codex serialisation lock within the caller's
+    timeout — another codex run is in flight. Callers should surface this as
+    a 503-ish "try again later" rather than a generic 500."""
+
+
+def _acquire_codex_lock(lock_fd: int, timeout: float | None) -> None:
+    """Acquire LOCK_EX on `lock_fd`. `timeout=None` blocks indefinitely (worker
+    path). A positive timeout polls non-blocking and raises LockTimeoutError
+    if the wait exceeds the budget (API-handler path — protects the FastAPI
+    thread pool from being pinned for the full 600s codex window)."""
+    if timeout is None:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        return
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise LockTimeoutError(
+                    f"could not acquire codex lock within {timeout:.0f}s"
+                )
+            time.sleep(0.5)
 
 
 @dataclass
@@ -94,6 +122,7 @@ def summarize(
     title: str,
     transcript_slug: str | None = None,
     summary_date: dt.date | None = None,
+    lock_timeout: float | None = None,
 ) -> SummaryResult:
     """Produce a Russian analytical summary of `transcript_md` via codex CLI."""
     summary_date = summary_date or dt.date.today()
@@ -112,7 +141,7 @@ def summarize(
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        _acquire_codex_lock(lock_fd, lock_timeout)
         with tempfile.TemporaryDirectory(prefix="scribe-codex-") as tmp:
             out_file = Path(tmp) / "summary.md"
             cmd = [
