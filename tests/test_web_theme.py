@@ -12,7 +12,7 @@ from jinja2 import Environment, FileSystemLoader
 
 
 def _render_index() -> str:
-    templates_dir = Path("src/scribe/web/templates")
+    templates_dir = Path(__file__).parent.parent / "src/scribe/web/templates"
     env = Environment(
         loader=FileSystemLoader(str(templates_dir)),
         autoescape=True,
