@@ -29,3 +29,22 @@ def test_post_jobs_invalid_url_returns_422():
         assert resp.status_code == 422
     finally:
         app.dependency_overrides.pop(routes_module.get_session, None)
+
+
+def test_post_jobs_invalid_callback_url_returns_422():
+    """Pydantic AnyHttpUrl on JobCreate.callback_url rejects malformed
+    values at the API boundary. Without this, the bad URL would reach
+    `_deliver_webhook` and raise ValueError out of "never raises"."""
+    app.dependency_overrides[routes_module.get_session] = _no_db_session
+    try:
+        client = TestClient(app)
+        resp = client.post(
+            "/jobs",
+            json={"url": "https://youtu.be/dQw4w9WgXcQ", "callback_url": "not-a-url"},
+        )
+        assert resp.status_code == 422
+        # Pydantic surfaces the rejection on the right field, not the YT URL one.
+        body = resp.json()
+        assert any("callback_url" in loc for err in body["detail"] for loc in err["loc"])
+    finally:
+        app.dependency_overrides.pop(routes_module.get_session, None)
