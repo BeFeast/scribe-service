@@ -144,6 +144,7 @@ def _summarize_and_finalize(session, job: Job, transcript: Transcript, title: st
     _set_job_status(session, job, JobStatus.done)
     metrics.transcripts_total.labels(kind="promoted" if promoted else "full").inc()
     metrics.last_success_timestamp.set(time.time())
+    _deliver_webhook(session, job)
 
 
 def process_job(session, job: Job) -> None:
