@@ -15,6 +15,7 @@ import email.utils
 import html
 import re
 from pathlib import Path
+from urllib.parse import unquote
 
 import markdown as md
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -23,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from scribe.api.routes import get_session
+from scribe.api.routes import FLASH_COOKIE, get_session
 from scribe.config import settings
 from scribe.db.models import Transcript
 
@@ -94,6 +95,20 @@ def index(
     )
 
 
+def _pop_flash(request: Request) -> tuple[str, str] | None:
+    """One-shot read of the flash cookie. Returns (level, message) or None.
+    The caller is responsible for clearing the cookie on the response. The
+    message is percent-encoded in the cookie to dodge Starlette quoting; we
+    decode here so the template sees the plain text."""
+    raw = request.cookies.get(FLASH_COOKIE)
+    if not raw:
+        return None
+    level, sep, encoded = raw.partition("|")
+    if not sep:
+        return ("info", unquote(raw))
+    return (level or "info", unquote(encoded))
+
+
 @router.get("/transcripts/{transcript_id}", response_class=HTMLResponse)
 def detail(
     transcript_id: int,
@@ -103,15 +118,20 @@ def detail(
     t = session.get(Transcript, transcript_id)
     if t is None:
         raise HTTPException(status_code=404, detail=f"transcript {transcript_id} not found")
-    return _TEMPLATES.TemplateResponse(
+    flash = _pop_flash(request)
+    response = _TEMPLATES.TemplateResponse(
         request,
         "detail.html",
         {
             "t": t,
             "summary_html": _render_md(t.summary_md or ""),
             "transcript_html": _render_md(t.transcript_md),
+            "flash": flash,
         },
     )
+    if flash is not None:
+        response.delete_cookie(FLASH_COOKIE)
+    return response
 
 
 # ---------------------------------------------------------------- RSS feed
