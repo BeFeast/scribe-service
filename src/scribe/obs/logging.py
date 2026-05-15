@@ -34,7 +34,7 @@ class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:  # noqa: D401
         message = record.getMessage()
         payload: dict[str, object] = {
-            "ts": dt.datetime.fromtimestamp(record.created, dt.timezone.utc)
+            "ts": dt.datetime.fromtimestamp(record.created, dt.UTC)
             .astimezone()
             .isoformat(timespec="milliseconds"),
             "lvl": record.levelname,

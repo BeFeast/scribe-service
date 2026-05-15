@@ -1,8 +1,8 @@
 """ORM models — jobs + transcripts (SQLAlchemy 2.0 style)."""
 from __future__ import annotations
 
-import enum
 from datetime import datetime
+from enum import StrEnum
 
 from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Text, func
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -13,7 +13,7 @@ class Base(DeclarativeBase):
     pass
 
 
-class JobStatus(str, enum.Enum):
+class JobStatus(StrEnum):
     queued = "queued"
     downloading = "downloading"
     transcribing = "transcribing"

@@ -27,3 +27,23 @@ packages = ["src/scribe"]
 
 [dependency-groups]
 dev = ["ruff>=0.9", "pytest>=8.3"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+# E501 disabled — long URL strings + Cyrillic comments push the visual limit
+# without being meaningfully harder to read.
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+
+[tool.ruff.lint.per-file-ignores]
+# Depends() in default args is the canonical FastAPI pattern; trust it.
+"src/scribe/api/routes.py" = ["B008"]
+"src/scribe/web/views.py" = ["B008"]

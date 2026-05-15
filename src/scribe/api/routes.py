@@ -229,7 +229,7 @@ def get_metrics(session: Session = Depends(get_session)) -> Response:
 def daily_report(session: Session = Depends(get_session), days: int = Query(1, ge=1, le=30)) -> dict:
     """Aggregate stats for the last N days (default 1). Intended for a small
     cron that POSTs the digest to Telegram — see README ops section."""
-    since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)
+    since = dt.datetime.now(dt.UTC) - dt.timedelta(days=days)
 
     by_status = dict(
         session.execute(

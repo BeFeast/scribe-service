@@ -85,7 +85,7 @@ def _acquire_codex_lock(lock_fd: int, timeout: float | None) -> None:
             if time.monotonic() >= deadline:
                 raise LockTimeoutError(
                     f"could not acquire codex lock within {timeout:.0f}s"
-                )
+                ) from None
             time.sleep(0.5)
 
 
