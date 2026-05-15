@@ -1,24 +1,26 @@
-"""HTTP API — submit jobs, poll status, browse transcripts.
+"""HTTP API — submit jobs, poll status, browse transcripts, ops endpoints.
 
 Note: GET /transcripts/{id} is served as HTML by web/views.py (the worker
 mints the summary shortlink against that path). The JSON API here keeps the
-job endpoints, the transcript list, the raw .md endpoints, and the admin
-re-summarize endpoint.
+job endpoints, the transcript list, the raw .md endpoints, the admin
+re-summarize endpoint, and the ops endpoints (/metrics, /admin/daily-report).
 """
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Iterator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from scribe.api.schemas import JobCreate, JobView, TranscriptBrief
+from scribe.config import settings
 from scribe.db.models import Job, JobStatus, Transcript
 from scribe.db.session import SessionLocal
+from scribe.obs import metrics
 from scribe.pipeline import shortlinks, summarizer
 from scribe.pipeline.downloader import DownloadError, extract_video_id
-from scribe.config import settings
 
 router = APIRouter()
 
@@ -59,8 +61,6 @@ def _latest_done_transcript(session: Session, video_id: str) -> Transcript | Non
 
 
 def _latest_transcript_for_video(session: Session, video_id: str) -> Transcript | None:
-    """Latest transcript regardless of done/partial. Used to surface progress
-    on GET /jobs/{id} — a partial transcript is still useful state to expose."""
     return session.scalar(
         select(Transcript)
         .where(Transcript.video_id == video_id)
@@ -93,12 +93,12 @@ def create_job(body: JobCreate, session: Session = Depends(get_session)) -> JobV
     job = Job(url=body.url, video_id=video_id, status=JobStatus.queued, source=body.source)
     session.add(job)
     session.commit()
+    metrics.job_status_transitions.labels(status=JobStatus.queued.value).inc()
     return JobView(job_id=job.id, url=job.url, video_id=video_id, status=job.status.value)
 
 
 @router.get("/jobs/{job_id}", response_model=JobView)
 def get_job(job_id: int, session: Session = Depends(get_session)) -> JobView:
-    """Job status + most-recent transcript (done or partial) for this video_id."""
     job = session.get(Job, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
@@ -157,17 +157,65 @@ def resummarize(transcript_id: int, session: Session = Depends(get_session)) -> 
         result = summarizer.summarize(t.transcript_md, title=t.title)
     except summarizer.SummarizeError as exc:
         raise HTTPException(status_code=502, detail=f"summarizer failed: {exc}") from exc
+    was_partial = t.summary_md is None
     t.summary_md = result.summary_md
     t.tags = result.tags or None
-    # mint shortlinks idempotently
     base = settings.public_base_url.rstrip("/")
     if not t.summary_shortlink:
-        t.summary_shortlink = shortlinks.make_shortlink(
-            f"{base}/transcripts/{t.id}", verify=False
-        )
+        t.summary_shortlink = shortlinks.make_shortlink(f"{base}/transcripts/{t.id}", verify=False)
     if not t.transcript_shortlink:
         t.transcript_shortlink = shortlinks.make_shortlink(
             f"{base}/transcripts/{t.id}/transcript.md", verify=False
         )
     session.commit()
+    if was_partial:
+        metrics.transcripts_total.labels(kind="promoted").inc()
     return _brief(t)
+
+
+# ----------------------------------------------------------------- ops endpoints
+@router.get("/metrics", include_in_schema=False)
+def get_metrics(session: Session = Depends(get_session)) -> Response:
+    """Prometheus exposition. The queue-depth gauge is sampled from the DB
+    on every scrape — cheap, single small query."""
+    queue_depth = session.scalar(
+        select(func.count()).select_from(Job).where(Job.status.in_(_ACTIVE))
+    ) or 0
+    metrics.worker_queue_depth.set(queue_depth)
+    body, ctype = metrics.export()
+    return Response(content=body, media_type=ctype)
+
+
+@router.get("/admin/daily-report")
+def daily_report(session: Session = Depends(get_session), days: int = Query(1, ge=1, le=30)) -> dict:
+    """Aggregate stats for the last N days (default 1). Intended for a small
+    cron that POSTs the digest to Telegram — see README ops section."""
+    since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)
+
+    by_status = dict(
+        session.execute(
+            select(Job.status, func.count())
+            .where(Job.created_at >= since)
+            .group_by(Job.status)
+        ).all()
+    )
+    transcripts_done = session.scalar(
+        select(func.count()).select_from(Transcript)
+        .where(Transcript.created_at >= since, Transcript.summary_md.is_not(None))
+    ) or 0
+    transcripts_partial = session.scalar(
+        select(func.count()).select_from(Transcript)
+        .where(Transcript.created_at >= since, Transcript.summary_md.is_(None))
+    ) or 0
+    queue_depth = session.scalar(
+        select(func.count()).select_from(Job).where(Job.status.in_(_ACTIVE))
+    ) or 0
+
+    return {
+        "window_days": days,
+        "since_iso": since.isoformat(timespec="seconds"),
+        "jobs_by_status": {str(k.value if hasattr(k, "value") else k): int(v) for k, v in by_status.items()},
+        "transcripts_done": int(transcripts_done),
+        "transcripts_partial": int(transcripts_partial),
+        "current_queue_depth": int(queue_depth),
+    }

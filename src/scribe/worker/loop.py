@@ -9,6 +9,11 @@ The transcript row is committed **between whisper and summary** so a
 summarizer failure (token revoked, prompt too long, …) does not discard the
 expensive GPU work. The next /jobs submission for the same video_id sees a
 partial transcript and re-runs only the summary step.
+
+Each pipeline stage is timed into the `scribe_stage_duration_seconds`
+histogram, status transitions land in `scribe_job_status_transitions_total`,
+transcript inserts/promotions in `scribe_transcripts_total`, and Vast spend
+accumulates into `scribe_vast_spend_usd_total`.
 """
 from __future__ import annotations
 
@@ -16,6 +21,8 @@ import logging
 import shutil
 import tempfile
 import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from sqlalchemy import select, text
@@ -23,11 +30,29 @@ from sqlalchemy import select, text
 from scribe.config import settings
 from scribe.db.models import Job, JobStatus, Transcript
 from scribe.db.session import SessionLocal
+from scribe.obs import metrics
 from scribe.pipeline import downloader, ffmpeg, shortlinks, summarizer, whisper_client
 
 log = logging.getLogger("scribe.worker")
 
 _POLL_INTERVAL = 5.0
+
+
+@contextmanager
+def _time_stage(stage: str):
+    """Emit a stage-duration sample on exit."""
+    start = time.monotonic()
+    try:
+        yield
+    finally:
+        metrics.stage_duration_seconds.labels(stage=stage).observe(time.monotonic() - start)
+
+
+def _set_job_status(session, job: Job, status: JobStatus) -> None:
+    """Update Job.status, count the transition, commit."""
+    job.status = status
+    metrics.job_status_transitions.labels(status=status.value).inc()
+    session.commit()
 
 
 def _claim_next_job(session) -> Job | None:
@@ -40,7 +65,10 @@ def _claim_next_job(session) -> Job | None:
         )
     ).first()
     session.commit()
-    return session.get(Job, row[0]) if row else None
+    if not row:
+        return None
+    metrics.job_status_transitions.labels(status=JobStatus.downloading.value).inc()
+    return session.get(Job, row[0])
 
 
 def _find_partial_transcript(session, video_id: str) -> Transcript | None:
@@ -54,8 +82,8 @@ def _find_partial_transcript(session, video_id: str) -> Transcript | None:
 
 
 def _mint_shortlinks(transcript: Transcript) -> None:
-    """Idempotently mint scribe-web-UI shortlinks on a transcript. Skips fields
-    that are already set so re-runs (resume path) don't churn Chhoto."""
+    """Idempotently mint scribe-web-UI shortlinks. Skips fields that are
+    already set so re-runs (resume path) don't churn Chhoto."""
     base = settings.public_base_url.rstrip("/")
     if not transcript.summary_shortlink:
         transcript.summary_shortlink = shortlinks.make_shortlink(
@@ -67,56 +95,59 @@ def _mint_shortlinks(transcript: Transcript) -> None:
         )
 
 
-def _summarize_and_finalize(session, job: Job, transcript: Transcript, title: str) -> None:
+def _summarize_and_finalize(session, job: Job, transcript: Transcript, title: str, *, promoted: bool) -> None:
     """Run summarizer against an already-persisted transcript_md, update the
-    row with summary + tags + shortlinks, mark the job done.
-
-    Raises on summarizer failure; caller's outer except handles the rollback."""
-    job.status = JobStatus.summarizing
-    session.commit()
-    summary = summarizer.summarize(transcript.transcript_md, title=title)
+    row with summary + tags + shortlinks, mark the job done."""
+    _set_job_status(session, job, JobStatus.summarizing)
+    with _time_stage("summary"):
+        summary = summarizer.summarize(transcript.transcript_md, title=title)
     transcript.summary_md = summary.summary_md
     transcript.tags = summary.tags or None
-    session.flush()  # ensure transcript.id stable for shortlinks (already had one)
+    session.flush()
     _mint_shortlinks(transcript)
-    job.status = JobStatus.done
-    session.commit()
+    _set_job_status(session, job, JobStatus.done)
+    metrics.transcripts_total.labels(kind="promoted" if promoted else "full").inc()
+    metrics.last_success_timestamp.set(time.time())
 
 
 def process_job(session, job: Job) -> None:
     """Run the full pipeline for a claimed job (already status=downloading)."""
     job_id = job.id
+    job_log = logging.LoggerAdapter(log, {"job_id": job_id, "video_id": job.video_id})
     try:
         # Resume path: a prior job already produced the transcript but its
         # summary step failed. Skip download+ffmpeg+whisper and just re-summarize.
         partial = _find_partial_transcript(session, job.video_id)
         if partial is not None:
-            log.info(
-                "job %s: resuming partial transcript %s (skip download+whisper)",
-                job_id, partial.id,
-            )
-            # Hand the partial transcript over to the current job so
-            # GET /jobs/<id> returns the same transcript.
+            job_log.info("resuming partial transcript", extra={"transcript_id": partial.id, "stage": "resume"})
             partial.job_id = job.id
-            _summarize_and_finalize(session, job, partial, partial.title)
-            log.info("job %s done (resumed) -> transcript %s", job_id, partial.id)
+            _summarize_and_finalize(session, job, partial, partial.title, promoted=True)
+            job_log.info("job done (resumed)", extra={"transcript_id": partial.id, "stage": "done"})
             return
 
         Path(settings.temp_dir).mkdir(parents=True, exist_ok=True)
         tmpdir = Path(tempfile.mkdtemp(prefix="scribe-job-", dir=settings.temp_dir))
         try:
-            # 1. download the audio stream (residential IP)
-            dl = downloader.download_audio(job.url, tmpdir)
+            with _time_stage("download"):
+                dl = downloader.download_audio(job.url, tmpdir)
+            job_log.info("download done", extra={"title": dl.title, "stage": "download"})
 
-            # 2. normalise to 16 kHz mono wav (single ffmpeg pass)
-            wav = ffmpeg.to_wav_16k_mono(dl.audio_path, tmpdir / "input-16k.wav")
+            with _time_stage("ffmpeg"):
+                wav = ffmpeg.to_wav_16k_mono(dl.audio_path, tmpdir / "input-16k.wav")
 
-            # 3. transcribe on a Vast GPU instance
-            job.status = JobStatus.transcribing
-            session.commit()
-            tr = whisper_client.transcribe(wav, title=dl.title, source_url=job.url)
+            _set_job_status(session, job, JobStatus.transcribing)
+            with _time_stage("whisper"):
+                tr = whisper_client.transcribe(wav, title=dl.title, source_url=job.url)
+            if tr.vast_cost:
+                metrics.vast_spend_usd_total.inc(tr.vast_cost)
+            job_log.info("whisper done", extra={
+                "stage": "whisper",
+                "lang": tr.detected_language,
+                "vast_cost": tr.vast_cost,
+                "duration_seconds": tr.duration_seconds,
+            })
 
-            # 4. PERSIST partial transcript — locks in GPU work before summary
+            # Persist partial transcript — locks in GPU work before summary
             duration = dl.duration_seconds or (
                 int(tr.duration_seconds) if tr.duration_seconds else None
             )
@@ -125,17 +156,17 @@ def process_job(session, job: Job) -> None:
                 video_id=dl.video_id,
                 title=dl.title,
                 transcript_md=tr.transcript_md,
-                summary_md=None,  # partial; summarizer fills it next
+                summary_md=None,
                 tags=None,
                 duration_seconds=int(duration) if duration else None,
                 lang=tr.detected_language,
             )
             session.add(transcript)
-            session.commit()  # commit BEFORE summarizing so a codex failure preserves the transcript
+            session.commit()
+            metrics.transcripts_total.labels(kind="partial").inc()
 
-            # 5. summarize + shortlinks + mark done
-            _summarize_and_finalize(session, job, transcript, dl.title)
-            log.info("job %s done -> transcript %s (%s)", job_id, transcript.id, dl.title)
+            _summarize_and_finalize(session, job, transcript, dl.title, promoted=False)
+            job_log.info("job done", extra={"transcript_id": transcript.id, "stage": "done", "title": dl.title})
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
     except Exception as exc:
@@ -145,7 +176,8 @@ def process_job(session, job: Job) -> None:
             failed.status = JobStatus.failed
             failed.error = f"{type(exc).__name__}: {exc}"
             session.commit()
-        log.exception("job %s failed", job_id)
+        metrics.job_status_transitions.labels(status=JobStatus.failed.value).inc()
+        job_log.exception("job failed", extra={"stage": "failed", "error": f"{type(exc).__name__}: {exc}"})
 
 
 def run_worker(stop: threading.Event) -> None:
@@ -157,7 +189,7 @@ def run_worker(stop: threading.Event) -> None:
             if job is None:
                 stop.wait(_POLL_INTERVAL)
                 continue
-            log.info("claimed job %s: %s", job.id, job.url)
+            log.info("claimed job", extra={"job_id": job.id, "url": job.url, "stage": "claim"})
             process_job(session, job)
         except Exception:
             log.exception("worker loop error")
