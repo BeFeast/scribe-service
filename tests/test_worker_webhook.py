@@ -81,10 +81,22 @@ def _latency_sample() -> tuple[float, float]:
     return total, count
 
 
+def _latency_buckets() -> list[float]:
+    """Return finite bucket boundaries from the Prometheus exposition."""
+    body, _ = metrics.export()
+    buckets: list[float] = []
+    for line in body.decode().splitlines():
+        if not line.startswith("scribe_webhook_delivery_latency_seconds_bucket{"):
+            continue
+        le = line.split('le="', 1)[1].split('"', 1)[0]
+        if le != "+Inf":
+            buckets.append(float(le))
+    return buckets
+
+
 def test_webhook_latency_histogram_buckets():
-    """SCR-13 #9: buckets must match the acceptance criterion exactly.
-    prometheus_client appends a final +Inf bucket; drop it before comparing."""
-    assert list(metrics.webhook_delivery_latency_seconds._upper_bounds[:-1]) == [
+    """SCR-13 #9: buckets must match the acceptance criterion exactly."""
+    assert _latency_buckets() == [
         .05, .1, .25, .5, 1, 2.5, 5, 10,
     ]
 
