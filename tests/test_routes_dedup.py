@@ -5,12 +5,16 @@ uses ARRAY[Text] which SQLite cannot represent). Skipped by default; CI
 provides a postgres service container."""
 from __future__ import annotations
 
+import re
+from urllib.parse import unquote
+
 import pytest
 from fastapi.testclient import TestClient
 
 from scribe.api import routes as routes_module
 from scribe.db.models import Job, JobStatus, Transcript
 from scribe.main import app
+from scribe.pipeline import summarizer as summarizer_module
 
 
 @pytest.fixture()
@@ -108,3 +112,99 @@ def test_list_transcripts_hides_partials_by_default(client, db_session):
     ids_partial = {row["id"] for row in with_partial}
     assert done.id in ids_partial
     assert partial.id in ids_partial
+
+
+# ---------------------------------------------------------------- resummarize
+def _stub_summarizer(monkeypatch, *, summary_md: str = "regenerated summary",
+                     tags: list[str] | None = None) -> None:
+    """Replace `summarizer.summarize` so /resummarize never shells out to codex.
+    The route imports `from scribe.pipeline import summarizer` and calls
+    `summarizer.summarize`, so patching the module attribute is sufficient."""
+    def _fake(_transcript_md, *, title, lock_timeout=None, **__):
+        return summarizer_module.SummaryResult(summary_md=summary_md, tags=tags or [])
+    monkeypatch.setattr(summarizer_module, "summarize", _fake)
+
+
+def test_resummarize_html_redirects_with_flash_cookie(client, db_session, monkeypatch):
+    """Web UI button path: a browser POST (Accept: text/html) gets a 303 to the
+    detail page with a one-shot flash cookie. Backs PRD §4.9 acceptance:
+    'redirect + flash message'."""
+    _stub_summarizer(monkeypatch, summary_md="fresh summary", tags=["topic-a"])
+    _, transcript = _seed_partial_transcript(db_session, video_id="resumhtmll12")
+    detail = client.get(f"/transcripts/{transcript.id}")
+    assert detail.status_code == 200
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', detail.text)
+    assert csrf is not None
+    resp = client.post(
+        f"/transcripts/{transcript.id}/resummarize",
+        data={"csrf_token": csrf.group(1)},
+        headers={"Accept": "text/html"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303, resp.text
+    assert resp.headers["location"] == f"/transcripts/{transcript.id}"
+    flash = resp.cookies.get(routes_module.FLASH_COOKIE)
+    assert flash is not None
+    level, _, encoded = flash.partition("|")
+    assert level == "success"
+    assert "regenerated" in unquote(encoded).lower()
+
+    db_session.refresh(transcript)
+    assert transcript.summary_md == "fresh summary"
+    assert transcript.tags == ["topic-a"]
+
+
+def test_resummarize_html_rejects_missing_csrf(client, db_session, monkeypatch):
+    _stub_summarizer(monkeypatch)
+    _, transcript = _seed_partial_transcript(db_session, video_id="resumcsrf12")
+    resp = client.post(
+        f"/transcripts/{transcript.id}/resummarize",
+        headers={"Accept": "text/html"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 403
+
+
+def test_resummarize_json_still_returns_brief(client, db_session, monkeypatch):
+    """API clients (Accept: application/json) keep the existing TranscriptBrief
+    behavior — the web flow's redirect must not break automation."""
+    _stub_summarizer(monkeypatch, summary_md="api summary")
+    _, transcript = _seed_partial_transcript(db_session, video_id="resumjsonl12")
+    resp = client.post(
+        f"/transcripts/{transcript.id}/resummarize",
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["id"] == transcript.id
+    assert routes_module.FLASH_COOKIE not in resp.cookies
+
+
+def test_detail_page_renders_regenerate_button_and_flash(client, db_session):
+    """The transcript detail page renders the regenerate form (POSTs to
+    /resummarize) and, when the flash cookie is present, surfaces the message
+    and clears the cookie."""
+    _, transcript = _seed_done_transcript(db_session, video_id="detailbtn12")
+    client.cookies.set(routes_module.FLASH_COOKIE, "success|Summary%20regenerated.")
+    resp = client.get(f"/transcripts/{transcript.id}")
+    client.cookies.clear()
+    assert resp.status_code == 200
+    html = resp.text
+    assert f'action="/transcripts/{transcript.id}/resummarize"' in html
+    assert 'name="csrf_token"' in html
+    assert "Regenerate" in html
+    assert "Summary regenerated." in html
+    # The detail view consumes the cookie on render so the flash is one-shot.
+    set_cookie = resp.headers.get("set-cookie", "")
+    assert routes_module.FLASH_COOKIE in set_cookie
+    assert routes_module.CSRF_COOKIE in set_cookie
+
+
+def test_detail_flash_tampered_level_falls_back_to_info(client, db_session):
+    _, transcript = _seed_done_transcript(db_session, video_id="flashlevel12")
+    client.cookies.set(routes_module.FLASH_COOKIE, "surprise|Careful%20now.")
+    resp = client.get(f"/transcripts/{transcript.id}")
+    client.cookies.clear()
+    assert resp.status_code == 200
+    assert 'class="flash info"' in resp.text
+    assert "Careful now." in resp.text

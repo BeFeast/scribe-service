@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import secrets
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response
+from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
@@ -214,21 +217,72 @@ def get_summary_md(transcript_id: int, session: Session = Depends(get_session)) 
 
 _RESUMMARIZE_LOCK_TIMEOUT_S = 120.0
 
+# One-shot flash cookie consumed by the web detail view. Value layout:
+#   "<level>|<percent-encoded message>"
+# Percent-encoding avoids Starlette's SimpleCookie quoting whenever the message
+# contains a space or other token-illegal char (RFC 6265 §4.1.1), which would
+# otherwise leak raw quotes back to the client and the template.
+FLASH_COOKIE = "scribe_flash"
+CSRF_COOKIE = "scribe_csrf"
+_FLASH_MAX_AGE = 30
+_FLASH_LEVELS = frozenset({"success", "error", "info"})
 
-@router.post("/transcripts/{transcript_id}/resummarize", response_model=TranscriptBrief)
+
+def _accepts_html(request: Request) -> bool:
+    """Browser form submissions send text/html in Accept; JSON API clients send
+    application/json. Used to route POST /resummarize between the web flow
+    (303 + flash cookie) and the JSON flow (TranscriptBrief)."""
+    return "text/html" in request.headers.get("accept", "").lower()
+
+
+def _flash_redirect(transcript_id: int, message: str, *, level: str = "success") -> RedirectResponse:
+    if level not in _FLASH_LEVELS:
+        level = "info"
+    response = RedirectResponse(url=f"/transcripts/{transcript_id}", status_code=303)
+    response.set_cookie(
+        FLASH_COOKIE,
+        f"{level}|{quote(message, safe='')}",
+        max_age=_FLASH_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
+
+
+def _validate_csrf(request: Request, csrf_token: str | None) -> None:
+    cookie_token = request.cookies.get(CSRF_COOKIE)
+    if not cookie_token or not csrf_token or not secrets.compare_digest(cookie_token, csrf_token):
+        raise HTTPException(status_code=403, detail="invalid CSRF token")
+
+
+@router.post(
+    "/transcripts/{transcript_id}/resummarize",
+    response_model=TranscriptBrief,
+    responses={303: {"description": "Web flow: redirect to transcript detail with flash cookie."}},
+)
 async def resummarize(
-    transcript_id: int, session: Session = Depends(get_session)
-) -> TranscriptBrief:
+    transcript_id: int,
+    request: Request,
+    csrf_token: str | None = Form(None),
+    session: Session = Depends(get_session),
+):
     """Re-run the summarizer on an existing transcript (partial or done) and
     UPDATE the row. Useful when codex was down at the time of the original job.
+
+    Content-negotiates: HTML clients (the web UI button) get a 303 redirect to
+    the detail page with a one-shot flash cookie; JSON clients get the usual
+    TranscriptBrief payload.
 
     Async to avoid pinning a FastAPI sync-handler thread for the full codex
     window (up to 600s) plus any lock-wait — the actual blocking work runs in
     `asyncio.to_thread`, and the codex lock acquisition is bounded by
     `_RESUMMARIZE_LOCK_TIMEOUT_S` (worker keeps the unbounded wait)."""
+    if _accepts_html(request) or csrf_token is not None:
+        _validate_csrf(request, csrf_token)
     t = _require_transcript(transcript_id, session)
     title = t.title
     transcript_md = t.transcript_md
+    html_client = _accepts_html(request)
     try:
         result = await asyncio.to_thread(
             summarizer.summarize,
@@ -237,11 +291,15 @@ async def resummarize(
             lock_timeout=_RESUMMARIZE_LOCK_TIMEOUT_S,
         )
     except summarizer.LockTimeoutError as exc:
+        if html_client:
+            return _flash_redirect(transcript_id, f"Summarizer busy: {exc}", level="error")
         raise HTTPException(
             status_code=503,
             detail=f"summarizer busy (codex job in flight): {exc}",
         ) from exc
     except summarizer.SummarizeError as exc:
+        if html_client:
+            return _flash_redirect(transcript_id, f"Summarizer failed: {exc}", level="error")
         raise HTTPException(status_code=502, detail=f"summarizer failed: {exc}") from exc
 
     # Re-read after the lock wait: the worker may have promoted this transcript
@@ -272,6 +330,8 @@ async def resummarize(
         metrics.transcripts_total.labels(kind="promoted").inc()
 
     session.commit()
+    if html_client:
+        return _flash_redirect(t.id, "Summary regenerated.", level="success")
     return _brief(t)
 
 

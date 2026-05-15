@@ -14,7 +14,9 @@ import datetime as dt
 import email.utils
 import html
 import re
+import secrets
 from pathlib import Path
+from urllib.parse import unquote
 
 import markdown as md
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -23,12 +25,13 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from scribe.api.routes import get_session
+from scribe.api.routes import CSRF_COOKIE, FLASH_COOKIE, get_session
 from scribe.config import settings
 from scribe.db.models import Transcript
 
 router = APIRouter(tags=["web"])
 _TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+_FLASH_LEVELS = frozenset({"success", "error", "info"})
 
 # Hard cap on the rows the home page renders. Keeps the page fast even after
 # years of accretion; older entries are still reachable by tag/search.
@@ -94,6 +97,23 @@ def index(
     )
 
 
+def _pop_flash(request: Request) -> tuple[str, str] | None:
+    """One-shot read of the flash cookie. Returns (level, message) or None.
+    The caller is responsible for clearing the cookie on the response. The
+    message is percent-encoded in the cookie to dodge Starlette quoting; we
+    decode here so the template sees the plain text."""
+    raw = request.cookies.get(FLASH_COOKIE)
+    if not raw:
+        return None
+    level, sep, encoded = raw.partition("|")
+    if not sep:
+        encoded = level
+        level = "info"
+    if level not in _FLASH_LEVELS:
+        level = "info"
+    return (level or "info", unquote(encoded))
+
+
 @router.get("/transcripts/{transcript_id}", response_class=HTMLResponse)
 def detail(
     transcript_id: int,
@@ -103,15 +123,29 @@ def detail(
     t = session.get(Transcript, transcript_id)
     if t is None:
         raise HTTPException(status_code=404, detail=f"transcript {transcript_id} not found")
-    return _TEMPLATES.TemplateResponse(
+    flash = _pop_flash(request)
+    csrf_token = secrets.token_urlsafe(32)
+    response = _TEMPLATES.TemplateResponse(
         request,
         "detail.html",
         {
             "t": t,
             "summary_html": _render_md(t.summary_md or ""),
             "transcript_html": _render_md(t.transcript_md),
+            "flash": flash,
+            "csrf_token": csrf_token,
         },
     )
+    if flash is not None:
+        response.delete_cookie(FLASH_COOKIE)
+    response.set_cookie(
+        CSRF_COOKIE,
+        csrf_token,
+        max_age=3600,
+        httponly=True,
+        samesite="strict",
+    )
+    return response
 
 
 # ---------------------------------------------------------------- RSS feed
