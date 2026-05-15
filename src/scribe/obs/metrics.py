@@ -43,6 +43,28 @@ vast_spend_usd_total = Counter(
     "Cumulative estimated Vast.ai spend in USD.",
 )
 
+# Rolling 24h Vast spend (USD) — same window the daily-spend cap uses.
+# Sampled from the DB on each /metrics scrape so alert rules can compare
+# directly against SCRIBE_DAILY_SPEND_CAP_USD.
+daily_spend_usd = Gauge(
+    "scribe_daily_spend_usd",
+    "Rolling 24h Vast.ai spend in USD (same window as the daily cap).",
+)
+
+# Current rolling 24h spend as a percentage of SCRIBE_DAILY_SPEND_CAP_USD.
+# 0 when the cap is disabled (cap == 0). Prometheus alert rule fires at >= 80.
+daily_spend_cap_pct = Gauge(
+    "scribe_daily_spend_cap_pct",
+    "Rolling 24h Vast spend as a percent of the daily cap; 0 when cap disabled.",
+)
+
+
+def compute_daily_spend_cap_pct(spent_usd: float, cap_usd: float) -> float:
+    """Percent of cap consumed. Returns 0.0 when the cap is disabled (<=0)."""
+    if cap_usd <= 0:
+        return 0.0
+    return (spent_usd / cap_usd) * 100.0
+
 # Queue depth — number of non-terminal jobs. Sampled on each /metrics scrape.
 worker_queue_depth = Gauge(
     "scribe_worker_queue_depth",
