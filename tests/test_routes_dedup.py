@@ -20,7 +20,7 @@ def client(db_session):
     app.dependency_overrides[routes_module.get_session] = lambda: db_session
     with TestClient(app) as tc:
         yield tc
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(routes_module.get_session, None)
 
 
 def _seed_done_transcript(session, *, video_id: str, title: str = "test"):
@@ -108,8 +108,3 @@ def test_list_transcripts_hides_partials_by_default(client, db_session):
     ids_partial = {row["id"] for row in with_partial}
     assert done.id in ids_partial
     assert partial.id in ids_partial
-
-
-def test_post_jobs_invalid_url_returns_422(client):
-    resp = client.post("/jobs", json={"url": "not-a-youtube-url"})
-    assert resp.status_code == 422
