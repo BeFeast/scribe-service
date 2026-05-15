@@ -38,6 +38,9 @@ class Job(Base):
     )
     source: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Optional webhook target — scribe POSTs the final JobView JSON to
+    # this URL on terminal status (done|failed). NULL = poll-only client.
+    callback_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

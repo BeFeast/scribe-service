@@ -9,6 +9,9 @@ from pydantic import BaseModel
 class JobCreate(BaseModel):
     url: str
     source: str | None = None
+    # If set, scribe POSTs the JobView JSON here on terminal status. Best-
+    # effort delivery — failures are logged + counted but don't fail the job.
+    callback_url: str | None = None
 
 
 class TranscriptBrief(BaseModel):
@@ -36,4 +39,5 @@ class JobView(BaseModel):
     status: str
     error: str | None = None
     deduplicated: bool = False
+    callback_url: str | None = None
     transcript: TranscriptBrief | None = None
