@@ -3,7 +3,8 @@
 Note: GET /transcripts/{id} is served as HTML by web/views.py (the worker
 mints the summary shortlink against that path). The JSON API here keeps the
 job endpoints, the transcript list, the raw .md endpoints, the admin
-re-summarize endpoint, and the ops endpoints (/metrics, /admin/daily-report).
+re-summarize + retry endpoints, and the ops endpoints
+(/metrics, /admin/daily-report).
 """
 from __future__ import annotations
 
@@ -333,6 +334,47 @@ async def resummarize(
     if html_client:
         return _flash_redirect(t.id, "Summary regenerated.", level="success")
     return _brief(t)
+
+
+_TERMINAL = (JobStatus.done, JobStatus.failed)
+
+
+@router.post("/admin/jobs/{job_id}/retry", response_model=JobView, status_code=201)
+def admin_retry_job(job_id: int, session: Session = Depends(get_session)) -> JobView:
+    """Operator recovery (PRD §5.4): re-queue a terminal job as a new Job row.
+
+    Bypasses POST /jobs dedup — a done job's transcript would otherwise short-
+    circuit the re-run. Rejects non-terminal targets so we don't fork in-flight
+    work. The original job's `error` is annotated with the new job id so a
+    later GET /jobs/<old_id> reveals where the recovery went."""
+    job = session.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    if job.status not in _TERMINAL:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"job {job_id} is {job.status.value} (non-terminal); "
+                "retry is only allowed for done/failed jobs."
+            ),
+        )
+
+    new_job = Job(
+        url=job.url, video_id=job.video_id, status=JobStatus.queued,
+        source=job.source, callback_url=job.callback_url,
+    )
+    session.add(new_job)
+    session.flush()
+
+    marker = f"recovered as job {new_job.id}"
+    job.error = f"{job.error}; {marker}" if job.error else marker
+
+    session.commit()
+    metrics.job_status_transitions.labels(status=JobStatus.queued.value).inc()
+    return JobView(
+        job_id=new_job.id, url=new_job.url, video_id=new_job.video_id,
+        status=new_job.status.value, callback_url=new_job.callback_url,
+    )
 
 
 # ----------------------------------------------------------------- ops endpoints
