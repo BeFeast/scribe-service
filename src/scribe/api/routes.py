@@ -69,6 +69,17 @@ def _latest_transcript_for_video(session: Session, video_id: str) -> Transcript 
     )
 
 
+def _recent_vast_spend_usd(session: Session, hours: int = 24) -> float:
+    """Sum of transcripts.vast_cost over the rolling window. Skips NULL
+    (warm-pool / mock runs that did not pay Vast)."""
+    since = dt.datetime.now(dt.UTC) - dt.timedelta(hours=hours)
+    total = session.scalar(
+        select(func.coalesce(func.sum(Transcript.vast_cost), 0.0))
+        .where(Transcript.created_at >= since, Transcript.vast_cost.is_not(None))
+    )
+    return float(total or 0.0)
+
+
 @router.post("/jobs", response_model=JobView, status_code=201)
 def create_job(body: JobCreate, session: Session = Depends(get_session)) -> JobView:
     """Submit a YouTube URL. Deduplicates by video_id against **done** transcripts
@@ -81,6 +92,7 @@ def create_job(body: JobCreate, session: Session = Depends(get_session)) -> JobV
 
     done = _latest_done_transcript(session, video_id)
     if done is not None:
+        # dedup-done bypasses the cost cap: no new GPU work happens
         return JobView(job_id=done.job_id, url=body.url, video_id=video_id,
                        status=JobStatus.done.value, deduplicated=True, transcript=_brief(done))
 
@@ -88,8 +100,22 @@ def create_job(body: JobCreate, session: Session = Depends(get_session)) -> JobV
         select(Job).where(Job.video_id == video_id, Job.status.in_(_ACTIVE)).order_by(Job.id.desc())
     )
     if active is not None:
+        # dedup-active also bypasses: the in-flight job is already spending its budget
         return JobView(job_id=active.id, url=active.url, video_id=video_id,
                        status=active.status.value, deduplicated=True)
+
+    # Only fresh submissions trigger the rolling spend cap. cap<=0 disables.
+    cap = settings.daily_spend_cap_usd
+    if cap > 0:
+        spent = _recent_vast_spend_usd(session)
+        if spent >= cap:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"daily Vast spend cap reached: ${spent:.4f} >= ${cap:.4f} (rolling 24h). "
+                    "Resubmit after the window opens, or raise SCRIBE_DAILY_SPEND_CAP_USD."
+                ),
+            )
 
     job = Job(url=body.url, video_id=video_id, status=JobStatus.queued, source=body.source)
     session.add(job)
@@ -250,6 +276,11 @@ def daily_report(session: Session = Depends(get_session), days: int = Query(1, g
         select(func.count()).select_from(Job).where(Job.status.in_(_ACTIVE))
     ) or 0
 
+    vast_spend = session.scalar(
+        select(func.coalesce(func.sum(Transcript.vast_cost), 0.0))
+        .where(Transcript.created_at >= since, Transcript.vast_cost.is_not(None))
+    ) or 0.0
+
     return {
         "window_days": days,
         "since_iso": since.isoformat(timespec="seconds"),
@@ -257,4 +288,7 @@ def daily_report(session: Session = Depends(get_session), days: int = Query(1, g
         "transcripts_done": int(transcripts_done),
         "transcripts_partial": int(transcripts_partial),
         "current_queue_depth": int(queue_depth),
+        "vast_spend_usd_window": round(float(vast_spend), 4),
+        "vast_spend_usd_rolling_24h": round(_recent_vast_spend_usd(session), 4),
+        "daily_spend_cap_usd": settings.daily_spend_cap_usd,
     }

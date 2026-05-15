@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Text, func
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, Text, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -73,6 +73,10 @@ class Transcript(Base):
     tags: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     lang: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Estimated Vast.ai spend for this transcribe job in USD. Populated by
+    # whisper_client.TranscribeResult.vast_cost; NULL when whisper ran
+    # outside the metered path (warm pool, mock, etc).
+    vast_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
     summary_shortlink: Mapped[str | None] = mapped_column(Text, nullable=True)
     transcript_shortlink: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

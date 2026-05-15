@@ -41,7 +41,14 @@ class Settings(BaseSettings):
     # public URL of this service (for shortlink targets / web-UI links)
     public_base_url: str = "http://localhost:8000"
 
-    worker_concurrency: int = 1
+    # Default 2: scribe is single-user + LAN-only; codex is flock-serialised and
+    # each whisper run owns its own Vast instance, so two in flight is safe and
+    # halves wall time on a small batch.
+    worker_concurrency: int = 2
+
+    # Daily Vast.ai spend cap in USD (rolling 24h). 0 disables the cap.
+    # When exceeded, POST /jobs returns 429 until the rolling window opens up.
+    daily_spend_cap_usd: float = 0.0
 
 
 settings = Settings()
