@@ -100,6 +100,95 @@ def test_get_summary_md_409_on_partial(client, db_session):
     assert "partial" in resp.text.lower()
 
 
+def test_admin_retry_creates_new_job_and_links_failed(client, db_session):
+    """Failed → terminal → retry queues a fresh Job carrying same url+source,
+    and the original job's error is annotated with the new job id."""
+    old_job, _ = _seed_partial_transcript(db_session, video_id="retryfail123")
+    old_job.source = "telegram"
+    db_session.commit()
+    original_error = old_job.error
+
+    resp = client.post(f"/admin/jobs/{old_job.id}/retry")
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    new_job_id = body["job_id"]
+    assert new_job_id != old_job.id
+    assert body["status"] == "queued"
+    assert body["url"] == old_job.url
+    assert body["video_id"] == old_job.video_id
+
+    new_job = db_session.get(Job, new_job_id)
+    assert new_job is not None
+    assert new_job.source == "telegram"
+    assert new_job.video_id == old_job.video_id
+
+    db_session.refresh(old_job)
+    assert old_job.error is not None
+    assert f"recovered as job {new_job_id}" in old_job.error
+    # original error message is preserved as a prefix
+    assert old_job.error.startswith(original_error)
+
+
+def test_admin_retry_creates_new_job_for_done(client, db_session):
+    """Done jobs are terminal too — operator can force a fresh run even though
+    POST /jobs would otherwise dedup against the existing transcript. The
+    original `error` must stay NULL so clients reading `error != null` as a
+    failure indicator don't mis-flag a clean terminal job."""
+    old_job, _ = _seed_done_transcript(db_session, video_id="retrydone123")
+    assert old_job.error is None
+
+    resp = client.post(f"/admin/jobs/{old_job.id}/retry")
+    assert resp.status_code == 201, resp.text
+    new_job_id = resp.json()["job_id"]
+    assert new_job_id != old_job.id
+
+    db_session.refresh(old_job)
+    assert old_job.status == JobStatus.done
+    assert old_job.error is None
+
+
+def test_admin_retry_rejects_active_for_same_video(client, db_session):
+    """A second retry attempt while the first recovery is still queued/in-flight
+    must 409 — otherwise operators can silently fork parallel pipelines and
+    double the Vast spend on the same video."""
+    old_job, _ = _seed_partial_transcript(db_session, video_id="retryactive1")
+
+    first = client.post(f"/admin/jobs/{old_job.id}/retry")
+    assert first.status_code == 201, first.text
+    first_new_id = first.json()["job_id"]
+
+    second = client.post(f"/admin/jobs/{old_job.id}/retry")
+    assert second.status_code == 409
+    detail = second.json()["detail"].lower()
+    assert "active" in detail
+    assert str(first_new_id) in detail
+
+
+def test_admin_retry_rejects_non_terminal(client, db_session):
+    """Queued/in-flight jobs must not be forked — return 409 and keep state."""
+    active = Job(
+        url="https://youtu.be/active123abc", video_id="active123abc",
+        status=JobStatus.transcribing,
+    )
+    db_session.add(active)
+    db_session.commit()
+
+    resp = client.post(f"/admin/jobs/{active.id}/retry")
+    assert resp.status_code == 409
+    detail = resp.json()["detail"].lower()
+    assert "transcribing" in detail
+    assert "non-terminal" in detail
+
+    db_session.refresh(active)
+    assert active.status == JobStatus.transcribing
+    assert active.error is None
+
+
+def test_admin_retry_returns_404_for_missing_job(client):
+    resp = client.post("/admin/jobs/999999/retry")
+    assert resp.status_code == 404
+
+
 def test_list_transcripts_hides_partials_by_default(client, db_session):
     _, done = _seed_done_transcript(db_session, video_id="doneabc1234", title="done")
     _, partial = _seed_partial_transcript(db_session, video_id="partbcd2345")
