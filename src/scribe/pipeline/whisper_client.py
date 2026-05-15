@@ -54,7 +54,7 @@ class TranscribeResult:
 # --- subprocess + http helpers ------------------------------------------
 def _run(cmd: list[str], *, check: bool = True, timeout: int | None = None) -> subprocess.CompletedProcess:
     try:
-        proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+        proc = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         if check:
             raise WhisperError(f"command timed out after {timeout}s: {' '.join(cmd)}") from exc
