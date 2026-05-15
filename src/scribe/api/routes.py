@@ -2,7 +2,8 @@
 
 Note: GET /transcripts/{id} is served as HTML by web/views.py (the worker
 mints the summary shortlink against that path). The JSON API here keeps the
-job endpoints, the transcript list, and the raw .md endpoints.
+job endpoints, the transcript list, the raw .md endpoints, and the admin
+re-summarize endpoint.
 """
 from __future__ import annotations
 
@@ -15,7 +16,9 @@ from sqlalchemy.orm import Session
 from scribe.api.schemas import JobCreate, JobView, TranscriptBrief
 from scribe.db.models import Job, JobStatus, Transcript
 from scribe.db.session import SessionLocal
+from scribe.pipeline import shortlinks, summarizer
 from scribe.pipeline.downloader import DownloadError, extract_video_id
+from scribe.config import settings
 
 router = APIRouter()
 
@@ -44,18 +47,38 @@ def _brief(t: Transcript) -> TranscriptBrief:
     )
 
 
+def _latest_done_transcript(session: Session, video_id: str) -> Transcript | None:
+    """A transcript counts as 'done' only when summary_md is non-NULL.
+    Partial transcripts (whisper succeeded, summary failed) are intentionally
+    excluded from dedup so the next /jobs submission triggers a re-summarize."""
+    return session.scalar(
+        select(Transcript)
+        .where(Transcript.video_id == video_id, Transcript.summary_md.is_not(None))
+        .order_by(Transcript.id.desc())
+    )
+
+
+def _latest_transcript_for_video(session: Session, video_id: str) -> Transcript | None:
+    """Latest transcript regardless of done/partial. Used to surface progress
+    on GET /jobs/{id} — a partial transcript is still useful state to expose."""
+    return session.scalar(
+        select(Transcript)
+        .where(Transcript.video_id == video_id)
+        .order_by(Transcript.id.desc())
+    )
+
+
 @router.post("/jobs", response_model=JobView, status_code=201)
 def create_job(body: JobCreate, session: Session = Depends(get_session)) -> JobView:
-    """Submit a YouTube URL. Deduplicates by video_id against completed
-    transcripts and in-flight jobs before queuing a new one."""
+    """Submit a YouTube URL. Deduplicates by video_id against **done** transcripts
+    and in-flight jobs. Partial transcripts (whisper succeeded but summary
+    failed) do NOT dedup — the new job's worker will resume them."""
     try:
         video_id = extract_video_id(body.url)
     except DownloadError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    done = session.scalar(
-        select(Transcript).where(Transcript.video_id == video_id).order_by(Transcript.id.desc())
-    )
+    done = _latest_done_transcript(session, video_id)
     if done is not None:
         return JobView(job_id=done.job_id, url=body.url, video_id=video_id,
                        status=JobStatus.done.value, deduplicated=True, transcript=_brief(done))
@@ -75,10 +98,11 @@ def create_job(body: JobCreate, session: Session = Depends(get_session)) -> JobV
 
 @router.get("/jobs/{job_id}", response_model=JobView)
 def get_job(job_id: int, session: Session = Depends(get_session)) -> JobView:
+    """Job status + most-recent transcript (done or partial) for this video_id."""
     job = session.get(Job, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
-    transcript = session.scalar(select(Transcript).where(Transcript.job_id == job.id))
+    transcript = _latest_transcript_for_video(session, job.video_id)
     return JobView(
         job_id=job.id, url=job.url, video_id=job.video_id, status=job.status.value,
         error=job.error, transcript=_brief(transcript) if transcript else None,
@@ -90,10 +114,12 @@ def list_transcripts(
     session: Session = Depends(get_session),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    include_partial: bool = Query(False, description="Also return partial transcripts (summary pending)."),
 ) -> list[TranscriptBrief]:
-    rows = session.scalars(
-        select(Transcript).order_by(Transcript.id.desc()).limit(limit).offset(offset)
-    ).all()
+    stmt = select(Transcript).order_by(Transcript.id.desc())
+    if not include_partial:
+        stmt = stmt.where(Transcript.summary_md.is_not(None))
+    rows = session.scalars(stmt.limit(limit).offset(offset)).all()
     return [_brief(t) for t in rows]
 
 
@@ -113,4 +139,35 @@ def get_transcript_md(transcript_id: int, session: Session = Depends(get_session
 @router.get("/transcripts/{transcript_id}/summary.md")
 def get_summary_md(transcript_id: int, session: Session = Depends(get_session)) -> Response:
     t = _require_transcript(transcript_id, session)
+    if t.summary_md is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"transcript {transcript_id} is partial (no summary yet); "
+                   "POST /transcripts/{id}/resummarize to retry.",
+        )
     return Response(content=t.summary_md, media_type="text/markdown; charset=utf-8")
+
+
+@router.post("/transcripts/{transcript_id}/resummarize", response_model=TranscriptBrief)
+def resummarize(transcript_id: int, session: Session = Depends(get_session)) -> TranscriptBrief:
+    """Re-run the summarizer on an existing transcript (partial or done) and
+    UPDATE the row. Useful when codex was down at the time of the original job."""
+    t = _require_transcript(transcript_id, session)
+    try:
+        result = summarizer.summarize(t.transcript_md, title=t.title)
+    except summarizer.SummarizeError as exc:
+        raise HTTPException(status_code=502, detail=f"summarizer failed: {exc}") from exc
+    t.summary_md = result.summary_md
+    t.tags = result.tags or None
+    # mint shortlinks idempotently
+    base = settings.public_base_url.rstrip("/")
+    if not t.summary_shortlink:
+        t.summary_shortlink = shortlinks.make_shortlink(
+            f"{base}/transcripts/{t.id}", verify=False
+        )
+    if not t.transcript_shortlink:
+        t.transcript_shortlink = shortlinks.make_shortlink(
+            f"{base}/transcripts/{t.id}/transcript.md", verify=False
+        )
+    session.commit()
+    return _brief(t)
