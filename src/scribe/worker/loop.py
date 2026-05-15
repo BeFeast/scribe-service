@@ -51,11 +51,15 @@ def _deliver_webhook(session, job: Job) -> None:
         return
     body = render_job_view(session, job).model_dump(mode="json")
     data = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(
-        job.callback_url, data=data,
-        headers={"Content-Type": "application/json"}, method="POST",
-    )
     try:
+        # Request() validates the URL; a malformed callback_url raises
+        # ValueError here — count it as a net_error like any other
+        # delivery failure rather than escaping the "never raises" contract
+        # and marking an otherwise-successful job as failed.
+        req = urllib.request.Request(
+            job.callback_url, data=data,
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
         with urllib.request.urlopen(req, timeout=_WEBHOOK_TIMEOUT_S) as resp:
             resp.read()
         metrics.webhook_deliveries_total.labels(outcome="ok").inc()
@@ -66,7 +70,7 @@ def _deliver_webhook(session, job: Job) -> None:
             "webhook delivery non-2xx: %s -> %s", job.callback_url, exc.code,
             extra={"job_id": job.id, "callback_url": job.callback_url, "status": exc.code},
         )
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
         metrics.webhook_deliveries_total.labels(outcome="net_error").inc()
         log.warning(
             "webhook delivery network error: %s -> %s", job.callback_url, exc,

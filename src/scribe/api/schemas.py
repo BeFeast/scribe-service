@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from pydantic import BaseModel
+from pydantic import AnyHttpUrl, BaseModel
 
 
 class JobCreate(BaseModel):
@@ -11,7 +11,9 @@ class JobCreate(BaseModel):
     source: str | None = None
     # If set, scribe POSTs the JobView JSON here on terminal status. Best-
     # effort delivery — failures are logged + counted but don't fail the job.
-    callback_url: str | None = None
+    # AnyHttpUrl rejects malformed values at the API boundary (422) so the
+    # worker never has to deal with `http:/typo` or similar at delivery time.
+    callback_url: AnyHttpUrl | None = None
 
 
 class TranscriptBrief(BaseModel):
