@@ -278,12 +278,18 @@ async def resummarize(
 # ----------------------------------------------------------------- ops endpoints
 @router.get("/metrics", include_in_schema=False)
 def get_metrics(session: Session = Depends(get_session)) -> Response:
-    """Prometheus exposition. The queue-depth gauge is sampled from the DB
-    on every scrape — cheap, single small query."""
+    """Prometheus exposition. The queue-depth + rolling-spend gauges are
+    sampled from the DB on every scrape — cheap, two small queries."""
     queue_depth = session.scalar(
         select(func.count()).select_from(Job).where(Job.status.in_(_ACTIVE))
     ) or 0
     metrics.worker_queue_depth.set(queue_depth)
+
+    spend_24h = _recent_vast_spend_usd(session)
+    cap = settings.daily_spend_cap_usd
+    metrics.daily_spend_usd.set(spend_24h)
+    metrics.daily_spend_cap_pct.set(metrics.compute_daily_spend_cap_pct(spend_24h, cap))
+
     body, ctype = metrics.export()
     return Response(content=body, media_type=ctype)
 

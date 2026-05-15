@@ -21,6 +21,37 @@ def test_metrics_export_contains_scribe_metrics():
     assert "scribe_worker_queue_depth" in text
     assert "scribe_last_success_timestamp_seconds" in text
     assert "scribe_codex_token_revoked_total" in text
+    assert "scribe_daily_spend_usd" in text
+    assert "scribe_daily_spend_cap_pct" in text
+
+
+def test_compute_daily_spend_cap_pct_math():
+    """Sanity-check the percent math used by the alert metric."""
+    # 80% threshold: exactly at the alert boundary.
+    assert metrics.compute_daily_spend_cap_pct(4.0, 5.0) == 80.0
+    # Under cap.
+    assert metrics.compute_daily_spend_cap_pct(1.25, 5.0) == 25.0
+    # Zero spend.
+    assert metrics.compute_daily_spend_cap_pct(0.0, 5.0) == 0.0
+    # Over cap clamps nothing — alert rule operates on >= 80.
+    assert metrics.compute_daily_spend_cap_pct(7.5, 5.0) == 150.0
+
+
+def test_compute_daily_spend_cap_pct_cap_disabled():
+    """cap <= 0 means the cap is disabled — gauge must return 0, not divide by zero."""
+    assert metrics.compute_daily_spend_cap_pct(3.0, 0.0) == 0.0
+    assert metrics.compute_daily_spend_cap_pct(0.0, 0.0) == 0.0
+    assert metrics.compute_daily_spend_cap_pct(3.0, -1.0) == 0.0
+
+
+def test_daily_spend_gauges_reflect_set_values():
+    """The gauges are sampled in routes.py; verify .set() round-trips through exposition."""
+    metrics.daily_spend_usd.set(4.2)
+    metrics.daily_spend_cap_pct.set(84.0)
+    text = metrics.export()[0].decode()
+    # gauges are emitted unlabelled, so the bare metric name + value is the match.
+    assert "scribe_daily_spend_usd 4.2" in text
+    assert "scribe_daily_spend_cap_pct 84.0" in text
 
 
 def test_metrics_labelled_counter_increments():
