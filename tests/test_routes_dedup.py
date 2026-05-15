@@ -131,8 +131,11 @@ def test_admin_retry_creates_new_job_and_links_failed(client, db_session):
 
 def test_admin_retry_creates_new_job_for_done(client, db_session):
     """Done jobs are terminal too — operator can force a fresh run even though
-    POST /jobs would otherwise dedup against the existing transcript."""
+    POST /jobs would otherwise dedup against the existing transcript. The
+    original `error` must stay NULL so clients reading `error != null` as a
+    failure indicator don't mis-flag a clean terminal job."""
     old_job, _ = _seed_done_transcript(db_session, video_id="retrydone123")
+    assert old_job.error is None
 
     resp = client.post(f"/admin/jobs/{old_job.id}/retry")
     assert resp.status_code == 201, resp.text
@@ -140,7 +143,25 @@ def test_admin_retry_creates_new_job_for_done(client, db_session):
     assert new_job_id != old_job.id
 
     db_session.refresh(old_job)
-    assert old_job.error == f"recovered as job {new_job_id}"
+    assert old_job.status == JobStatus.done
+    assert old_job.error is None
+
+
+def test_admin_retry_rejects_active_for_same_video(client, db_session):
+    """A second retry attempt while the first recovery is still queued/in-flight
+    must 409 — otherwise operators can silently fork parallel pipelines and
+    double the Vast spend on the same video."""
+    old_job, _ = _seed_partial_transcript(db_session, video_id="retryactive1")
+
+    first = client.post(f"/admin/jobs/{old_job.id}/retry")
+    assert first.status_code == 201, first.text
+    first_new_id = first.json()["job_id"]
+
+    second = client.post(f"/admin/jobs/{old_job.id}/retry")
+    assert second.status_code == 409
+    detail = second.json()["detail"].lower()
+    assert "active" in detail
+    assert str(first_new_id) in detail
 
 
 def test_admin_retry_rejects_non_terminal(client, db_session):

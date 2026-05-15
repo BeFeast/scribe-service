@@ -344,10 +344,18 @@ def admin_retry_job(job_id: int, session: Session = Depends(get_session)) -> Job
     """Operator recovery (PRD §5.4): re-queue a terminal job as a new Job row.
 
     Bypasses POST /jobs dedup — a done job's transcript would otherwise short-
-    circuit the re-run. Rejects non-terminal targets so we don't fork in-flight
-    work. The original job's `error` is annotated with the new job id so a
-    later GET /jobs/<old_id> reveals where the recovery went."""
-    job = session.get(Job, job_id)
+    circuit the re-run. Rejects non-terminal targets, and also rejects when
+    any other job for the same video_id is already in flight, so we don't fork
+    active work or double-spend on parallel retries. For `failed` jobs the
+    original `error` is annotated with the new job id so GET /jobs/<old_id>
+    points operators at the recovery; `done` jobs are left untouched because
+    callers (and webhook consumers) treat `error != null` on a terminal row as
+    a failure indicator — see `resummarize` which clears `error` on promotion.
+    """
+    # SELECT ... FOR UPDATE serialises concurrent retries of the same row, so
+    # two simultaneous calls can't both pass the status check and queue twin
+    # recovery jobs (the loser blocks until we commit, then re-reads).
+    job = session.scalar(select(Job).where(Job.id == job_id).with_for_update())
     if job is None:
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
     if job.status not in _TERMINAL:
@@ -359,6 +367,27 @@ def admin_retry_job(job_id: int, session: Session = Depends(get_session)) -> Job
             ),
         )
 
+    # Block forking when an earlier retry (or any /jobs submission) is already
+    # in flight for the same video — operators retrying a terminal job twice
+    # in a row would otherwise queue parallel pipelines and duplicate spend.
+    active = session.scalar(
+        select(Job)
+        .where(Job.video_id == job.video_id, Job.status.in_(_ACTIVE), Job.id != job.id)
+        .order_by(Job.id.desc())
+    )
+    if active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"video_id {job.video_id} already has active job {active.id} "
+                f"({active.status.value}); cannot fork while in flight."
+            ),
+        )
+
+    # retry-bypass: this is an explicit operator recovery, not a fresh user
+    # submission, so the daily Vast spend cap (enforced in create_job) is
+    # intentionally skipped — gating recovery on rolling spend would block
+    # incident response exactly when it's most needed.
     new_job = Job(
         url=job.url, video_id=job.video_id, status=JobStatus.queued,
         source=job.source, callback_url=job.callback_url,
@@ -366,8 +395,12 @@ def admin_retry_job(job_id: int, session: Session = Depends(get_session)) -> Job
     session.add(new_job)
     session.flush()
 
-    marker = f"recovered as job {new_job.id}"
-    job.error = f"{job.error}; {marker}" if job.error else marker
+    # Only annotate `error` on already-failed jobs. Writing to `error` on a
+    # `done` row would flip a clean terminal state into one that looks failed
+    # to any client (or webhook consumer) reading `error != null` as failure.
+    if job.status == JobStatus.failed:
+        marker = f"recovered as job {new_job.id}"
+        job.error = f"{job.error}; {marker}" if job.error else marker
 
     session.commit()
     metrics.job_status_transitions.labels(status=JobStatus.queued.value).inc()
