@@ -146,7 +146,12 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
         # revision (the column existed already with NOT NULL) — check the
         # nullable flag explicitly.
         summary_md_col = next(
-            c for c in inspect(eng).get_columns("transcripts") if c["name"] == "summary_md"
+            (c for c in inspect(eng).get_columns("transcripts") if c["name"] == "summary_md"),
+            None,
+        )
+        assert summary_md_col is not None, (
+            "transcripts.summary_md missing after upgrade head — "
+            "revision a7c1d3e4f201 likely silent-noop'd"
         )
         assert summary_md_col["nullable"], (
             "transcripts.summary_md should be nullable after upgrade head — "
