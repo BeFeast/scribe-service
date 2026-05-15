@@ -63,6 +63,15 @@ codex_token_revoked_total = Counter(
     "Times codex stderr matched an OAuth-token-revocation signature.",
 )
 
+# Webhook delivery — one increment per terminal-status push attempt.
+# outcome: ok (2xx), http_error (non-2xx), net_error (timeout / refused / DNS),
+# skipped (callback_url is NULL).
+webhook_deliveries_total = Counter(
+    "scribe_webhook_deliveries_total",
+    "Webhook delivery attempts, labelled by outcome.",
+    labelnames=("outcome",),
+)
+
 
 def export() -> tuple[bytes, str]:
     """Return (body, content_type) for the /metrics endpoint."""

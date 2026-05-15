@@ -65,6 +65,17 @@ def _latest_done_transcript(session: Session, video_id: str) -> Transcript | Non
     )
 
 
+def render_job_view(session: Session, job: Job) -> JobView:
+    """Build the same JSON GET /jobs/<id> returns. Shared with the worker
+    so webhook payloads stay in lockstep with what consumers see."""
+    transcript = _latest_transcript_for_video(session, job.video_id)
+    return JobView(
+        job_id=job.id, url=job.url, video_id=job.video_id, status=job.status.value,
+        error=job.error, callback_url=job.callback_url,
+        transcript=_brief(transcript) if transcript else None,
+    )
+
+
 def _latest_transcript_for_video(session: Session, video_id: str) -> Transcript | None:
     return session.scalar(
         select(Transcript)
@@ -138,11 +149,18 @@ def create_job(body: JobCreate, session: Session = Depends(get_session)) -> JobV
                 ),
             )
 
-    job = Job(url=body.url, video_id=video_id, status=JobStatus.queued, source=body.source)
+    job = Job(
+        url=body.url, video_id=video_id, status=JobStatus.queued,
+        source=body.source,
+        callback_url=str(body.callback_url) if body.callback_url else None,
+    )
     session.add(job)
     session.commit()
     metrics.job_status_transitions.labels(status=JobStatus.queued.value).inc()
-    return JobView(job_id=job.id, url=job.url, video_id=video_id, status=job.status.value)
+    return JobView(
+        job_id=job.id, url=job.url, video_id=video_id, status=job.status.value,
+        callback_url=job.callback_url,
+    )
 
 
 @router.get("/jobs/{job_id}", response_model=JobView)
@@ -150,11 +168,7 @@ def get_job(job_id: int, session: Session = Depends(get_session)) -> JobView:
     job = session.get(Job, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
-    transcript = _latest_transcript_for_video(session, job.video_id)
-    return JobView(
-        job_id=job.id, url=job.url, video_id=job.video_id, status=job.status.value,
-        error=job.error, transcript=_brief(transcript) if transcript else None,
-    )
+    return render_job_view(session, job)
 
 
 @router.get("/transcripts", response_model=list[TranscriptBrief])

@@ -17,16 +17,20 @@ accumulates into `scribe_vast_spend_usd_total`.
 """
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
 from sqlalchemy import select, text
 
+from scribe.api.routes import render_job_view
 from scribe.config import settings
 from scribe.db.models import Job, JobStatus, Transcript
 from scribe.db.session import SessionLocal
@@ -36,6 +40,38 @@ from scribe.pipeline import downloader, ffmpeg, shortlinks, summarizer, whisper_
 log = logging.getLogger("scribe.worker")
 
 _POLL_INTERVAL = 5.0
+_WEBHOOK_TIMEOUT_S = 10.0
+
+
+def _deliver_webhook(session, job: Job) -> None:
+    """Best-effort POST of the JobView JSON to job.callback_url. Never
+    raises — failures land in scribe_webhook_deliveries_total and the log."""
+    if not job.callback_url:
+        metrics.webhook_deliveries_total.labels(outcome="skipped").inc()
+        return
+    body = render_job_view(session, job).model_dump(mode="json")
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        job.callback_url, data=data,
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_WEBHOOK_TIMEOUT_S) as resp:
+            resp.read()
+        metrics.webhook_deliveries_total.labels(outcome="ok").inc()
+        log.info("webhook delivered", extra={"job_id": job.id, "callback_url": job.callback_url})
+    except urllib.error.HTTPError as exc:
+        metrics.webhook_deliveries_total.labels(outcome="http_error").inc()
+        log.warning(
+            "webhook delivery non-2xx: %s -> %s", job.callback_url, exc.code,
+            extra={"job_id": job.id, "callback_url": job.callback_url, "status": exc.code},
+        )
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        metrics.webhook_deliveries_total.labels(outcome="net_error").inc()
+        log.warning(
+            "webhook delivery network error: %s -> %s", job.callback_url, exc,
+            extra={"job_id": job.id, "callback_url": job.callback_url, "error": str(exc)},
+        )
 
 
 @contextmanager
@@ -177,6 +213,7 @@ def process_job(session, job: Job) -> None:
             failed.status = JobStatus.failed
             failed.error = f"{type(exc).__name__}: {exc}"
             session.commit()
+            _deliver_webhook(session, failed)
         metrics.job_status_transitions.labels(status=JobStatus.failed.value).inc()
         job_log.exception("job failed", extra={"stage": "failed", "error": f"{type(exc).__name__}: {exc}"})
 
