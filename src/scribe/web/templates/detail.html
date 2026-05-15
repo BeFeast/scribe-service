@@ -14,7 +14,7 @@
   <a href="/transcripts/{{ t.id }}/transcript.md">transcript.md</a>
   {% if t.summary_shortlink %}<a href="{{ t.summary_shortlink }}">{{ t.summary_shortlink }}</a>{% endif %}
 </div>
-{% if t.tags %}<div class="tags" style="margin-bottom:1rem">{% for tag in t.tags %}<span class="tag">{{ tag }}</span>{% endfor %}</div>{% endif %}
+{% if t.tags %}<div class="tags" style="margin-bottom:1rem">{% for tg in t.tags %}<a class="tag" href="/?tag={{ tg|urlencode }}">{{ tg }}</a>{% endfor %}</div>{% endif %}
 
 <section>
   <h2>Summary</h2>
