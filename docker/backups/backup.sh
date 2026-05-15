@@ -31,9 +31,19 @@ tr_dir="$BACKUP_ROOT/transcripts"
 mkdir -p "$db_dir" "$tr_dir"
 
 # ---------- 1. pg_dump --------------------------------------------------------
+# Write to a hidden .tmp first and atomically rename on success. On any failure
+# the .tmp is cleaned up, so retention never sees a partial / unrestorable file
+# with a valid-looking name.
+db_tmp="$db_dir/.scribe-$stamp.sql.gz.tmp"
 db_out="$db_dir/scribe-$stamp.sql.gz"
 log "pg_dump -> $db_out"
-pg_dump --no-owner --no-privileges "$pg_url" | gzip -9 > "$db_out"
+if pg_dump --no-owner --no-privileges "$pg_url" | gzip -9 > "$db_tmp"; then
+  mv "$db_tmp" "$db_out"
+else
+  rm -f "$db_tmp"
+  log "pg_dump FAILED (db_url ok? server reachable? version match?)"
+  exit 1
+fi
 db_bytes="$(stat -c%s "$db_out")"
 log "pg_dump done ($db_bytes bytes)"
 
@@ -69,21 +79,39 @@ for row in "${rows[@]}"; do
   [[ -z "$slug" ]] && slug="transcript"
   target="$tr_dir/$id-$slug"
   mkdir -p "$target"
-  curl -sf "$SCRIBE_BASE_URL/transcripts/$id/summary.md"    -o "$target/summary.md"    || true
-  curl -sf "$SCRIBE_BASE_URL/transcripts/$id/transcript.md" -o "$target/transcript.md" || true
-  exported=$((exported + 1))
+  wrote_summary=0; wrote_transcript=0
+  curl -sf "$SCRIBE_BASE_URL/transcripts/$id/summary.md"    -o "$target/summary.md"    && wrote_summary=1    || true
+  curl -sf "$SCRIBE_BASE_URL/transcripts/$id/transcript.md" -o "$target/transcript.md" && wrote_transcript=1 || true
+  if (( wrote_summary || wrote_transcript )); then
+    # Touch the dir so the retention prune sees a fresh mtime even when both
+    # markdown files are identical to the previous run (overwrite via curl -o
+    # preserves the dir mtime on most filesystems).
+    touch "$target"
+    exported=$((exported + 1))
+  else
+    log "warn: id=$id had no readable artifacts; leaving dir untouched"
+  fi
 done
 log "exported $exported transcripts"
 
 # ---------- 3. prune ---------------------------------------------------------
-# Cull DB dumps older than RETENTION_DAYS by mtime. The .md tree is
-# small (text) and represents the current state of transcripts at backup
-# time; the latest run owns every directory it touched. Stale directories
-# (transcripts that vanished from the DB — should be rare) get pruned too
-# when their mtime falls behind.
+# DB dumps prune purely by filename mtime (each run is a fresh file). For the
+# .md tree we look at the newest file inside each subdir — `mkdir -p` on an
+# existing directory doesn't refresh its mtime, and overwriting the same
+# `summary.md` doesn't either, so dir-mtime would falsely report long-lived
+# transcripts as stale. Newest-inner-file mtime is the right signal.
 log "pruning entries older than $RETENTION_DAYS day(s)"
 find "$db_dir" -type f -name '*.sql.gz' -mtime "+$RETENTION_DAYS" -print -delete
-find "$tr_dir" -mindepth 1 -maxdepth 1 -type d -mtime "+$RETENTION_DAYS" -print -exec rm -rf {} +
+while IFS= read -r -d '' d; do
+  newest=$(find "$d" -type f -printf '%T@\n' 2>/dev/null | sort -nr | head -1)
+  if [[ -n "$newest" ]]; then
+    age_days=$(awk -v n="$newest" 'BEGIN { print int((systime() - n) / 86400) }')
+    if (( age_days > RETENTION_DAYS )); then
+      echo "$d"
+      rm -rf "$d"
+    fi
+  fi
+done < <(find "$tr_dir" -mindepth 1 -maxdepth 1 -type d -print0)
 
 log "backup OK"
 printf '%s\n' "$(date -Iseconds) ok db=$db_bytes transcripts=$exported" > "$BACKUP_ROOT/_latest.log"
