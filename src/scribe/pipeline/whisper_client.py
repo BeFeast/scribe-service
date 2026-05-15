@@ -25,7 +25,7 @@ from pathlib import Path
 from scribe.config import settings
 
 VAST_API = "https://console.vast.ai/api/v0"
-VAST_IMAGE = "ghcr.io/kossoy/openclaw-video-summary-vast:cuda12.4-fast"
+VAST_IMAGE = "ghcr.io/kossoy/openclaw-video-summary-vast:cuda12.4-whisper"
 GPU_REGEX = r"\b(RTX\s+4090|(RTX\s+)?A[2456][05]00|A10|A40|L4|L40S?|RTX\s+(4000|4500|5000|5500|6000)(\s+Ada(\s+Generation)?)?)\b"
 MIN_CUDA = 12.4
 MAX_PRICE_PER_HOUR = 1.0
