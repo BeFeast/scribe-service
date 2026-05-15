@@ -94,6 +94,16 @@ webhook_deliveries_total = Counter(
     labelnames=("outcome",),
 )
 
+# Wall time of the urlopen call for a successful webhook delivery. Failures
+# (network error, non-2xx, malformed URL) are intentionally excluded so the
+# histogram reflects the latency distribution of receivers that actually
+# accepted the push.
+webhook_delivery_latency_seconds = Histogram(
+    "scribe_webhook_delivery_latency_seconds",
+    "Wall time of urlopen for successful webhook deliveries.",
+    buckets=(.05, .1, .25, .5, 1, 2.5, 5, 10),
+)
+
 
 def export() -> tuple[bytes, str]:
     """Return (body, content_type) for the /metrics endpoint."""
