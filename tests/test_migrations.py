@@ -7,6 +7,14 @@ id, or an `upgrade()` body that no-ops. Each such bug would let
 
 Requires SCRIBE_TEST_DATABASE_URL (same as other DB-coupled tests). Skipped
 locally when unset; CI provides a Postgres service.
+
+Isolation note: this test runs against a dedicated `{base}_migrations`
+Postgres database that the fixture CREATEs and DROPs around the test. It
+deliberately does NOT touch the shared test DB used by `conftest.engine`,
+because that fixture is session-scoped and runs `Base.metadata.create_all`
+exactly once — wiping its DB mid-session (under e.g. pytest-randomly or
+explicit ordering) would cascade missing-table failures into unrelated
+`db_session` tests.
 """
 from __future__ import annotations
 
@@ -14,40 +22,82 @@ import pathlib
 
 import pytest
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import make_url
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
-def _drop_public_schema(eng) -> None:
-    """Reset the test DB to a truly empty public schema — kills app tables,
-    enum types, sequences, AND alembic_version itself. CASCADE clears FKs."""
-    with eng.begin() as conn:
-        conn.execute(text("DROP SCHEMA public CASCADE"))
-        conn.execute(text("CREATE SCHEMA public"))
+def _admin_engine(base_url):
+    """Engine against the maintenance `postgres` DB — required to issue
+    CREATE/DROP DATABASE, since you cannot drop a DB you are connected to."""
+    admin_url = base_url.set(database="postgres")
+    return create_engine(admin_url, future=True, isolation_level="AUTOCOMMIT")
+
+
+def _drop_database(admin_eng, name: str) -> None:
+    with admin_eng.connect() as conn:
+        # Terminate leftover sessions before DROP — a failed prior run can
+        # leave one behind, and DROP DATABASE refuses while connections exist.
+        conn.execute(
+            text(
+                "SELECT pg_terminate_backend(pid) "
+                "FROM pg_stat_activity "
+                "WHERE datname = :db AND pid <> pg_backend_pid()"
+            ),
+            {"db": name},
+        )
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))
 
 
 @pytest.fixture()
 def fresh_db_url(test_database_url, monkeypatch):
-    """Yield a URL pointing at a wiped-clean test DB. Also retargets
-    `scribe.config.settings.database_url` so `migrations/env.py` picks up
-    the test URL when alembic re-imports it on each command."""
+    """Create a dedicated `{base}_migrations` Postgres DB for this test only,
+    yield its URL, and drop the DB on teardown.
+
+    Why a separate DB: the session-scoped `engine` fixture in conftest.py
+    runs `Base.metadata.create_all` once per session against the main test
+    DB. If this fixture wiped that DB, every later `db_session` test would
+    fail with missing-table errors whenever ordering put migration tests
+    after the first DB-coupled test (e.g. pytest-randomly).
+    """
     from scribe.config import settings
 
-    monkeypatch.setattr(settings, "database_url", test_database_url)
+    base_url = make_url(test_database_url)
+    if not base_url.database:
+        pytest.skip("SCRIBE_TEST_DATABASE_URL has no database name")
+    migration_db = f"{base_url.database}_migrations"
+    migration_url = base_url.set(database=migration_db)
+    migration_url_str = migration_url.render_as_string(hide_password=False)
 
-    eng = create_engine(test_database_url, future=True)
+    admin_eng = _admin_engine(base_url)
     try:
-        _drop_public_schema(eng)
-        yield test_database_url
+        # IF EXISTS guards against leftovers from a prior crashed run.
+        _drop_database(admin_eng, migration_db)
+        with admin_eng.connect() as conn:
+            conn.execute(text(f'CREATE DATABASE "{migration_db}"'))
+
+        # env.py reads settings.database_url at command time — see the
+        # comment in _alembic_config for why this monkeypatch is the
+        # actual URL propagation mechanism.
+        monkeypatch.setattr(settings, "database_url", migration_url_str)
+        try:
+            yield migration_url_str
+        finally:
+            _drop_database(admin_eng, migration_db)
     finally:
-        _drop_public_schema(eng)
-        eng.dispose()
+        admin_eng.dispose()
 
 
 def _alembic_config(url: str):
     from alembic.config import Config
 
     cfg = Config(str(REPO_ROOT / "alembic.ini"))
+    # NOTE: migrations/env.py runs `config.set_main_option("sqlalchemy.url",
+    # settings.database_url)` on every alembic command invocation, so the
+    # line below is overwritten before each upgrade/downgrade. URL
+    # propagation actually relies on the monkeypatch in `fresh_db_url`.
+    # Kept here as a belt-and-suspenders default for any future code path
+    # that reads the config without going through env.py.
     cfg.set_main_option("sqlalchemy.url", url)
     return cfg
 
@@ -63,9 +113,9 @@ def _column_names(eng, table: str) -> set[str]:
 def test_alembic_full_chain_on_fresh_db(fresh_db_url):
     """upgrade head must land jobs + transcripts with every column added by
     every revision in the chain; downgrade base must take the schema back to
-    empty. Naming each column explicitly is the point — a silently-skipped
-    revision surfaces here as a clear AssertionError instead of a downstream
-    NoSuchColumn at runtime."""
+    empty. Naming each column (and each nullable change) explicitly is the
+    point — a silently-skipped revision surfaces here as a clear
+    AssertionError instead of a downstream NoSuchColumn at runtime."""
     from alembic import command
 
     cfg = _alembic_config(fresh_db_url)
@@ -89,6 +139,18 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
         assert "vast_cost" in transcripts_cols, (
             "transcripts.vast_cost missing after upgrade head — "
             "revision c8b2e5f3a402 likely silent-noop'd"
+        )
+
+        # Revision a7c1d3e4f201 relaxes transcripts.summary_md to nullable.
+        # Asserting column presence alone would miss a silent-noop of that
+        # revision (the column existed already with NOT NULL) — check the
+        # nullable flag explicitly.
+        summary_md_col = next(
+            c for c in inspect(eng).get_columns("transcripts") if c["name"] == "summary_md"
+        )
+        assert summary_md_col["nullable"], (
+            "transcripts.summary_md should be nullable after upgrade head — "
+            "revision a7c1d3e4f201 likely silent-noop'd"
         )
 
         command.downgrade(cfg, "base")
