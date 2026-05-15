@@ -11,16 +11,20 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from scribe.api.routes import router as api_router
+from scribe.obs.logging import configure as configure_logging
 from scribe.web.views import router as web_router
 from scribe.worker.loop import start_workers
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+# Structured JSON logging — replaces basicConfig. Honours SCRIBE_LOG_LEVEL.
+configure_logging()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     threads, stop = start_workers()
-    logging.getLogger("scribe").info("started %d worker thread(s)", len(threads))
+    logging.getLogger("scribe").info(
+        "workers started", extra={"thread_count": len(threads)}
+    )
     try:
         yield
     finally:

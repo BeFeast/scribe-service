@@ -22,6 +22,16 @@ class Settings(BaseSettings):
     # "minimal" is rejected by the API (codex default tools need >= low).
     codex_reasoning: str = "low"
 
+    # Lock file ensuring at most one codex invocation runs at a time inside
+    # the container. ChatGPT OAuth refresh tokens are single-use; concurrent
+    # codex processes would race the refresh and revoke each other's tokens.
+    codex_lock_path: str = "/tmp/scribe-codex.lock"
+
+    # Optional admin Telegram channel for operational alerts (e.g. codex
+    # token revoked, summarizer down). Both must be set to enable.
+    admin_telegram_bot_token: str = ""
+    admin_telegram_chat_id: str = ""
+
     # go.oklabs.uk shortener (Chhoto on Edgebox). api_url/api_key are env-driven
     # (never hardcode credentials); shortlink_base is the public resolver host.
     shortlink_base: str = "http://go.oklabs.uk"

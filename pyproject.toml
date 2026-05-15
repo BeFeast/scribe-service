@@ -15,6 +15,7 @@ dependencies = [
     "python-multipart>=0.0.20",
     "yt-dlp>=2026.3.17",
     "markdown>=3.10.2",
+    "prometheus-client>=0.25.0",
 ]
 
 [build-system]

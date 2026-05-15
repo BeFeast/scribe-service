@@ -51,7 +51,13 @@ class Job(Base):
 
 
 class Transcript(Base):
-    """The product of a completed job: transcript + summary + metadata. Source of truth."""
+    """The product of a completed job: transcript + summary + metadata. Source of truth.
+
+    A transcript may be **partial** — `summary_md IS NULL` — after a successful
+    whisper run whose summary step failed. Partial rows let the worker retry just
+    the summary on the next attempt instead of re-running GPU transcription.
+    `summary_md` flips to a non-NULL string once codex returns successfully.
+    """
 
     __tablename__ = "transcripts"
 
@@ -62,7 +68,8 @@ class Transcript(Base):
     video_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     transcript_md: Mapped[str] = mapped_column(Text, nullable=False)
-    summary_md: Mapped[str] = mapped_column(Text, nullable=False)
+    # NULL = partial (whisper done, summary pending or failed).
+    summary_md: Mapped[str | None] = mapped_column(Text, nullable=True)
     tags: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     lang: Mapped[str | None] = mapped_column(Text, nullable=True)
