@@ -41,43 +41,65 @@ log = logging.getLogger("scribe.worker")
 
 _POLL_INTERVAL = 5.0
 _WEBHOOK_TIMEOUT_S = 10.0
+_WEBHOOK_RETRY_BACKOFFS_S = (1.0, 4.0, 16.0)
+
+
+def _count_webhook_attempt(outcome: str) -> None:
+    metrics.webhook_deliveries_total.labels(outcome=outcome).inc()
+    metrics.webhook_attempts_total.labels(outcome=outcome).inc()
 
 
 def _deliver_webhook(session, job: Job) -> None:
     """Best-effort POST of the JobView JSON to job.callback_url. Never
-    raises — failures land in scribe_webhook_deliveries_total and the log."""
+    raises — failures land in webhook metrics and the log."""
     if not job.callback_url:
         metrics.webhook_deliveries_total.labels(outcome="skipped").inc()
         return
     body = render_job_view(session, job).model_dump(mode="json")
     data = json.dumps(body).encode("utf-8")
-    try:
-        # Request() validates the URL; a malformed callback_url raises
-        # ValueError here — count it as a net_error like any other
-        # delivery failure rather than escaping the "never raises" contract
-        # and marking an otherwise-successful job as failed.
-        req = urllib.request.Request(
-            job.callback_url, data=data,
-            headers={"Content-Type": "application/json"}, method="POST",
-        )
-        start = time.monotonic()
-        with urllib.request.urlopen(req, timeout=_WEBHOOK_TIMEOUT_S) as resp:
-            resp.read()
-        metrics.webhook_delivery_latency_seconds.observe(time.monotonic() - start)
-        metrics.webhook_deliveries_total.labels(outcome="ok").inc()
-        log.info("webhook delivered", extra={"job_id": job.id, "callback_url": job.callback_url})
-    except urllib.error.HTTPError as exc:
-        metrics.webhook_deliveries_total.labels(outcome="http_error").inc()
-        log.warning(
-            "webhook delivery non-2xx: %s -> %s", job.callback_url, exc.code,
-            extra={"job_id": job.id, "callback_url": job.callback_url, "status": exc.code},
-        )
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-        metrics.webhook_deliveries_total.labels(outcome="net_error").inc()
-        log.warning(
-            "webhook delivery network error: %s -> %s", job.callback_url, exc,
-            extra={"job_id": job.id, "callback_url": job.callback_url, "error": str(exc)},
-        )
+    for attempt, backoff_s in enumerate((*_WEBHOOK_RETRY_BACKOFFS_S, None), start=1):
+        try:
+            # Request() validates the URL; a malformed callback_url raises
+            # ValueError here — count it as a net_error like any other
+            # delivery failure rather than escaping the "never raises" contract.
+            req = urllib.request.Request(
+                job.callback_url, data=data,
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            start = time.monotonic()
+            with urllib.request.urlopen(req, timeout=_WEBHOOK_TIMEOUT_S) as resp:
+                resp.read()
+            metrics.webhook_delivery_latency_seconds.observe(time.monotonic() - start)
+            _count_webhook_attempt("ok")
+            log.info(
+                "webhook delivered",
+                extra={"job_id": job.id, "callback_url": job.callback_url, "attempt": attempt},
+            )
+            return
+        except urllib.error.HTTPError as exc:
+            _count_webhook_attempt("http_error")
+            log.warning(
+                "webhook delivery non-2xx: %s -> %s", job.callback_url, exc.code,
+                extra={
+                    "job_id": job.id,
+                    "callback_url": job.callback_url,
+                    "status": exc.code,
+                    "attempt": attempt,
+                },
+            )
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            _count_webhook_attempt("net_error")
+            log.warning(
+                "webhook delivery network error: %s -> %s", job.callback_url, exc,
+                extra={
+                    "job_id": job.id,
+                    "callback_url": job.callback_url,
+                    "error": str(exc),
+                    "attempt": attempt,
+                },
+            )
+        if backoff_s is not None:
+            time.sleep(backoff_s)
 
 
 @contextmanager
