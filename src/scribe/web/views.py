@@ -11,6 +11,7 @@ The JSON API keeps /transcripts (list) and the raw .md endpoints.
 from __future__ import annotations
 
 import datetime as dt
+import email.utils
 import html
 import re
 from pathlib import Path
@@ -51,12 +52,22 @@ def _render_md(text: str) -> str:
     )
 
 
+def _escape_like(value: str) -> str:
+    """Escape SQL wildcards so user-supplied `%` / `_` are matched literally.
+    Postgres' default LIKE escape is backslash; we keep the default."""
+    return (
+        value.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+
+
 def _build_filter(stmt, *, q: str | None, tag: str | None):
     """Apply optional search + tag filters in-place. q matches title +
     transcript_md case-insensitively; tag is exact-match against the
     Postgres array column."""
     if q:
-        like = f"%{q.strip()}%"
+        like = f"%{_escape_like(q.strip())}%"
         stmt = stmt.where(or_(Transcript.title.ilike(like), Transcript.transcript_md.ilike(like)))
     if tag:
         # Postgres-specific: `value = ANY(array_col)`. tags column is TEXT[].
@@ -104,9 +115,6 @@ def detail(
 
 
 # ---------------------------------------------------------------- RSS feed
-_TAGS_LINE_RE = re.compile(r"^tags:\s*\[([^\]]*)\]", re.MULTILINE)
-
-
 def _summary_excerpt(transcript: Transcript, limit: int = 320) -> str:
     """First N chars of the summary body, with frontmatter stripped and
     markdown reduced to plain text suitable for a feed reader."""
@@ -119,8 +127,10 @@ def _summary_excerpt(transcript: Transcript, limit: int = 320) -> str:
 
 
 def _rss_date(when: dt.datetime) -> str:
-    # RFC 822 — RSS spec
-    return when.astimezone(dt.UTC).strftime("%a, %d %b %Y %H:%M:%S +0000")
+    # RFC 822 — RSS spec. email.utils.formatdate is locale-independent;
+    # strftime would honour LC_TIME and emit non-English month/day names
+    # on hosts that aren't on C / en_US, breaking strict feed parsers.
+    return email.utils.formatdate(when.astimezone(dt.UTC).timestamp(), usegmt=True)
 
 
 @router.get("/feed.xml", include_in_schema=False)
@@ -131,7 +141,7 @@ def feed(
 ) -> Response:
     stmt = _build_filter(select(Transcript), q=None, tag=tag).order_by(Transcript.id.desc()).limit(_FEED_LIMIT)
     rows = session.scalars(stmt).all()
-    base = settings.public_base_url.rstrip("/")
+    base = html.escape(settings.public_base_url.rstrip("/"))
     title_suffix = f" — tag:{tag}" if tag else ""
     items: list[str] = []
     for t in rows:
