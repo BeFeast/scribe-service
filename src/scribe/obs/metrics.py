@@ -52,7 +52,7 @@ daily_spend_usd = Gauge(
 )
 
 # Current rolling 24h spend as a percentage of SCRIBE_DAILY_SPEND_CAP_USD.
-# 0 when the cap is disabled (cap == 0). Prometheus alert rule fires at >= 80.
+# 0 when the cap is disabled (cap <= 0). Prometheus alert rule fires at >= 80.
 daily_spend_cap_pct = Gauge(
     "scribe_daily_spend_cap_pct",
     "Rolling 24h Vast spend as a percent of the daily cap; 0 when cap disabled.",
