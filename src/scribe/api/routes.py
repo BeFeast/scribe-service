@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import time
 from collections.abc import Iterator
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, select, text
@@ -284,6 +286,45 @@ def get_metrics(session: Session = Depends(get_session)) -> Response:
     metrics.worker_queue_depth.set(queue_depth)
     body, ctype = metrics.export()
     return Response(content=body, media_type=ctype)
+
+
+@router.get("/admin/backup-status")
+def backup_status() -> dict:
+    """Read the heartbeat written by the scribe-backups sidecar (PRD §4.12).
+
+    Cheap, file-based, no DB hit — designed for `curl -f` healthcheck polling.
+    Returns 200 with `stale=true` (and `last_success_ts=null`) when the file
+    is missing or unreadable so the endpoint itself stays observable; callers
+    decide on alerting via the `stale` flag.
+    """
+    path = Path(settings.backup_status_path)
+    payload: dict = {
+        "path": str(path),
+        "last_success_ts": None,
+        "last_success_iso": None,
+        "age_seconds": None,
+        "stale_after_seconds": settings.backup_stale_after_seconds,
+        "stale": True,
+    }
+    try:
+        ts = int(path.read_text().strip())
+    except FileNotFoundError:
+        payload["error"] = "no backup recorded yet"
+        return payload
+    except (OSError, ValueError) as exc:
+        payload["error"] = f"unreadable heartbeat: {exc}"
+        return payload
+
+    now = int(time.time())
+    age = max(0, now - ts)
+    threshold = settings.backup_stale_after_seconds
+    payload.update(
+        last_success_ts=ts,
+        last_success_iso=dt.datetime.fromtimestamp(ts, tz=dt.UTC).isoformat(timespec="seconds"),
+        age_seconds=age,
+        stale=bool(threshold) and age >= threshold,
+    )
+    return payload
 
 
 @router.get("/admin/daily-report")

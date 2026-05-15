@@ -115,3 +115,10 @@ done < <(find "$tr_dir" -mindepth 1 -maxdepth 1 -type d -print0)
 
 log "backup OK"
 printf '%s\n' "$(date -Iseconds) ok db=$db_bytes transcripts=$exported" > "$BACKUP_ROOT/_latest.log"
+
+# Last-success heartbeat consumed by scribe's GET /admin/backup-status. Write
+# via a sibling .tmp + rename so a concurrent reader never sees a half-written
+# value (epoch ints are short but a slow disk + truncate can still split).
+ts_tmp="$BACKUP_ROOT/.tmp.scribe-last-success-ts.$$"
+date +%s > "$ts_tmp"
+mv "$ts_tmp" "$BACKUP_ROOT/_last_success_ts"
