@@ -60,8 +60,10 @@ def _deliver_webhook(session, job: Job) -> None:
             job.callback_url, data=data,
             headers={"Content-Type": "application/json"}, method="POST",
         )
+        start = time.monotonic()
         with urllib.request.urlopen(req, timeout=_WEBHOOK_TIMEOUT_S) as resp:
             resp.read()
+        metrics.webhook_delivery_latency_seconds.observe(time.monotonic() - start)
         metrics.webhook_deliveries_total.labels(outcome="ok").inc()
         log.info("webhook delivered", extra={"job_id": job.id, "callback_url": job.callback_url})
     except urllib.error.HTTPError as exc:
