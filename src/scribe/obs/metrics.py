@@ -65,6 +65,7 @@ def compute_daily_spend_cap_pct(spent_usd: float, cap_usd: float) -> float:
         return 0.0
     return (spent_usd / cap_usd) * 100.0
 
+
 # Queue depth — number of non-terminal jobs. Sampled on each /metrics scrape.
 worker_queue_depth = Gauge(
     "scribe_worker_queue_depth",
@@ -102,6 +103,14 @@ webhook_delivery_latency_seconds = Histogram(
     "scribe_webhook_delivery_latency_seconds",
     "Wall time of urlopen for successful webhook deliveries.",
     buckets=(.05, .1, .25, .5, 1, 2.5, 5, 10),
+)
+
+# Webhook attempts — one increment per POST attempt.
+# outcome: ok (2xx), http_error (non-2xx), net_error (timeout / refused / DNS).
+webhook_attempts_total = Counter(
+    "scribe_webhook_attempts_total",
+    "Webhook POST attempts, labelled by outcome.",
+    labelnames=("outcome",),
 )
 
 
