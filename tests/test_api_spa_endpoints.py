@@ -282,6 +282,7 @@ def test_api_ops_empty(client, tmp_path, monkeypatch):
     assert body["transcripts_partial"] == 0
     assert len(body["spend_series_14d"]) == 14
     assert body["backup"]["stale"] is True
+    assert body["recent_failures"] == []
 
 
 def test_api_ops_happy_path(client, db_session, tmp_path, monkeypatch):
@@ -291,7 +292,14 @@ def test_api_ops_happy_path(client, db_session, tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "daily_spend_cap_usd", 2.0)
     now = dt.datetime.now(dt.UTC)
     active = Job(url="https://youtu.be/opsactive1", video_id="opsactive1", status=JobStatus.queued)
+    failed = Job(
+        url="https://youtu.be/opsfailed1",
+        video_id="opsfailed1",
+        status=JobStatus.failed,
+        error="codex exited 1",
+    )
     db_session.add(active)
+    db_session.add(failed)
     _seed_transcript(
         db_session,
         video_id="opsdone1111",
@@ -312,9 +320,12 @@ def test_api_ops_happy_path(client, db_session, tmp_path, monkeypatch):
 
     body = client.get("/api/ops").json()
     assert body["jobs_by_status"]["queued"] == 1
+    assert body["jobs_by_status"]["failed"] == 1
     assert body["queue_depth"] == 1
     assert body["transcripts_done"] == 1
     assert body["transcripts_partial"] == 1
     assert body["vast_spend_24h"] == 0.75
     assert body["daily_spend_cap_usd"] == 2.0
     assert body["backup"]["stale"] is False
+    assert body["recent_failures"][0]["id"] == failed.id
+    assert body["recent_failures"][0]["error"] == "codex exited 1"

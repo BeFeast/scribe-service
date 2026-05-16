@@ -145,6 +145,14 @@ class SystemSnapshot(BaseModel):
     status: str
 
 
+class RecentFailureSnapshot(BaseModel):
+    id: int
+    video_id: str
+    url: str
+    error: str | None = None
+    updated_at: dt.datetime
+
+
 class OpsSnapshot(BaseModel):
     window_days: int
     jobs_by_status: dict[str, int]
@@ -158,6 +166,7 @@ class OpsSnapshot(BaseModel):
     spend_series_14d: list[float]
     backup: BackupSnapshot
     worker_pool: WorkerPoolSnapshot
+    recent_failures: list[RecentFailureSnapshot]
     system: list[SystemSnapshot]
 
 

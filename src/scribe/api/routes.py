@@ -39,6 +39,7 @@ from scribe.api.schemas import (
     PromptListView,
     PromptVersionView,
     PromptWrite,
+    RecentFailureSnapshot,
     SystemSnapshot,
     TranscriptBrief,
     TranscriptFull,
@@ -983,6 +984,12 @@ def api_ops(response: Response, session: Session = Depends(get_session)) -> OpsS
     ) or 0
     # DB-derived proxy for worker occupancy. It can lag real OS thread state
     # after a worker crash until retry/recovery updates the in-flight jobs.
+    recent_failures = session.execute(
+        select(Job)
+        .where(Job.status == JobStatus.failed)
+        .order_by(Job.updated_at.desc(), Job.id.desc())
+        .limit(50)
+    ).scalars()
 
     return OpsSnapshot(
         window_days=1,
@@ -1000,6 +1007,16 @@ def api_ops(response: Response, session: Session = Depends(get_session)) -> OpsS
             active=min(int(active_workers), settings.worker_concurrency),
             total=settings.worker_concurrency,
         ),
+        recent_failures=[
+            RecentFailureSnapshot(
+                id=job.id,
+                video_id=job.video_id,
+                url=job.url,
+                error=job.error,
+                updated_at=job.updated_at,
+            )
+            for job in recent_failures
+        ],
         system=[
             SystemSnapshot(label="scribe-service", value=_service_version(), status="ok"),
             SystemSnapshot(label="Postgres", value="connected", status="ok"),

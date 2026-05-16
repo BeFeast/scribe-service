@@ -8,6 +8,7 @@ import { CMDK_OPEN_EVENT } from "./constants";
 import { useRoute } from "./hooks/useRoute";
 import { useTweaks } from "./hooks/useTweaks";
 import { Library } from "./pages/Library";
+import { Ops } from "./pages/Ops";
 import { Transcript } from "./pages/Transcript";
 import "./styles.css";
 
@@ -53,6 +54,8 @@ function App() {
 						/>
 					) : route.page === "transcript" ? (
 						<Transcript id={route.params.id} navigate={navigate} />
+					) : route.page === "ops" ? (
+						<Ops navigate={navigate} />
 					) : (
 						<Placeholder page={route.page} id={route.params.id} />
 					)}
