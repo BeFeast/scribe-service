@@ -989,7 +989,7 @@ def api_ops(response: Response, session: Session = Depends(get_session)) -> OpsS
         .where(Job.status == JobStatus.failed)
         .order_by(Job.updated_at.desc(), Job.id.desc())
         .limit(50)
-    ).scalars()
+    ).scalars().all()
 
     return OpsSnapshot(
         window_days=1,

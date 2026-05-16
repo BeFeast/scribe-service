@@ -299,12 +299,14 @@ export function Ops({ navigate }: OpsProps) {
 				</div>
 			) : null}
 
-			{snapshot === null ? (
+			{snapshot === null && loading ? (
 				<div className="card">
 					<span className="spinner" />
 					<p className="muted">Loading ops snapshot.</p>
 				</div>
-			) : (
+			) : null}
+
+			{snapshot !== null ? (
 				<>
 					<div className="metric-grid">
 						<MetricCard
@@ -358,7 +360,9 @@ export function Ops({ navigate }: OpsProps) {
 						<div className="section-line">
 							<p className="section-label">Recent failures</p>
 							<span className="muted">
-								{compactNumber(failures.length)} total
+								{failures.length >= 50
+									? "50+ total"
+									: `${compactNumber(failures.length)} total`}
 							</span>
 						</div>
 						{visible.length === 0 ? (
@@ -398,7 +402,7 @@ export function Ops({ navigate }: OpsProps) {
 						</div>
 					</section>
 				</>
-			)}
+			) : null}
 		</section>
 	);
 }
