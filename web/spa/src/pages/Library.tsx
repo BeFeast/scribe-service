@@ -323,19 +323,29 @@ function InFlightStrip({ navigate }: { navigate: (route: Route) => void }) {
 		let abort: AbortController | null = null;
 		let timer: number | undefined;
 		let stopped = false;
+		let isPolling = false;
+
+		function schedulePoll(delayMs: number) {
+			window.clearTimeout(timer);
+			if (!stopped) {
+				timer = window.setTimeout(poll, delayMs);
+			}
+		}
 
 		async function poll() {
-			if (stopped) {
+			if (stopped || isPolling) {
 				return;
 			}
 			if (document.hidden) {
-				timer = window.setTimeout(poll, 30000);
+				schedulePoll(30000);
 				return;
 			}
-			abort = new AbortController();
+			isPolling = true;
+			const controller = new AbortController();
+			abort = controller;
 			try {
 				const response = await fetch("/api/jobs/active", {
-					signal: abort.signal,
+					signal: controller.signal,
 				});
 				if (!response.ok) {
 					throw new Error("active jobs request failed");
@@ -343,15 +353,17 @@ function InFlightStrip({ navigate }: { navigate: (route: Route) => void }) {
 				const body = (await response.json()) as ActiveJobsResponse;
 				setJobs(body.jobs);
 				setError(false);
-				timer = window.setTimeout(
-					poll,
-					hasNonTerminalJob(body.jobs) ? 5000 : 30000,
-				);
+				schedulePoll(hasNonTerminalJob(body.jobs) ? 5000 : 30000);
 			} catch (loadError) {
-				if (!abort.signal.aborted) {
+				if (!controller.signal.aborted) {
 					setError(true);
-					timer = window.setTimeout(poll, 30000);
+					schedulePoll(30000);
 				}
+			} finally {
+				if (abort === controller) {
+					abort = null;
+				}
+				isPolling = false;
 			}
 		}
 
