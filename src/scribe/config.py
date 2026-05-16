@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # codex processes would race the refresh and revoke each other's tokens.
     codex_lock_path: str = "/tmp/scribe-codex.lock"
 
+    # Directory containing transcript-summary.v*.md and transcript-summary.active.
+    # Operators can bind-mount this path to persist prompt edits across deploys.
+    prompt_dir: str = ""
+
     # Optional admin Telegram channel for operational alerts (e.g. codex
     # token revoked, summarizer down). Both must be set to enable.
     admin_telegram_bot_token: str = ""

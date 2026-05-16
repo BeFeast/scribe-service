@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import logging
 import secrets
 from collections.abc import Iterator
 from urllib.parse import quote
@@ -19,16 +20,27 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from scribe.api.schemas import JobCreate, JobView, TranscriptBrief
+from scribe.api.schemas import (
+    JobCreate,
+    JobView,
+    PromptActiveWrite,
+    PromptDryRunCreate,
+    PromptDryRunView,
+    PromptListView,
+    PromptVersionView,
+    PromptWrite,
+    TranscriptBrief,
+)
 from scribe.config import settings
 from scribe.db.models import Job, JobStatus, Transcript
 from scribe.db.session import SessionLocal
 from scribe.obs import metrics
 from scribe.obs import ops as ops_helpers
-from scribe.pipeline import shortlinks, summarizer
+from scribe.pipeline import prompts, shortlinks, summarizer
 from scribe.pipeline.downloader import DownloadError, extract_video_id
 
 router = APIRouter()
+log = logging.getLogger("scribe.api")
 
 # Postgres advisory-lock key used to serialise the daily-spend-cap check.
 # Arbitrary 8-byte int derived from the literal so it's stable across deploys.
@@ -195,6 +207,113 @@ def _require_transcript(transcript_id: int, session: Session) -> Transcript:
     if t is None:
         raise HTTPException(status_code=404, detail=f"transcript {transcript_id} not found")
     return t
+
+
+def _prompt_error(exc: prompts.PromptError) -> HTTPException:
+    if isinstance(exc, prompts.PromptNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    return HTTPException(status_code=422, detail=str(exc))
+
+
+@router.get("/api/prompts", response_model=PromptListView, tags=["prompts"])
+def list_prompt_versions() -> PromptListView:
+    try:
+        active, versions = prompts.list_prompts()
+    except prompts.PromptError as exc:
+        raise _prompt_error(exc) from exc
+    return PromptListView(
+        active_version=active,
+        versions=[
+            PromptVersionView(
+                id=version.id,
+                len_chars=version.len_chars,
+                len_tokens_est=version.len_tokens_est,
+                first_line=version.first_line,
+                is_active=version.is_active,
+            )
+            for version in versions
+        ],
+    )
+
+
+@router.post("/api/prompts/active", response_model=PromptListView, tags=["prompts"])
+def set_active_prompt(body: PromptActiveWrite) -> PromptListView:
+    try:
+        prompts.set_active_version(body.version)
+        active, versions = prompts.list_prompts()
+    except prompts.PromptError as exc:
+        raise _prompt_error(exc) from exc
+    return PromptListView(
+        active_version=active,
+        versions=[
+            PromptVersionView(
+                id=version.id,
+                len_chars=version.len_chars,
+                len_tokens_est=version.len_tokens_est,
+                first_line=version.first_line,
+                is_active=version.is_active,
+            )
+            for version in versions
+        ],
+    )
+
+
+@router.post("/api/prompts/dry-run", response_model=PromptDryRunView, tags=["prompts"])
+async def dry_run_prompt(
+    body: PromptDryRunCreate,
+    session: Session = Depends(get_session),
+) -> PromptDryRunView:
+    try:
+        prompts.validate_version(body.version)
+        # Validate the template exists before waiting on the codex lock.
+        prompts.read_prompt(body.version)
+    except prompts.PromptError as exc:
+        raise _prompt_error(exc) from exc
+
+    t = _require_transcript(body.transcript_id, session)
+    log.info(
+        "prompt_dry_run",
+        extra={"prompt_version": body.version, "transcript_id": t.id, "video_id": t.video_id},
+    )
+    try:
+        result = await asyncio.to_thread(
+            summarizer.summarize,
+            t.transcript_md,
+            title=t.title,
+            lock_timeout=_RESUMMARIZE_LOCK_TIMEOUT_S,
+            prompt_version=body.version,
+        )
+    except summarizer.LockTimeoutError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"summarizer busy (codex job in flight): {exc}",
+        ) from exc
+    except summarizer.SummarizeError as exc:
+        raise HTTPException(status_code=502, detail=f"summarizer failed: {exc}") from exc
+    return PromptDryRunView(
+        version=body.version,
+        transcript_id=t.id,
+        summary_md=result.summary_md,
+        tags=result.tags,
+    )
+
+
+@router.get("/api/prompts/{version}", tags=["prompts"])
+def get_prompt_version(version: str) -> Response:
+    try:
+        body = prompts.read_prompt(version)
+    except prompts.PromptError as exc:
+        raise _prompt_error(exc) from exc
+    return Response(content=body, media_type="text/markdown; charset=utf-8")
+
+
+@router.post("/api/prompts/{version}", status_code=204, tags=["prompts"])
+def write_prompt_version(version: str, body: PromptWrite) -> Response:
+    try:
+        prompts.write_prompt(version, body.body)
+    except prompts.PromptError as exc:
+        raise _prompt_error(exc) from exc
+    return Response(status_code=204)
 
 
 @router.get("/transcripts/{transcript_id}/transcript.md")
