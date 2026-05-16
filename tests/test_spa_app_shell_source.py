@@ -13,6 +13,7 @@ def read(path: str) -> str:
 def test_app_shell_files_exist() -> None:
     for path in (
         "components/CommandPalette.tsx",
+        "components/ConfirmDialog.tsx",
         "components/TopBar.tsx",
         "components/Sidebar.tsx",
         "components/TweaksPanel.tsx",
@@ -42,6 +43,18 @@ def test_app_mounts_shell_and_placeholder_router() -> None:
     assert 'route.page === "library"' in source
     assert 'route.page === "transcript"' in source
     assert "<Transcript" in source
+
+
+def test_confirm_dialog_is_in_app_not_browser_prompt() -> None:
+    dialog = read("components/ConfirmDialog.tsx")
+    library = read("pages/Library.tsx")
+    transcript = read("pages/Transcript.tsx")
+
+    assert "ConfirmDialog" in library
+    assert "ConfirmDialog" in transcript
+    assert 'className="settings-modal compact confirm-dialog"' in dialog
+    assert 'aria-modal="true"' in dialog
+    assert "window.confirm" not in library + transcript + dialog
 
 
 def test_transcript_page_fetches_json_and_renders_markdown_locally() -> None:

@@ -1,5 +1,6 @@
 import React from "react";
 
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import type { Route } from "../hooks/useRoute";
 import { usePoll } from "../hooks/usePoll";
 import type { LibraryLayout } from "../hooks/useTweaks";
@@ -142,6 +143,8 @@ export function Library({ layout, displayCurrency, route, navigate }: LibraryPro
 	const [isLoading, setIsLoading] = React.useState(true);
 	const [error, setError] = React.useState<string | null>(null);
 	const [deleteBusyId, setDeleteBusyId] = React.useState<number | null>(null);
+	const [deleteCandidate, setDeleteCandidate] =
+		React.useState<LibraryRow | null>(null);
 
 	React.useEffect(() => {
 		const timer = window.setTimeout(() => setDebouncedQuery(query), 200);
@@ -210,13 +213,16 @@ export function Library({ layout, displayCurrency, route, navigate }: LibraryPro
 		navigate({ page: "library", params: { tag } });
 	const transcriptClick = (id: number) =>
 		navigate({ page: "transcript", params: { id } });
-	const deleteTranscript = async (row: LibraryRow) => {
-		if (
-			deleteBusyId !== null ||
-			!window.confirm(`Delete transcript "${row.title}"? This also removes its job record.`)
-		) {
+	const requestDeleteTranscript = (row: LibraryRow) => {
+		if (deleteBusyId === null) {
+			setDeleteCandidate(row);
+		}
+	};
+	const confirmDeleteTranscript = async () => {
+		if (deleteCandidate === null || deleteBusyId !== null) {
 			return;
 		}
+		const row = deleteCandidate;
 		setDeleteBusyId(row.id);
 		setError(null);
 		try {
@@ -228,6 +234,7 @@ export function Library({ layout, displayCurrency, route, navigate }: LibraryPro
 			}
 			setRows((current) => current.filter((item) => item.id !== row.id));
 			setTotal((current) => Math.max(0, current - 1));
+			setDeleteCandidate(null);
 		} catch (deleteError) {
 			setError(
 				deleteError instanceof Error ? deleteError.message : "Delete failed",
@@ -386,7 +393,7 @@ export function Library({ layout, displayCurrency, route, navigate }: LibraryPro
 							displayCurrency={displayCurrency}
 							onTagClick={tagClick}
 							onOpen={transcriptClick}
-							onDelete={deleteTranscript}
+							onDelete={requestDeleteTranscript}
 							deleteBusyId={deleteBusyId}
 						/>
 					) : null}
@@ -396,7 +403,7 @@ export function Library({ layout, displayCurrency, route, navigate }: LibraryPro
 							displayCurrency={displayCurrency}
 							onTagClick={tagClick}
 							onOpen={transcriptClick}
-							onDelete={deleteTranscript}
+							onDelete={requestDeleteTranscript}
 							deleteBusyId={deleteBusyId}
 						/>
 					) : null}
@@ -406,11 +413,23 @@ export function Library({ layout, displayCurrency, route, navigate }: LibraryPro
 							displayCurrency={displayCurrency}
 							onTagClick={tagClick}
 							onOpen={transcriptClick}
-							onDelete={deleteTranscript}
+							onDelete={requestDeleteTranscript}
 							deleteBusyId={deleteBusyId}
 						/>
 					) : null}
 				</div>
+			) : null}
+
+			{deleteCandidate !== null ? (
+				<ConfirmDialog
+					title="Delete transcript"
+					body={`Delete "${deleteCandidate.title}"? This also removes its job record.`}
+					confirmLabel="Delete"
+					busyLabel="Deleting"
+					busy={deleteBusyId === deleteCandidate.id}
+					onCancel={() => setDeleteCandidate(null)}
+					onConfirm={confirmDeleteTranscript}
+				/>
 			) : null}
 		</section>
 	);
