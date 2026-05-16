@@ -40,8 +40,14 @@ from scribe.pipeline import downloader, ffmpeg, shortlinks, summarizer, whisper_
 log = logging.getLogger("scribe.worker")
 
 _POLL_INTERVAL = 5.0
+# Loop tick in milliseconds — surfaced by the ops rollcall ("loop tick {LOOP_TICK_MS}ms").
+LOOP_TICK_MS = int(_POLL_INTERVAL * 1000)
 _WEBHOOK_TIMEOUT_S = 10.0
 _WEBHOOK_RETRY_BACKOFFS_S = (1.0, 4.0, 16.0)
+
+# Live references to worker threads started via start_workers(); the ops
+# rollcall reads this to flag the worker pool as `err` when any thread has died.
+active_worker_threads: list[threading.Thread] = []
 
 
 def _count_webhook_delivery(outcome: str) -> None:
@@ -203,72 +209,82 @@ def process_job(session, job: Job) -> None:
     """Run the full pipeline for a claimed job (already status=downloading)."""
     job_id = job.id
     job_log = logging.LoggerAdapter(log, {"job_id": job_id, "video_id": job.video_id})
+    # Track busy-worker count for the ops dashboard. Bracketed with try/finally
+    # so even unexpected exits (BaseException, abrupt thread shutdown) restore
+    # the gauge — otherwise it would drift upward over the process lifetime.
+    metrics.workers_busy.inc()
     try:
-        # Resume path: a prior job already produced the transcript but its
-        # summary step failed. Skip download+ffmpeg+whisper and just re-summarize.
-        partial = _find_partial_transcript(session, job.video_id)
-        if partial is not None:
-            job_log.info("resuming partial transcript", extra={"transcript_id": partial.id, "stage": "resume"})
-            partial.job_id = job.id
-            _summarize_and_finalize(session, job, partial, partial.title, promoted=True)
-            job_log.info("job done (resumed)", extra={"transcript_id": partial.id, "stage": "done"})
-            return
-
-        Path(settings.temp_dir).mkdir(parents=True, exist_ok=True)
-        tmpdir = Path(tempfile.mkdtemp(prefix="scribe-job-", dir=settings.temp_dir))
         try:
-            with _time_stage("download"):
-                dl = downloader.download_audio(job.url, tmpdir)
-            job_log.info("download done", extra={"title": dl.title, "stage": "download"})
+            # Resume path: a prior job already produced the transcript but its
+            # summary step failed. Skip download+ffmpeg+whisper and just re-summarize.
+            partial = _find_partial_transcript(session, job.video_id)
+            if partial is not None:
+                job_log.info("resuming partial transcript", extra={"transcript_id": partial.id, "stage": "resume"})
+                partial.job_id = job.id
+                _summarize_and_finalize(session, job, partial, partial.title, promoted=True)
+                job_log.info("job done (resumed)", extra={"transcript_id": partial.id, "stage": "done"})
+                return
 
-            with _time_stage("ffmpeg"):
-                wav = ffmpeg.to_wav_16k_mono(dl.audio_path, tmpdir / "input-16k.wav")
+            Path(settings.temp_dir).mkdir(parents=True, exist_ok=True)
+            tmpdir = Path(tempfile.mkdtemp(prefix="scribe-job-", dir=settings.temp_dir))
+            try:
+                with _time_stage("download"):
+                    dl = downloader.download_audio(job.url, tmpdir)
+                job_log.info("download done", extra={"title": dl.title, "stage": "download"})
 
-            _set_job_status(session, job, JobStatus.transcribing)
-            with _time_stage("whisper"):
-                tr = whisper_client.transcribe(wav, title=dl.title, source_url=job.url)
-            if tr.vast_cost:
-                metrics.vast_spend_usd_total.inc(tr.vast_cost)
-            job_log.info("whisper done", extra={
-                "stage": "whisper",
-                "lang": tr.detected_language,
-                "vast_cost": tr.vast_cost,
-                "duration_seconds": tr.duration_seconds,
-            })
+                with _time_stage("ffmpeg"):
+                    wav = ffmpeg.to_wav_16k_mono(dl.audio_path, tmpdir / "input-16k.wav")
 
-            # Persist partial transcript — locks in GPU work before summary
-            duration = dl.duration_seconds or (
-                int(tr.duration_seconds) if tr.duration_seconds else None
-            )
-            transcript = Transcript(
-                job_id=job.id,
-                video_id=dl.video_id,
-                title=dl.title,
-                transcript_md=tr.transcript_md,
-                summary_md=None,
-                tags=None,
-                duration_seconds=int(duration) if duration else None,
-                lang=tr.detected_language,
-                vast_cost=tr.vast_cost if tr.vast_cost is not None else None,
-            )
-            session.add(transcript)
-            session.commit()
-            metrics.transcripts_total.labels(kind="partial").inc()
+                _set_job_status(session, job, JobStatus.transcribing)
+                with _time_stage("whisper"):
+                    tr = whisper_client.transcribe(wav, title=dl.title, source_url=job.url)
+                # The ops rollcall reads this gauge to flag Vast.ai as `warn`
+                # after 24h with no launches.
+                metrics.last_vast_launch_timestamp.set(time.time())
+                if tr.vast_cost:
+                    metrics.vast_spend_usd_total.inc(tr.vast_cost)
+                job_log.info("whisper done", extra={
+                    "stage": "whisper",
+                    "lang": tr.detected_language,
+                    "vast_cost": tr.vast_cost,
+                    "duration_seconds": tr.duration_seconds,
+                })
 
-            _summarize_and_finalize(session, job, transcript, dl.title, promoted=False)
-            job_log.info("job done", extra={"transcript_id": transcript.id, "stage": "done", "title": dl.title})
-        finally:
-            shutil.rmtree(tmpdir, ignore_errors=True)
-    except Exception as exc:
-        session.rollback()
-        failed = session.get(Job, job_id)
-        if failed is not None:
-            failed.status = JobStatus.failed
-            failed.error = f"{type(exc).__name__}: {exc}"
-            session.commit()
-            _deliver_webhook(session, failed)
-        metrics.job_status_transitions.labels(status=JobStatus.failed.value).inc()
-        job_log.exception("job failed", extra={"stage": "failed", "error": f"{type(exc).__name__}: {exc}"})
+                # Persist partial transcript — locks in GPU work before summary
+                duration = dl.duration_seconds or (
+                    int(tr.duration_seconds) if tr.duration_seconds else None
+                )
+                transcript = Transcript(
+                    job_id=job.id,
+                    video_id=dl.video_id,
+                    title=dl.title,
+                    transcript_md=tr.transcript_md,
+                    summary_md=None,
+                    tags=None,
+                    duration_seconds=int(duration) if duration else None,
+                    lang=tr.detected_language,
+                    vast_cost=tr.vast_cost if tr.vast_cost is not None else None,
+                )
+                session.add(transcript)
+                session.commit()
+                metrics.transcripts_total.labels(kind="partial").inc()
+
+                _summarize_and_finalize(session, job, transcript, dl.title, promoted=False)
+                job_log.info("job done", extra={"transcript_id": transcript.id, "stage": "done", "title": dl.title})
+            finally:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+        except Exception as exc:
+            session.rollback()
+            failed = session.get(Job, job_id)
+            if failed is not None:
+                failed.status = JobStatus.failed
+                failed.error = f"{type(exc).__name__}: {exc}"
+                session.commit()
+                _deliver_webhook(session, failed)
+            metrics.job_status_transitions.labels(status=JobStatus.failed.value).inc()
+            job_log.exception("job failed", extra={"stage": "failed", "error": f"{type(exc).__name__}: {exc}"})
+    finally:
+        metrics.workers_busy.dec()
 
 
 def run_worker(stop: threading.Event) -> None:
@@ -300,4 +316,8 @@ def start_workers(n: int | None = None) -> tuple[list[threading.Thread], threadi
         )
         thread.start()
         threads.append(thread)
+    # Replace (not append) so re-starts during reload land a clean roster — the
+    # ops rollcall reads this to flag dead workers.
+    active_worker_threads.clear()
+    active_worker_threads.extend(threads)
     return threads, stop
