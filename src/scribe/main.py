@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI):
     log = logging.getLogger("scribe")
     try:
         settings.runtime_overlay()
-    except SQLAlchemyError:
+    except (SQLAlchemyError, ValueError):
         log.exception("runtime config overlay failed")
     threads, stop = start_workers()
     log.info("workers started", extra={"thread_count": len(threads)})
