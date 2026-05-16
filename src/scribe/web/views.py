@@ -2,12 +2,10 @@
 
 GET /                       -> React SPA shell
 GET /classic                -> legacy transcript list (optional ?q=, ?tag=)
-GET /transcripts/{id}       -> transcript detail (summary + transcript, rendered)
 GET /feed.xml               -> RSS 2.0 of the latest transcripts
 
-The detail page lives at /transcripts/{id} on purpose: the worker mints the
-summary shortlink against this path, so a human clicking it lands on HTML.
-The JSON API keeps /transcripts (list) and the raw .md endpoints.
+Transcript detail lives in the SPA; /transcripts/{id} is handled by the API
+router as JSON for clients or a browser redirect to #/transcript/{id}.
 """
 from __future__ import annotations
 
@@ -17,18 +15,15 @@ import functools
 import html
 import json
 import re
-import secrets
 from pathlib import Path
-from urllib.parse import unquote
 
-import markdown as md
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from scribe.api.routes import CSRF_COOKIE, FLASH_COOKIE, get_session
+from scribe.api.routes import get_session
 from scribe.config import settings
 from scribe.db.models import Transcript
 from scribe.db.query import escape_like
@@ -38,8 +33,6 @@ _WEB_DIR = Path(__file__).parent
 _TEMPLATES = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
 _SPA_STATIC_DIR = _WEB_DIR / "static" / "spa"
 _SPA_MANIFEST_PATH = _SPA_STATIC_DIR / ".vite" / "manifest.json"
-_FLASH_LEVELS = frozenset({"success", "error", "info"})
-
 # Hard cap on the rows the home page renders. Keeps the page fast even after
 # years of accretion; older entries are still reachable by tag/search.
 _LIST_LIMIT = 200
@@ -72,13 +65,6 @@ def _strip_frontmatter(text: str) -> str:
         if end != -1:
             return text[end + 4 :].lstrip("\n")
     return text
-
-
-def _render_md(text: str) -> str:
-    return md.markdown(
-        _strip_frontmatter(text or ""),
-        extensions=["extra", "sane_lists", "nl2br"],
-    )
 
 
 def _build_filter(stmt, *, q: str | None, tag: str | None):
@@ -123,57 +109,6 @@ def classic_index(
         "list.html",
         {"transcripts": rows, "q": q or "", "tag": tag or ""},
     )
-
-
-def _pop_flash(request: Request) -> tuple[str, str] | None:
-    """One-shot read of the flash cookie. Returns (level, message) or None.
-    The caller is responsible for clearing the cookie on the response. The
-    message is percent-encoded in the cookie to dodge Starlette quoting; we
-    decode here so the template sees the plain text."""
-    raw = request.cookies.get(FLASH_COOKIE)
-    if not raw:
-        return None
-    level, sep, encoded = raw.partition("|")
-    if not sep:
-        encoded = level
-        level = "info"
-    if level not in _FLASH_LEVELS:
-        level = "info"
-    return (level or "info", unquote(encoded))
-
-
-@router.get("/transcripts/{transcript_id}", response_class=HTMLResponse)
-def detail(
-    transcript_id: int,
-    request: Request,
-    session: Session = Depends(get_session),
-) -> HTMLResponse:
-    t = session.get(Transcript, transcript_id)
-    if t is None:
-        raise HTTPException(status_code=404, detail=f"transcript {transcript_id} not found")
-    flash = _pop_flash(request)
-    csrf_token = secrets.token_urlsafe(32)
-    response = _TEMPLATES.TemplateResponse(
-        request,
-        "detail.html",
-        {
-            "t": t,
-            "summary_html": _render_md(t.summary_md or ""),
-            "transcript_html": _render_md(t.transcript_md),
-            "flash": flash,
-            "csrf_token": csrf_token,
-        },
-    )
-    if flash is not None:
-        response.delete_cookie(FLASH_COOKIE)
-    response.set_cookie(
-        CSRF_COOKIE,
-        csrf_token,
-        max_age=3600,
-        httponly=True,
-        samesite="strict",
-    )
-    return response
 
 
 # ---------------------------------------------------------------- RSS feed

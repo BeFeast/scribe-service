@@ -31,7 +31,8 @@ class TranscriptBrief(BaseModel):
 class TranscriptFull(TranscriptBrief):
     job_id: int
     transcript_md: str
-    summary_md: str
+    summary_md: str | None
+    vast_cost: float | None = None
 
 
 class JobView(BaseModel):

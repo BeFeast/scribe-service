@@ -696,6 +696,18 @@ a {
 	padding-left: 1.3rem;
 }
 
+.prose :where(h1, h2, h3, h4) {
+	margin: 1.2rem 0 0.45rem;
+	color: var(--fg);
+	font-family: var(--font-display);
+	letter-spacing: 0;
+	line-height: 1.15;
+}
+
+.prose :where(p, ul, ol, pre, blockquote) {
+	margin-block: 0.75rem;
+}
+
 .prose li + li {
 	margin-top: 0.25rem;
 }
@@ -718,6 +730,109 @@ a {
 	border-radius: var(--radius);
 	padding: 0.1rem 0.25rem;
 	background: var(--bg-soft);
+}
+
+.prose pre {
+	overflow: auto;
+	padding: 0.85rem;
+	border: var(--rule);
+	border-radius: var(--radius);
+	background: var(--bg-soft);
+}
+
+.prose pre code {
+	border: 0;
+	padding: 0;
+	background: transparent;
+}
+
+.transcript-detail {
+	display: grid;
+	gap: 1rem;
+}
+
+.transcript-hero {
+	align-items: start;
+}
+
+.meta-strip {
+	margin-top: 0.65rem;
+}
+
+.meta-strip > :not(:last-child)::after {
+	margin-left: 0.45rem;
+	color: var(--border);
+	content: "/";
+}
+
+.detail-section,
+.partial-notice,
+.detail-footer {
+	border: var(--rule);
+	border-radius: var(--radius-lg);
+	background: var(--bg-card);
+}
+
+.detail-section {
+	padding: clamp(1rem, 2vw, 1.35rem);
+}
+
+.section-head,
+.partial-notice {
+	display: flex;
+	align-items: start;
+	justify-content: space-between;
+	gap: 1rem;
+}
+
+.section-actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 0.45rem;
+}
+
+.partial-notice {
+	padding: var(--pane-pad);
+	border-color: var(--warn);
+	background: color-mix(in srgb, var(--warn) 9%, var(--bg-card));
+}
+
+.partial-notice h2,
+.partial-notice p {
+	margin: 0;
+}
+
+.partial-notice h2 {
+	margin-bottom: 0.4rem;
+	color: var(--fg);
+}
+
+.inline-error {
+	margin: 0.45rem 0 0;
+	color: var(--err);
+}
+
+.body-dimmed {
+	opacity: 0.55;
+	transition: opacity 0.15s ease;
+}
+
+.loading-row {
+	display: flex;
+	align-items: center;
+	gap: 0.55rem;
+	color: var(--muted);
+}
+
+.detail-footer {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.55rem 1rem;
+	padding: 0.8rem 1rem;
+	color: var(--muted);
+	font-family: var(--font-mono);
+	font-size: 0.82rem;
 }
 
 .pipeline {
@@ -869,7 +984,9 @@ a {
 
 @media (max-width: 720px) {
 	.pane-header,
-	.settings-row {
+	.settings-row,
+	.section-head,
+	.partial-notice {
 		align-items: start;
 		grid-template-columns: 1fr;
 	}
@@ -879,6 +996,15 @@ a {
 	}
 
 	.row-control {
+		justify-content: flex-start;
+	}
+
+	.section-head,
+	.partial-notice {
+		flex-direction: column;
+	}
+
+	.section-actions {
 		justify-content: flex-start;
 	}
 }
