@@ -23,6 +23,7 @@ def test_spa_shell_uses_vite_manifest(monkeypatch, tmp_path):
         encoding="utf-8",
     )
     monkeypatch.setattr(views, "_SPA_MANIFEST_PATH", manifest_path)
+    views._spa_asset_urls.cache_clear()
 
     client = TestClient(app)
     response = client.get("/__spa__/")

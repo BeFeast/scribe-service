@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import email.utils
+import functools
 import html
 import json
 import re
@@ -44,6 +45,7 @@ _LIST_LIMIT = 200
 _FEED_LIMIT = 40
 
 
+@functools.cache
 def _spa_asset_urls() -> dict[str, list[str]]:
     try:
         manifest = json.loads(_SPA_MANIFEST_PATH.read_text(encoding="utf-8"))
