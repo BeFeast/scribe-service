@@ -25,7 +25,10 @@ type TweakAction =
 	| { type: "theme"; value: ScribeTheme }
 	| { type: "replace"; value: Tweaks };
 
+const variants = new Set<ScribeVariant>(["paper", "terminal", "console"]);
 const themes = new Set<ScribeTheme>(["light", "dark"]);
+const densities = new Set<ScribeDensity>(["compact", "cozy", "comfy"]);
+const libraryLayouts = new Set<LibraryLayout>(["feed", "table", "cards"]);
 
 function readStoredTweaks(): Tweaks {
 	try {
@@ -35,13 +38,23 @@ function readStoredTweaks(): Tweaks {
 		}
 		const parsed = JSON.parse(raw) as Partial<Tweaks>;
 		return {
-			variant: DEFAULT_TWEAKS.variant,
+			variant:
+				parsed.variant !== undefined && variants.has(parsed.variant)
+					? parsed.variant
+					: DEFAULT_TWEAKS.variant,
 			theme:
 				parsed.theme !== undefined && themes.has(parsed.theme)
 					? parsed.theme
 					: DEFAULT_TWEAKS.theme,
-			density: DEFAULT_TWEAKS.density,
-			libraryLayout: DEFAULT_TWEAKS.libraryLayout,
+			density:
+				parsed.density !== undefined && densities.has(parsed.density)
+					? parsed.density
+					: DEFAULT_TWEAKS.density,
+			libraryLayout:
+				parsed.libraryLayout !== undefined &&
+				libraryLayouts.has(parsed.libraryLayout)
+					? parsed.libraryLayout
+					: DEFAULT_TWEAKS.libraryLayout,
 		};
 	} catch {
 		return DEFAULT_TWEAKS;
