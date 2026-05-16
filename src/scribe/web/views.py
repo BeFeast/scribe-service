@@ -113,7 +113,8 @@ def index(
 
 
 @router.get("/__spa__/", response_class=HTMLResponse)
-def spa_shell(request: Request) -> HTMLResponse:
+@router.get("/__spa__/{spa_path:path}", response_class=HTMLResponse)
+def spa_shell(request: Request, spa_path: str = "") -> HTMLResponse:
     assets = _spa_asset_urls()
     return _TEMPLATES.TemplateResponse(
         request,
