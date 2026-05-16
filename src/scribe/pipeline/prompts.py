@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from scribe.config import settings
 PROMPT_NAME = "transcript-summary"
 PROMPT_VERSIONS = ("v1", "v2", "v3")
 MAX_PROMPT_CHARS = 16 * 1024
+REQUIRED_PLACEHOLDERS = ("{date}", "{transcript_slug}")
 
 _BUNDLED_PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
 
@@ -97,13 +99,19 @@ def validate_prompt_body(body: str) -> None:
     headers = [line for line in body.splitlines() if line.startswith("## ")]
     if len(headers) < 2:
         raise PromptError("prompt body must contain at least two level-2 markdown headers")
+    missing = [placeholder for placeholder in REQUIRED_PLACEHOLDERS if placeholder not in body]
+    if missing:
+        raise PromptError(f"prompt body must contain placeholders: {', '.join(missing)}")
 
 
 def _atomic_write(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f"{path.name}.tmp")
-    tmp_path.write_text(body, encoding="utf-8")
-    os.replace(tmp_path, path)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp_path.write_text(body, encoding="utf-8")
+        os.replace(tmp_path, path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def write_prompt(version: str, body: str) -> None:

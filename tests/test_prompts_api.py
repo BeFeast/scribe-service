@@ -97,6 +97,13 @@ def test_write_prompt_version_is_atomic_and_validates(pure_client, prompt_dir):
     assert invalid.status_code == 422
     assert "TL;DR" in invalid.text
 
+    missing_placeholder = pure_client.post(
+        "/api/prompts/v1",
+        json={"body": "## TL;DR\nx\n\n## Details\nmissing required placeholders"},
+    )
+    assert missing_placeholder.status_code == 422
+    assert "{date}" in missing_placeholder.text
+
 
 def test_switch_active_prompt(pure_client, prompt_dir):
     resp = pure_client.post("/api/prompts/active", json={"version": "v1"})
@@ -104,6 +111,12 @@ def test_switch_active_prompt(pure_client, prompt_dir):
     assert resp.json()["active_version"] == "v1"
     assert (prompt_dir / "transcript-summary.active").read_text(encoding="utf-8") == "v1\n"
     assert not (prompt_dir / "transcript-summary.active.tmp").exists()
+
+
+def test_missing_prompt_template_is_404(pure_client, prompt_dir):
+    (prompt_dir / "transcript-summary.v2.md").unlink()
+    resp = pure_client.get("/api/prompts/v2")
+    assert resp.status_code == 404
 
 
 def test_dry_run_prompt_does_not_persist(db_client, db_session, monkeypatch):
