@@ -327,6 +327,21 @@ def test_api_jobs_active_happy_path(client, db_session):
     assert row["stages"]["summarizing"]["state"] == "pending"
 
 
+def test_api_jobs_active_uses_job_title_before_transcript_exists(client, db_session):
+    job = Job(
+        url="https://youtu.be/titleearly1",
+        video_id="titleearly1",
+        status=JobStatus.transcribing,
+        source="manual",
+        title="Early Video Title",
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    body = client.get("/api/jobs/active").json()
+    assert body["jobs"][0]["title"] == "Early Video Title"
+
+
 def test_get_job_includes_pipeline_stages(client, db_session):
     now = dt.datetime.now(dt.UTC).replace(microsecond=0)
     job = Job(

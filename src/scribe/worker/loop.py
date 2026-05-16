@@ -229,6 +229,8 @@ def process_job(session, job: Job) -> None:
             try:
                 with _time_stage("download"):
                     dl = downloader.download_audio(job.url, tmpdir)
+                job.title = dl.title
+                session.commit()
                 job_log.info("download done", extra={"title": dl.title, "stage": "download"})
 
                 with _time_stage("ffmpeg"):

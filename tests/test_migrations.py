@@ -145,6 +145,10 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
             "jobs.callback_url missing after upgrade head — "
             "revision d1e3f4a5b603 (PR #6) likely silent-noop'd"
         )
+        assert "title" in jobs_cols, (
+            "jobs.title missing after upgrade head — "
+            "revision a1b2c3d4e5f6 likely silent-noop'd"
+        )
 
         transcripts_cols = _column_names(eng, "transcripts")
         assert "vast_cost" in transcripts_cols, (
