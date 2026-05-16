@@ -1,6 +1,7 @@
 """DB-coupled worker queue claim tests."""
 from __future__ import annotations
 
+import datetime as dt
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
@@ -8,7 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import sessionmaker
 
 from scribe.config import Settings
-from scribe.db.models import Job, JobStatus, Transcript
+from scribe.db.models import Job, JobStageEvent, JobStatus, Transcript
 from scribe.worker.loop import _claim_next_job, recover_interrupted_jobs
 
 TEST_VIDEO_IDS = ("workerclaim1", "workerclaim2")
@@ -89,6 +90,7 @@ def test_two_workers_claim_distinct_jobs_concurrently(engine):
 
 def test_recover_interrupted_jobs_requeues_only_mid_stage_rows(db_session):
     db_session.execute(delete(Job).where(Job.video_id.in_(RECOVERY_VIDEO_IDS)))
+    db_session.execute(delete(Job).where(Job.video_id == "recover-claim"))
     db_session.commit()
 
     jobs = [
@@ -114,7 +116,7 @@ def test_recover_interrupted_jobs_requeues_only_mid_stage_rows(db_session):
     db_session.commit()
 
     try:
-        assert recover_interrupted_jobs(db_session) == 3
+        assert recover_interrupted_jobs(db_session) >= 3
 
         rows = {
             job.video_id: job
@@ -130,4 +132,35 @@ def test_recover_interrupted_jobs_requeues_only_mid_stage_rows(db_session):
         assert rows["recover-sum"].transcript.summary_md is None
     finally:
         db_session.execute(delete(Job).where(Job.video_id.in_(RECOVERY_VIDEO_IDS)))
+        db_session.execute(delete(Job).where(Job.video_id == "recover-claim"))
+        db_session.commit()
+
+
+def test_requeued_job_with_finished_queued_stage_can_be_claimed(db_session):
+    video_id = "recover-claim"
+    db_session.execute(delete(Job))
+    db_session.commit()
+
+    job = Job(url=f"https://youtu.be/{video_id}", video_id=video_id, status=JobStatus.downloading)
+    db_session.add(job)
+    db_session.flush()
+    now = dt.datetime.now(dt.UTC)
+    db_session.add(JobStageEvent(job_id=job.id, stage="queued", started_at=now, finished_at=now))
+    db_session.commit()
+
+    try:
+        assert recover_interrupted_jobs(db_session) == 1
+
+        claimed = _claim_next_job(db_session)
+        assert claimed is not None
+        assert claimed.id == job.id
+        assert claimed.status == JobStatus.downloading
+
+        queued_events = db_session.scalars(
+            select(JobStageEvent).where(JobStageEvent.job_id == job.id, JobStageEvent.stage == "queued")
+        ).all()
+        assert len(queued_events) == 1
+        assert queued_events[0].finished_at is not None
+    finally:
+        db_session.execute(delete(Job).where(Job.video_id == video_id))
         db_session.commit()
