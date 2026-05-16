@@ -382,6 +382,7 @@ def test_api_job_log_stream_returns_buffered_worker_lines_and_closes(client, db_
     assert "whisper done" in body
     assert "job done" in body
     assert "other" not in body
+    assert job_log_buffer.snapshot(job.id) == (0, [])
     job_log_buffer.clear()
 
 

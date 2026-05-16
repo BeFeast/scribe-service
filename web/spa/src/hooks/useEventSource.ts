@@ -22,7 +22,11 @@ export function useEventSource(
 		}
 		const source = new EventSource(url);
 		source.onmessage = (event) => onLineRef.current(event.data);
-		source.onerror = () => source.close();
+		source.onerror = () => {
+			if (source.readyState === EventSource.CLOSED) {
+				source.close();
+			}
+		};
 		return () => source.close();
 	}, [enabled, url]);
 }

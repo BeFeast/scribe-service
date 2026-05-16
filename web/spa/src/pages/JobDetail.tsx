@@ -48,6 +48,11 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 	const [copied, setCopied] = React.useState(false);
 	const isTerminal = job !== null && TERMINAL.has(job.status);
 
+	React.useEffect(() => {
+		setJob(null);
+		setError(null);
+	}, [id]);
+
 	const load = React.useCallback(async (signal: AbortSignal) => {
 		if (id === undefined) {
 			return;

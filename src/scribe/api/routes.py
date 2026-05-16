@@ -439,15 +439,21 @@ async def _stream_job_logs(job_id: int):
     for line in lines:
         yield _sse_data(line)
 
-    while True:
-        await asyncio.sleep(0.5)
-        version, lines = job_log_buffer.since(job_id, version)
-        for line in lines:
-            yield _sse_data(line)
-        with SessionLocal() as session:
-            job = session.get(Job, job_id)
-            if job is None or job.status in _TERMINAL:
-                break
+    discard_on_exit = False
+    try:
+        while True:
+            await asyncio.sleep(0.5)
+            version, lines = job_log_buffer.since(job_id, version)
+            for line in lines:
+                yield _sse_data(line)
+            with SessionLocal() as session:
+                job = session.get(Job, job_id)
+                if job is None or job.status in _TERMINAL:
+                    discard_on_exit = True
+                    break
+    finally:
+        if discard_on_exit:
+            job_log_buffer.discard(job_id)
 
 
 @router.get("/api/jobs/{job_id}/log/stream", include_in_schema=False)

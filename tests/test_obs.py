@@ -138,6 +138,15 @@ def test_job_log_buffer_is_fifo_bounded():
     assert [line["msg"] for line in lines] == ["two", "three"]
 
 
+def test_job_log_buffer_discards_finished_jobs():
+    buffer = JobLogBuffer(max_lines=2)
+    buffer.append({"job_id": 7, "msg": "one"})
+
+    buffer.discard(7)
+
+    assert buffer.snapshot(7) == (0, [])
+
+
 def test_job_log_buffer_handler_captures_worker_job_lines():
     job_log_buffer.clear()
     handler = JobLogBufferHandler()

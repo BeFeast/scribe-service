@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import threading
-from collections import defaultdict, deque
+from collections import deque
 from copy import copy
 from typing import Any
 
@@ -23,10 +23,8 @@ class JobLogBuffer:
     def __init__(self, *, max_lines: int = _MAX_LINES_PER_JOB) -> None:
         self._max_lines = max_lines
         self._lock = threading.Lock()
-        self._lines: defaultdict[int, deque[dict[str, Any]]] = defaultdict(
-            lambda: deque(maxlen=self._max_lines)
-        )
-        self._versions: defaultdict[int, int] = defaultdict(int)
+        self._lines: dict[int, deque[dict[str, Any]]] = {}
+        self._versions: dict[int, int] = {}
 
     def append(self, line: dict[str, Any]) -> None:
         raw_job_id = line.get("job_id")
@@ -37,21 +35,28 @@ class JobLogBuffer:
         except (TypeError, ValueError):
             return
         with self._lock:
-            self._lines[job_id].append(line)
-            self._versions[job_id] += 1
+            self._lines.setdefault(
+                job_id, deque(maxlen=self._max_lines)
+            ).append(line)
+            self._versions[job_id] = self._versions.get(job_id, 0) + 1
 
     def snapshot(self, job_id: int) -> tuple[int, list[dict[str, Any]]]:
         with self._lock:
-            return self._versions[job_id], list(self._lines[job_id])
+            return self._versions.get(job_id, 0), list(self._lines.get(job_id, ()))
 
     def since(self, job_id: int, version: int) -> tuple[int, list[dict[str, Any]]]:
         with self._lock:
-            current = self._versions[job_id]
+            current = self._versions.get(job_id, 0)
             if current == version:
                 return current, []
             gap = current - version
-            lines = list(self._lines[job_id])
+            lines = list(self._lines.get(job_id, ()))
             return current, lines[-gap:] if 0 < gap < len(lines) else lines
+
+    def discard(self, job_id: int) -> None:
+        with self._lock:
+            self._lines.pop(job_id, None)
+            self._versions.pop(job_id, None)
 
     def clear(self) -> None:
         with self._lock:
