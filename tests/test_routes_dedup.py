@@ -188,6 +188,47 @@ def test_admin_retry_returns_404_for_missing_job(client):
     assert resp.status_code == 404
 
 
+def test_admin_cancel_marks_active_job_failed(client, db_session):
+    job = Job(
+        url="https://youtu.be/cancel12345",
+        video_id="cancel12345",
+        status=JobStatus.transcribing,
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    resp = client.post(f"/admin/jobs/{job.id}/cancel")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["job_id"] == job.id
+    assert body["status"] == "failed"
+    assert body["error"] == "cancelled by operator"
+
+    db_session.refresh(job)
+    assert job.status == JobStatus.failed
+    assert job.error == "cancelled by operator"
+
+    active = client.get("/api/jobs/active").json()
+    assert active == {"jobs": []}
+
+
+def test_admin_cancel_rejects_terminal_job(client, db_session):
+    job, _ = _seed_done_transcript(db_session, video_id="canceldone12")
+
+    resp = client.post(f"/admin/jobs/{job.id}/cancel")
+    assert resp.status_code == 409
+    assert "terminal" in resp.json()["detail"].lower()
+
+    db_session.refresh(job)
+    assert job.status == JobStatus.done
+    assert job.error is None
+
+
+def test_admin_cancel_openapi_path_exists(client):
+    schema = client.get("/openapi.json").json()
+    assert "/admin/jobs/{job_id}/cancel" in schema["paths"]
+
+
 def test_list_transcripts_hides_partials_by_default(client, db_session):
     _, done = _seed_done_transcript(db_session, video_id="doneabc1234", title="done")
     _, partial = _seed_partial_transcript(db_session, video_id="partbcd2345")

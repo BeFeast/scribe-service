@@ -15,6 +15,13 @@ def test_app_shell_files_exist() -> None:
         "components/TopBar.tsx",
         "components/Sidebar.tsx",
         "components/TweaksPanel.tsx",
+        "components/PipelineDiagram.tsx",
+        "components/JobCard.tsx",
+        "components/StatusChip.tsx",
+        "components/LogTail.tsx",
+        "components/FailureRow.tsx",
+        "pages/Queue.tsx",
+        "pages/JobDetail.tsx",
         "constants.ts",
         "hooks/useRoute.ts",
         "hooks/useTweaks.ts",
@@ -135,3 +142,22 @@ def test_route_hook_uses_typed_hash_routes() -> None:
     assert "type RouteAction" in source
     assert 'case "jobs":' in source
     assert 'parts[0] = "jobs";' in source
+
+
+def test_queue_and_job_detail_pages_wire_required_endpoints() -> None:
+    main = read("main.tsx")
+    queue = read("pages/Queue.tsx")
+    detail = read("pages/JobDetail.tsx")
+    log_tail = read("components/LogTail.tsx")
+
+    assert "QueuePage" in main
+    assert "JobDetailPage" in main
+    assert 'fetch("/api/jobs/active"' in queue
+    assert "queue is clear · scribe is idle" in queue
+    assert "window.setInterval" in queue
+    assert "fetch(`/jobs/${id}`" in detail
+    assert "setInterval" in detail
+    assert "/cancel" in detail
+    assert "/retry" in detail
+    assert "navigator.clipboard.writeText" in detail
+    assert "buildLog" in log_tail

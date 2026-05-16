@@ -162,10 +162,19 @@ def render_job_view(session: Session, job: Job) -> JobView:
     """Build the same JSON GET /jobs/<id> returns. Shared with the worker
     so webhook payloads stay in lockstep with what consumers see."""
     transcript = _latest_transcript_for_video(session, job.video_id)
+    events = {
+        event.stage: event
+        for event in session.scalars(
+            select(JobStageEvent)
+            .where(JobStageEvent.job_id == job.id)
+            .order_by(JobStageEvent.started_at)
+        )
+    }
     return JobView(
         job_id=job.id, url=job.url, video_id=job.video_id, status=job.status.value,
         error=job.error, callback_url=job.callback_url,
         transcript=_brief(transcript) if transcript else None,
+        stages=_stage_views(job, events),
     )
 
 
@@ -479,11 +488,21 @@ def _stage_duration_s(event: JobStageEvent) -> int | None:
 def _stage_views(job: Job, events: dict[str, JobStageEvent]) -> dict[str, JobStageView]:
     status = job.status.value
     status_rank = _STATUS_ORDER.get(status, -1)
+    failed_stage = None
+    if job.status == JobStatus.failed and events:
+        open_events = [event for event in events.values() if event.finished_at is None]
+        latest_event = max(open_events or list(events.values()), key=lambda event: event.started_at)
+        failed_stage = latest_event.stage
     views: dict[str, JobStageView] = {}
     for stage in _PIPELINE_STAGES:
         event = events.get(stage)
         state = "pending"
-        if status == stage:
+        if failed_stage is not None:
+            if stage == failed_stage:
+                state = "failed"
+            elif event is not None and _STATUS_ORDER[stage] < _STATUS_ORDER[failed_stage]:
+                state = "done"
+        elif status == stage:
             state = "active" if stage != JobStatus.done.value else "done"
         elif status_rank > _STATUS_ORDER[stage]:
             state = "done"
@@ -875,6 +894,24 @@ def admin_retry_job(job_id: int, session: Session = Depends(get_session)) -> Job
         job_id=new_job.id, url=new_job.url, video_id=new_job.video_id,
         status=new_job.status.value, callback_url=new_job.callback_url,
     )
+
+
+@router.post("/admin/jobs/{job_id}/cancel", response_model=JobView)
+def admin_cancel_job(job_id: int, session: Session = Depends(get_session)) -> JobView:
+    """Operator cancellation for queued/in-flight jobs."""
+    job = session.scalar(select(Job).where(Job.id == job_id).with_for_update())
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    if job.status in _TERMINAL:
+        raise HTTPException(
+            status_code=409,
+            detail=f"job {job_id} is {job.status.value} (terminal); cancel is only allowed for active jobs.",
+        )
+
+    job.error = "cancelled by operator"
+    transition_job_status(session, job, JobStatus.failed)
+    session.refresh(job)
+    return render_job_view(session, job)
 
 
 # ----------------------------------------------------------------- ops endpoints

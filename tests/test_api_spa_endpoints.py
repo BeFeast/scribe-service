@@ -268,6 +268,48 @@ def test_api_jobs_active_happy_path(client, db_session):
     assert row["stages"]["summarizing"]["state"] == "pending"
 
 
+def test_get_job_includes_pipeline_stages(client, db_session):
+    now = dt.datetime.now(dt.UTC).replace(microsecond=0)
+    job = Job(
+        url="https://youtu.be/detailjob1",
+        video_id="detailjob1",
+        status=JobStatus.summarizing,
+        created_at=now - dt.timedelta(minutes=4),
+    )
+    db_session.add(job)
+    db_session.flush()
+    db_session.add_all(
+        [
+            JobStageEvent(
+                job_id=job.id,
+                stage="queued",
+                started_at=now - dt.timedelta(minutes=4),
+                finished_at=now - dt.timedelta(minutes=3),
+            ),
+            JobStageEvent(
+                job_id=job.id,
+                stage="downloading",
+                started_at=now - dt.timedelta(minutes=3),
+                finished_at=now - dt.timedelta(minutes=2),
+            ),
+            JobStageEvent(
+                job_id=job.id,
+                stage="transcribing",
+                started_at=now - dt.timedelta(minutes=2),
+                finished_at=now - dt.timedelta(minutes=1),
+            ),
+            JobStageEvent(job_id=job.id, stage="summarizing", started_at=now - dt.timedelta(minutes=1)),
+        ]
+    )
+    db_session.commit()
+
+    body = client.get(f"/jobs/{job.id}").json()
+    assert body["stages"]["queued"]["state"] == "done"
+    assert body["stages"]["transcribing"]["duration_s"] == 60
+    assert body["stages"]["summarizing"]["state"] == "active"
+    assert body["stages"]["done"]["state"] == "pending"
+
+
 def test_api_ops_empty(client, tmp_path, monkeypatch):
     path = tmp_path / "_last_success_ts"
     monkeypatch.setattr(settings, "backup_status_path", str(path))

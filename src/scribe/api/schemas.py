@@ -35,17 +35,6 @@ class TranscriptFull(TranscriptBrief):
     vast_cost: float | None = None
 
 
-class JobView(BaseModel):
-    job_id: int
-    url: str
-    video_id: str
-    status: str
-    error: str | None = None
-    deduplicated: bool = False
-    callback_url: str | None = None
-    transcript: TranscriptBrief | None = None
-
-
 class PromptVersionView(BaseModel):
     id: str
     len_chars: int
@@ -108,6 +97,18 @@ class JobStageView(BaseModel):
     duration_s: int | None = None
     progress: float | None = None
     note: str | None = None
+
+
+class JobView(BaseModel):
+    job_id: int
+    url: str
+    video_id: str
+    status: str
+    error: str | None = None
+    deduplicated: bool = False
+    callback_url: str | None = None
+    transcript: TranscriptBrief | None = None
+    stages: dict[str, JobStageView] | None = None
 
 
 class ActiveJobView(BaseModel):

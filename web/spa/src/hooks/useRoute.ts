@@ -68,6 +68,9 @@ function routeToHash(route: Route): string {
 		}
 		parts.push(String(route.params.id));
 	}
+	if (route.page === "job") {
+		parts[0] = "jobs";
+	}
 	const params = new URLSearchParams();
 	if (route.params.tag !== undefined) {
 		params.set("tag", route.params.tag);

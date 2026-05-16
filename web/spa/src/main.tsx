@@ -7,7 +7,9 @@ import { TopBar } from "./components/TopBar";
 import { CMDK_OPEN_EVENT } from "./constants";
 import { useRoute } from "./hooks/useRoute";
 import { useTweaks } from "./hooks/useTweaks";
+import { JobDetailPage } from "./pages/JobDetail";
 import { Library } from "./pages/Library";
+import { QueuePage } from "./pages/Queue";
 import { Transcript } from "./pages/Transcript";
 import "./styles.css";
 
@@ -53,6 +55,15 @@ function App() {
 						/>
 					) : route.page === "transcript" ? (
 						<Transcript id={route.params.id} navigate={navigate} />
+					) : route.page === "queue" ? (
+						<QueuePage
+							navigateToJob={(id) => navigate({ page: "job", params: { id } })}
+						/>
+					) : route.page === "job" ? (
+						<JobDetailPage
+							id={route.params.id}
+							navigateToJob={(id) => navigate({ page: "job", params: { id } })}
+						/>
 					) : (
 						<Placeholder page={route.page} id={route.params.id} />
 					)}
