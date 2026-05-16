@@ -279,9 +279,19 @@ def transition_job_status(session: Session, job: Job, status: JobStatus) -> None
             .order_by(JobStageEvent.started_at.desc())
         )
         if current is None:
+            current = session.scalar(
+                select(JobStageEvent)
+                .where(
+                    JobStageEvent.job_id == job.id,
+                    JobStageEvent.stage == old_status.value,
+                )
+                .order_by(JobStageEvent.started_at.desc())
+            )
+        if current is None:
             current = JobStageEvent(job_id=job.id, stage=old_status.value, started_at=job.created_at)
             session.add(current)
-        current.finished_at = now
+        if current.finished_at is None:
+            current.finished_at = now
 
     job.status = status
     if status.value in _STATUS_ORDER:
@@ -293,6 +303,9 @@ def transition_job_status(session: Session, job: Job, status: JobStatus) -> None
         )
         if existing_new is None:
             session.add(JobStageEvent(job_id=job.id, stage=status.value, started_at=now))
+        else:
+            existing_new.started_at = now
+            existing_new.finished_at = None
     metrics.job_status_transitions.labels(status=status.value).inc()
     session.commit()
 
