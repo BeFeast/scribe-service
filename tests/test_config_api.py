@@ -5,19 +5,27 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
 from scribe.api import routes as routes_module
-from scribe.config import RUNTIME_CONFIG, settings
+from scribe.config import RUNTIME_CONFIG, RuntimeConfigSpec, parse_runtime_config_value, settings
 from scribe.db.models import AppConfig
 from scribe.main import app
+
+TEST_TOKEN = "test-config-token"
 
 
 def _client(db_session) -> TestClient:
     app.dependency_overrides[routes_module.get_session] = lambda: db_session
-    return TestClient(app)
+    return TestClient(app, headers={"Authorization": f"Bearer {TEST_TOKEN}"})
 
 
 def _clear_config(session) -> None:
     session.execute(delete(AppConfig))
     session.commit()
+
+
+def _settings_snapshot() -> dict[str, object]:
+    snapshot = {key: getattr(settings, key) for key in RUNTIME_CONFIG}
+    snapshot["config_api_bearer_token"] = settings.config_api_bearer_token
+    return snapshot
 
 
 def _restore_settings(snapshot: dict[str, object], sources: set[str]) -> None:
@@ -27,10 +35,11 @@ def _restore_settings(snapshot: dict[str, object], sources: set[str]) -> None:
 
 
 def test_get_config_uses_env_fallback(db_session):
-    snapshot = {key: getattr(settings, key) for key in RUNTIME_CONFIG}
+    snapshot = _settings_snapshot()
     sources = set(settings._runtime_sources)
     try:
         _clear_config(db_session)
+        settings.config_api_bearer_token = TEST_TOKEN
         settings._runtime_sources = set()
         settings.daily_spend_cap_usd = 12.5
 
@@ -47,12 +56,14 @@ def test_get_config_uses_env_fallback(db_session):
 
 
 def test_get_config_applies_db_override(db_session):
-    snapshot = {key: getattr(settings, key) for key in RUNTIME_CONFIG}
+    snapshot = _settings_snapshot()
     sources = set(settings._runtime_sources)
     try:
         _clear_config(db_session)
+        settings.config_api_bearer_token = TEST_TOKEN
         db_session.add(AppConfig(key="public_base_url", value="https://scribe.example.test"))
         db_session.commit()
+        settings.runtime_overlay({"public_base_url": "https://scribe.example.test"})
 
         client = _client(db_session)
         resp = client.get("/api/config")
@@ -68,12 +79,14 @@ def test_get_config_applies_db_override(db_session):
 
 
 def test_post_config_sparse_update_preserves_other_rows(db_session):
-    snapshot = {key: getattr(settings, key) for key in RUNTIME_CONFIG}
+    snapshot = _settings_snapshot()
     sources = set(settings._runtime_sources)
     try:
         _clear_config(db_session)
+        settings.config_api_bearer_token = TEST_TOKEN
         db_session.add(AppConfig(key="public_base_url", value="https://old.example.test"))
         db_session.commit()
+        settings.runtime_overlay({"public_base_url": "https://old.example.test"})
 
         client = _client(db_session)
         resp = client.post("/api/config", json={"daily_spend_cap_usd": 3.75})
@@ -91,10 +104,11 @@ def test_post_config_sparse_update_preserves_other_rows(db_session):
 
 
 def test_post_config_rejects_unknown_key(db_session):
-    snapshot = {key: getattr(settings, key) for key in RUNTIME_CONFIG}
+    snapshot = _settings_snapshot()
     sources = set(settings._runtime_sources)
     try:
         _clear_config(db_session)
+        settings.config_api_bearer_token = TEST_TOKEN
         client = _client(db_session)
 
         resp = client.post("/api/config", json={"not_a_setting": True})
@@ -107,11 +121,30 @@ def test_post_config_rejects_unknown_key(db_session):
         _clear_config(db_session)
 
 
-def test_post_config_returns_restart_required_for_worker_concurrency(db_session):
-    snapshot = {key: getattr(settings, key) for key in RUNTIME_CONFIG}
+def test_post_config_rejects_invalid_url(db_session):
+    snapshot = _settings_snapshot()
     sources = set(settings._runtime_sources)
     try:
         _clear_config(db_session)
+        settings.config_api_bearer_token = TEST_TOKEN
+        client = _client(db_session)
+
+        resp = client.post("/api/config", json={"public_base_url": "not a url"})
+
+        assert resp.status_code == 400
+        assert "public_base_url" in resp.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(routes_module.get_session, None)
+        _restore_settings(snapshot, sources)
+        _clear_config(db_session)
+
+
+def test_post_config_returns_restart_required_for_worker_concurrency(db_session):
+    snapshot = _settings_snapshot()
+    sources = set(settings._runtime_sources)
+    try:
+        _clear_config(db_session)
+        settings.config_api_bearer_token = TEST_TOKEN
         client = _client(db_session)
 
         resp = client.post("/api/config", json={"worker_concurrency": 4})
@@ -126,8 +159,70 @@ def test_post_config_returns_restart_required_for_worker_concurrency(db_session)
         _clear_config(db_session)
 
 
+def test_post_config_rejects_read_only_key(db_session):
+    snapshot = _settings_snapshot()
+    sources = set(settings._runtime_sources)
+    original = RUNTIME_CONFIG["bot_wall_retry"]
+    try:
+        _clear_config(db_session)
+        settings.config_api_bearer_token = TEST_TOKEN
+        RUNTIME_CONFIG["bot_wall_retry"] = RuntimeConfigSpec(
+            "bot_wall_retry", "bool", mutable=False
+        )
+        client = _client(db_session)
+
+        resp = client.post("/api/config", json={"bot_wall_retry": True})
+
+        assert resp.status_code == 400
+        assert "read-only" in resp.json()["detail"]
+    finally:
+        RUNTIME_CONFIG["bot_wall_retry"] = original
+        app.dependency_overrides.pop(routes_module.get_session, None)
+        _restore_settings(snapshot, sources)
+        _clear_config(db_session)
+
+
+def test_config_requires_bearer_token(db_session):
+    snapshot = _settings_snapshot()
+    sources = set(settings._runtime_sources)
+    try:
+        _clear_config(db_session)
+        settings.config_api_bearer_token = TEST_TOKEN
+        app.dependency_overrides[routes_module.get_session] = lambda: db_session
+        client = TestClient(app)
+
+        resp = client.get("/api/config")
+
+        assert resp.status_code == 401
+    finally:
+        app.dependency_overrides.pop(routes_module.get_session, None)
+        _restore_settings(snapshot, sources)
+        _clear_config(db_session)
+
+
+def test_parse_runtime_config_rejects_non_finite_float():
+    for value in (float("nan"), float("inf"), "-inf"):
+        try:
+            parse_runtime_config_value("daily_spend_cap_usd", value)
+        except ValueError as exc:
+            assert "finite" in str(exc) or "number" in str(exc)
+        else:
+            raise AssertionError(f"accepted non-finite value {value!r}")
+
+
+def test_parse_runtime_config_rejects_fractional_int():
+    for value in (3.9, "3.9"):
+        try:
+            parse_runtime_config_value("worker_concurrency", value)
+        except ValueError as exc:
+            assert "integer" in str(exc)
+        else:
+            raise AssertionError(f"accepted fractional integer {value!r}")
+
+
 def test_rotate_token_stub_returns_501():
-    client = TestClient(app)
+    settings.config_api_bearer_token = TEST_TOKEN
+    client = TestClient(app, headers={"Authorization": f"Bearer {TEST_TOKEN}"})
     resp = client.post("/api/config/rotate-token")
     assert resp.status_code == 501
 

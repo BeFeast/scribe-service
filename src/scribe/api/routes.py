@@ -19,6 +19,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
@@ -60,6 +61,7 @@ from scribe.pipeline.downloader import DownloadError, extract_video_id
 
 router = APIRouter()
 log = logging.getLogger("scribe.api")
+_CONFIG_AUTH = HTTPBearer(auto_error=False)
 
 # Postgres advisory-lock key used to serialise the daily-spend-cap check.
 # Arbitrary 8-byte int derived from the literal so it's stable across deploys.
@@ -251,10 +253,22 @@ def _config_response(*, restart_required: list[str] | None = None) -> ConfigResp
     )
 
 
+def require_config_auth(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_CONFIG_AUTH),
+) -> None:
+    token = settings.config_api_bearer_token.strip()
+    if not token:
+        raise HTTPException(status_code=503, detail="config API bearer token is not configured")
+    if (
+        credentials is None
+        or credentials.scheme.lower() != "bearer"
+        or not secrets.compare_digest(credentials.credentials, token)
+    ):
+        raise HTTPException(status_code=401, detail="invalid bearer token")
+
+
 @router.get("/api/config", response_model=ConfigResponse)
-def get_config(session: Session = Depends(get_session)) -> ConfigResponse:
-    rows = dict(session.execute(select(AppConfig.key, AppConfig.value)).all())
-    settings.runtime_overlay(rows)
+def get_config(_auth: None = Depends(require_config_auth)) -> ConfigResponse:
     return _config_response()
 
 
@@ -262,10 +276,15 @@ def get_config(session: Session = Depends(get_session)) -> ConfigResponse:
 def update_config(
     body: dict[str, object] = Body(...),
     session: Session = Depends(get_session),
+    _auth: None = Depends(require_config_auth),
 ) -> ConfigResponse:
     unknown = sorted(set(body) - set(RUNTIME_CONFIG))
     if unknown:
         raise HTTPException(status_code=400, detail=f"unknown config keys: {', '.join(unknown)}")
+
+    immutable = sorted(k for k in body if k in RUNTIME_CONFIG and not RUNTIME_CONFIG[k].mutable)
+    if immutable:
+        raise HTTPException(status_code=400, detail=f"read-only config keys: {', '.join(immutable)}")
 
     parsed: dict[str, bool | float | int | str] = {}
     errors: dict[str, str] = {}
@@ -295,7 +314,7 @@ def update_config(
 
 
 @router.post("/api/config/rotate-token", status_code=501)
-def rotate_token() -> None:
+def rotate_token(_auth: None = Depends(require_config_auth)) -> None:
     # TODO(PRD §4.6): implement once the auth surface owns bearer-token rotation.
     raise HTTPException(status_code=501, detail="bearer-token rotation is not implemented yet")
 

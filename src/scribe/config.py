@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic import AnyHttpUrl, PrivateAttr, TypeAdapter
+from pydantic import AnyHttpUrl, PrivateAttr, TypeAdapter, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ConfigKind = Literal["bool", "float", "int", "prompt_version", "url", "url_optional"]
@@ -53,6 +54,12 @@ def parse_runtime_config_value(key: str, value: Any) -> bool | float | int | str
     if spec.kind == "int":
         if isinstance(value, bool):
             raise ValueError(f"{key} must be an integer")
+        if isinstance(value, float) and not value.is_integer():
+            raise ValueError(f"{key} must be an integer")
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or any(ch in stripped for ch in ".eE"):
+                raise ValueError(f"{key} must be an integer")
         try:
             parsed = int(value)
         except (TypeError, ValueError) as exc:
@@ -67,6 +74,8 @@ def parse_runtime_config_value(key: str, value: Any) -> bool | float | int | str
             parsed = float(value)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"{key} must be a number") from exc
+        if not math.isfinite(parsed):
+            raise ValueError(f"{key} must be finite")
         if parsed < 0:
             raise ValueError(f"{key} must be >= 0")
         return parsed
@@ -82,11 +91,17 @@ def parse_runtime_config_value(key: str, value: Any) -> bool | float | int | str
         stripped = value.strip()
         if not stripped:
             return ""
-        return str(_URL_ADAPTER.validate_python(stripped))
+        try:
+            return str(_URL_ADAPTER.validate_python(stripped))
+        except ValidationError as exc:
+            raise ValueError(f"{key} must be a valid URL") from exc
     if spec.kind == "url":
         if not isinstance(value, str):
             raise ValueError(f"{key} must be a URL string")
-        return str(_URL_ADAPTER.validate_python(value.strip()))
+        try:
+            return str(_URL_ADAPTER.validate_python(value.strip()))
+        except ValidationError as exc:
+            raise ValueError(f"{key} must be a valid URL") from exc
     raise ValueError(f"unsupported config kind for {key}")
 
 
@@ -151,6 +166,7 @@ class Settings(BaseSettings):
 
     # Runtime-tunable Settings page knobs. These default from env/.env and may
     # be overlaid from app_config at startup or after POST /api/config.
+    config_api_bearer_token: str = ""
     bot_wall_retry: bool = False
     webhook_default: str = ""
     webhook_embed_transcript: bool = False
