@@ -509,6 +509,7 @@ a {
 .cmdk-overlay {
 	position: fixed;
 	inset: 0;
+	z-index: 50;
 	display: grid;
 	place-items: start center;
 	padding-top: 12vh;
@@ -533,6 +534,66 @@ a {
 	color: var(--fg);
 }
 
+.cmdk-submit,
+.cmdk-success {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+	margin: 0.65rem;
+	padding: 0.75rem;
+	border: var(--rule);
+	border-radius: var(--radius);
+	background: var(--accent-soft);
+}
+
+.cmdk-submit div,
+.cmdk-success {
+	min-width: 0;
+}
+
+.cmdk-submit strong,
+.cmdk-submit small,
+.cmdk-submit .cmdk-label,
+.cmdk-item strong,
+.cmdk-item small {
+	display: block;
+}
+
+.cmdk-label,
+.cmdk-item em {
+	color: var(--muted);
+	font-size: 0.72rem;
+	font-style: normal;
+	text-transform: uppercase;
+}
+
+.cmdk-submit small,
+.cmdk-item small {
+	margin-top: 0.15rem;
+	color: var(--muted);
+	font-size: 0.78rem;
+}
+
+.cmdk-error {
+	margin: 0 0.65rem 0.65rem;
+	color: var(--err);
+}
+
+.cmdk-success button,
+.primary-button {
+	min-height: 2.1rem;
+	padding: 0.35rem 0.65rem;
+	border: var(--rule);
+	border-radius: var(--radius);
+	background: var(--accent);
+	color: var(--accent-fg);
+}
+
+.primary-button:disabled {
+	opacity: 0.6;
+}
+
 .cmdk-list {
 	display: grid;
 	max-height: 20rem;
@@ -545,14 +606,24 @@ a {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
+	gap: 1rem;
 	border-radius: var(--radius);
+	border: 0;
 	padding: 0.65rem 0.75rem;
+	background: transparent;
 	color: var(--fg-soft);
+	text-align: left;
 }
 
 .cmdk-item[aria-selected="true"] {
 	background: var(--accent-soft);
 	color: var(--fg);
+}
+
+.cmdk-empty {
+	margin: 0;
+	padding: 0.75rem;
+	color: var(--muted);
 }
 
 .pane,
