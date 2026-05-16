@@ -145,9 +145,12 @@ def test_tweaks_defaults_persist_and_apply_to_html_dataset() -> None:
     assert 'libraryLayout: "feed"' in source
     assert "localStorage.getItem(STORAGE_KEY)" in source
     assert "localStorage.setItem(STORAGE_KEY" in source
-    assert "parsed.variant" not in source
-    assert "parsed.density" not in source
-    assert "parsed.libraryLayout" not in source
+    assert "parsed.variant" in source
+    assert "parsed.density" in source
+    assert "parsed.libraryLayout" in source
+    assert "variants.has(parsed.variant)" in source
+    assert "densities.has(parsed.density)" in source
+    assert "libraryLayouts.has(parsed.libraryLayout)" in source
     assert 'type: "variant"' not in source
     assert 'type: "density"' not in source
     assert 'type: "libraryLayout"' not in source
