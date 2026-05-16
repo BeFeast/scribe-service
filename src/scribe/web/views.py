@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from scribe.api.routes import CSRF_COOKIE, FLASH_COOKIE, get_session
 from scribe.config import settings
 from scribe.db.models import Transcript
+from scribe.db.query import escape_like
 
 router = APIRouter(tags=["web"])
 _TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -55,22 +56,12 @@ def _render_md(text: str) -> str:
     )
 
 
-def _escape_like(value: str) -> str:
-    """Escape SQL wildcards so user-supplied `%` / `_` are matched literally.
-    Postgres' default LIKE escape is backslash; we keep the default."""
-    return (
-        value.replace("\\", "\\\\")
-        .replace("%", "\\%")
-        .replace("_", "\\_")
-    )
-
-
 def _build_filter(stmt, *, q: str | None, tag: str | None):
     """Apply optional search + tag filters in-place. q matches title +
     transcript_md case-insensitively; tag is exact-match against the
     Postgres array column."""
     if q:
-        like = f"%{_escape_like(q.strip())}%"
+        like = f"%{escape_like(q.strip())}%"
         stmt = stmt.where(or_(Transcript.title.ilike(like), Transcript.transcript_md.ilike(like)))
     if tag:
         # Postgres-specific: `value = ANY(array_col)`. tags column is TEXT[].

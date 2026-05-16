@@ -28,9 +28,9 @@ import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 
-from scribe.api.routes import render_job_view
+from scribe.api.routes import render_job_view, transition_job_status
 from scribe.config import settings
 from scribe.db.models import Job, JobStatus, Transcript
 from scribe.db.session import SessionLocal
@@ -144,25 +144,23 @@ def _time_stage(stage: str):
 
 def _set_job_status(session, job: Job, status: JobStatus) -> None:
     """Update Job.status, count the transition, commit."""
-    job.status = status
-    metrics.job_status_transitions.labels(status=status.value).inc()
-    session.commit()
+    transition_job_status(session, job, status)
 
 
 def _claim_next_job(session) -> Job | None:
     """Atomically claim one queued job (FOR UPDATE SKIP LOCKED), set downloading."""
-    row = session.execute(
-        text(
-            "UPDATE jobs SET status='downloading', updated_at=now() "
-            "WHERE id = (SELECT id FROM jobs WHERE status='queued' "
-            "ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id"
-        )
-    ).first()
-    session.commit()
-    if not row:
+    job = session.scalar(
+        select(Job)
+        .where(Job.status == JobStatus.queued)
+        .order_by(Job.id)
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    )
+    if job is None:
+        session.commit()
         return None
-    metrics.job_status_transitions.labels(status=JobStatus.downloading.value).inc()
-    return session.get(Job, row[0])
+    _set_job_status(session, job, JobStatus.downloading)
+    return job
 
 
 def _find_partial_transcript(session, video_id: str) -> Transcript | None:
@@ -277,11 +275,9 @@ def process_job(session, job: Job) -> None:
             session.rollback()
             failed = session.get(Job, job_id)
             if failed is not None:
-                failed.status = JobStatus.failed
                 failed.error = f"{type(exc).__name__}: {exc}"
-                session.commit()
+                _set_job_status(session, failed, JobStatus.failed)
                 _deliver_webhook(session, failed)
-            metrics.job_status_transitions.labels(status=JobStatus.failed.value).inc()
             job_log.exception("job failed", extra={"stage": "failed", "error": f"{type(exc).__name__}: {exc}"})
     finally:
         metrics.workers_busy.dec()

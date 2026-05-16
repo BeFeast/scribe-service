@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, Text, func
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -51,6 +51,9 @@ class Job(Base):
     transcript: Mapped[Transcript | None] = relationship(
         back_populates="job", uselist=False, cascade="all, delete-orphan"
     )
+    stage_events: Mapped[list[JobStageEvent]] = relationship(
+        back_populates="job", cascade="all, delete-orphan", order_by="JobStageEvent.started_at"
+    )
 
 
 class Transcript(Base):
@@ -87,3 +90,22 @@ class Transcript(Base):
     )
 
     job: Mapped[Job] = relationship(back_populates="transcript")
+
+
+class JobStageEvent(Base):
+    """Persisted lifecycle timing for one job pipeline stage."""
+
+    __tablename__ = "job_stage_events"
+    __table_args__ = (
+        UniqueConstraint("job_id", "stage", name="uq_job_stage_events_job_stage"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    stage: Mapped[str] = mapped_column(Text, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    job: Mapped[Job] = relationship(back_populates="stage_events")
