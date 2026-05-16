@@ -504,8 +504,10 @@ function LibTable({
 								<TagList row={row} onTagClick={onTagClick} />
 							</td>
 							<td className="muted">
-								<span>{formatDuration(row.duration_seconds)}</span>
-								<span>{formatUsdCost(row.vast_cost, displayCurrency)}</span>
+								<div className="table-meta-stack">
+									<span>{formatDuration(row.duration_seconds)}</span>
+									<span>{formatUsdCost(row.vast_cost, displayCurrency)}</span>
+								</div>
 							</td>
 							<td className="tnum">{formatDate(row.created_at)}</td>
 						</tr>
