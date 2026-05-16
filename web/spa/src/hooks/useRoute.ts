@@ -59,6 +59,9 @@ function routeFromHash(hash: string): Route {
 
 function routeToHash(route: Route): string {
 	const parts: string[] = [route.page];
+	if (route.page === "job") {
+		parts[0] = "jobs";
+	}
 	if (
 		(route.page === "transcript" || route.page === "job") &&
 		route.params.id !== undefined

@@ -35,6 +35,15 @@ class TranscriptFull(TranscriptBrief):
     vast_cost: float | None = None
 
 
+class JobStageView(BaseModel):
+    state: str
+    started_at: dt.datetime | None = None
+    finished_at: dt.datetime | None = None
+    duration_s: int | None = None
+    progress: float | None = None
+    note: str | None = None
+
+
 class JobView(BaseModel):
     job_id: int
     url: str
@@ -44,6 +53,9 @@ class JobView(BaseModel):
     deduplicated: bool = False
     callback_url: str | None = None
     transcript: TranscriptBrief | None = None
+    started_at: dt.datetime | None = None
+    elapsed_s: int | None = None
+    stages: dict[str, JobStageView] | None = None
 
 
 class PromptVersionView(BaseModel):
@@ -102,15 +114,6 @@ class LibraryResponse(BaseModel):
     offset: int
 
 
-class JobStageView(BaseModel):
-    state: str
-    started_at: dt.datetime | None = None
-    finished_at: dt.datetime | None = None
-    duration_s: int | None = None
-    progress: float | None = None
-    note: str | None = None
-
-
 class ActiveJobView(BaseModel):
     id: int
     video_id: str
@@ -125,6 +128,21 @@ class ActiveJobView(BaseModel):
 
 class ActiveJobsResponse(BaseModel):
     jobs: list[ActiveJobView]
+
+
+class FailedJobView(BaseModel):
+    id: int
+    video_id: str
+    url: str
+    title: str | None = None
+    source: str | None = None
+    error: str | None = None
+    failed_at: dt.datetime
+    stages: dict[str, JobStageView]
+
+
+class RecentFailuresResponse(BaseModel):
+    jobs: list[FailedJobView]
 
 
 class BackupSnapshot(BaseModel):
