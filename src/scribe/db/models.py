@@ -49,6 +49,7 @@ class Job(Base):
         index=True,
     )
     source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Optional webhook target — scribe POSTs the final JobView JSON to
     # this URL on terminal status (done|failed). NULL = poll-only client.

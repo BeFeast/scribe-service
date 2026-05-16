@@ -659,7 +659,7 @@ def api_jobs_active(response: Response, session: Session = Depends(get_session))
                 id=job.id,
                 video_id=job.video_id,
                 url=job.url,
-                title=title_by_video.get(job.video_id),
+                title=job.title or title_by_video.get(job.video_id),
                 status=job.status.value,
                 source=job.source,
                 started_at=events_by_job[job.id].get(JobStatus.queued.value, None).started_at
@@ -707,7 +707,7 @@ def api_jobs_recent_failures(
                 id=job.id,
                 video_id=job.video_id,
                 url=job.url,
-                title=title_by_video.get(job.video_id),
+                title=job.title or title_by_video.get(job.video_id),
                 source=job.source,
                 error=job.error,
                 failed_at=job.updated_at,
@@ -1040,7 +1040,7 @@ def admin_retry_job(job_id: int, session: Session = Depends(get_session)) -> Job
     # incident response exactly when it's most needed.
     new_job = Job(
         url=job.url, video_id=job.video_id, status=JobStatus.queued,
-        source=job.source, callback_url=job.callback_url,
+        source=job.source, title=job.title, callback_url=job.callback_url,
     )
     session.add(new_job)
     session.flush()
