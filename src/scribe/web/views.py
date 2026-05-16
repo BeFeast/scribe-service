@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import datetime as dt
 import email.utils
+import functools
 import html
+import json
 import re
 import secrets
 from pathlib import Path
@@ -31,13 +33,35 @@ from scribe.db.models import Transcript
 from scribe.db.query import escape_like
 
 router = APIRouter(tags=["web"])
-_TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+_WEB_DIR = Path(__file__).parent
+_TEMPLATES = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
+_SPA_STATIC_DIR = _WEB_DIR / "static" / "spa"
+_SPA_MANIFEST_PATH = _SPA_STATIC_DIR / ".vite" / "manifest.json"
 _FLASH_LEVELS = frozenset({"success", "error", "info"})
 
 # Hard cap on the rows the home page renders. Keeps the page fast even after
 # years of accretion; older entries are still reachable by tag/search.
 _LIST_LIMIT = 200
 _FEED_LIMIT = 40
+
+
+@functools.cache
+def _spa_asset_urls() -> dict[str, list[str]]:
+    try:
+        manifest = json.loads(_SPA_MANIFEST_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        manifest = {}
+
+    entry = manifest.get("index.html")
+    if entry is None:
+        entry = next((item for item in manifest.values() if item.get("isEntry")), {})
+
+    scripts = []
+    if file := entry.get("file"):
+        scripts.append(f"/static/spa/{file}")
+
+    styles = [f"/static/spa/{path}" for path in entry.get("css", [])]
+    return {"scripts": scripts, "styles": styles}
 
 
 def _strip_frontmatter(text: str) -> str:
@@ -85,6 +109,16 @@ def index(
         request,
         "list.html",
         {"transcripts": rows, "q": q or "", "tag": tag or ""},
+    )
+
+
+@router.get("/__spa__/", response_class=HTMLResponse)
+def spa_shell(request: Request) -> HTMLResponse:
+    assets = _spa_asset_urls()
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "spa.html",
+        {"scripts": assets["scripts"], "styles": assets["styles"]},
     )
 
 

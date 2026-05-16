@@ -38,6 +38,13 @@
   - `bunx` instead of `npx`
   - `bun init` for new projects
 
+## SPA Development
+
+- SPA source lives in `web/spa/`.
+- Run `bun install` there once, then `bun run dev` to start Vite on its own port.
+- Vite proxies `/api/*` to `http://127.0.0.1:13120`; keep the FastAPI service running there for API-backed local UI work.
+- `bun run build` emits the FastAPI-served bundle into `src/scribe/web/static/spa/`.
+
 ## Credential Lookup Policy
 
 When you need any access credentials (passwords, API keys, tokens, etc.):

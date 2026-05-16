@@ -4,6 +4,15 @@
 # needs the local-pipeline tools (yt-dlp, ffmpeg, deno for EJS, codex CLI)
 # plus the scribe Python package.
 
+FROM oven/bun:1.3.14 AS spa-builder
+
+WORKDIR /app/web/spa
+COPY web/spa/package.json web/spa/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY web/spa ./
+RUN bun run build
+
+
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -43,6 +52,7 @@ RUN uv sync --frozen --no-install-project 2>/dev/null \
     || uv sync --no-install-project
 
 COPY src ./src
+COPY --from=spa-builder /app/src/scribe/web/static/spa ./src/scribe/web/static/spa
 COPY migrations ./migrations
 COPY alembic.ini ./alembic.ini
 RUN uv sync --frozen 2>/dev/null || uv sync

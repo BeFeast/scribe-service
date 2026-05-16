@@ -6,3 +6,5 @@ data/
 *.egg-info/
 .ruff_cache/
 .pytest_cache/
+web/spa/tsconfig.tsbuildinfo
+src/scribe/web/static/spa/

@@ -10,6 +10,8 @@ __pycache__
 dist
 build
 node_modules
+web/spa/tsconfig.tsbuildinfo
+src/scribe/web/static/spa
 .env
 .env.*
 README.md
