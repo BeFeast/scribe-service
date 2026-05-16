@@ -4,6 +4,8 @@ import { CMDK_OPEN_EVENT } from "../constants";
 import type { Route } from "../hooks/useRoute";
 import { usePoll } from "../hooks/usePoll";
 import type { LibraryLayout } from "../hooks/useTweaks";
+import type { DisplayCurrency } from "../lib/currency";
+import { formatUsdCost } from "../lib/currency";
 
 type LibraryRow = {
 	id: number;
@@ -54,6 +56,7 @@ type ActiveJobsResponse = {
 
 type LibraryProps = {
 	layout: LibraryLayout;
+	displayCurrency: DisplayCurrency;
 	route: Route;
 	navigate: (route: Route) => void;
 };
@@ -88,17 +91,6 @@ function formatDuration(seconds: number | null): string {
 	return `${minutes}:${String(rest).padStart(2, "0")}`;
 }
 
-function formatCost(value: number | null): string {
-	if (value === null) {
-		return "cost n/a";
-	}
-	return new Intl.NumberFormat(undefined, {
-		style: "currency",
-		currency: "USD",
-		maximumFractionDigits: 3,
-	}).format(value);
-}
-
 function buildLibraryUrl(
 	query: string,
 	tag: string | undefined,
@@ -118,7 +110,7 @@ function hasNonTerminalJob(jobs: ActiveJob[]): boolean {
 	return jobs.some((job) => !terminalStatuses.has(job.status));
 }
 
-export function Library({ layout, route, navigate }: LibraryProps) {
+export function Library({ layout, displayCurrency, route, navigate }: LibraryProps) {
 	const selectedTag = route.params.tag;
 	const [query, setQuery] = React.useState("");
 	const [debouncedQuery, setDebouncedQuery] = React.useState("");
@@ -292,6 +284,7 @@ export function Library({ layout, route, navigate }: LibraryProps) {
 					{layout === "table" ? (
 						<LibTable
 							rows={rows}
+							displayCurrency={displayCurrency}
 							onTagClick={tagClick}
 							onOpen={transcriptClick}
 						/>
@@ -299,6 +292,7 @@ export function Library({ layout, route, navigate }: LibraryProps) {
 					{layout === "feed" ? (
 						<LibFeed
 							rows={rows}
+							displayCurrency={displayCurrency}
 							onTagClick={tagClick}
 							onOpen={transcriptClick}
 						/>
@@ -306,6 +300,7 @@ export function Library({ layout, route, navigate }: LibraryProps) {
 					{layout === "cards" ? (
 						<LibCards
 							rows={rows}
+							displayCurrency={displayCurrency}
 							onTagClick={tagClick}
 							onOpen={transcriptClick}
 						/>
@@ -391,10 +386,12 @@ function InFlightRow({ job, onOpen }: { job: ActiveJob; onOpen: () => void }) {
 
 function LibTable({
 	rows,
+	displayCurrency,
 	onTagClick,
 	onOpen,
 }: {
 	rows: LibraryRow[];
+	displayCurrency: DisplayCurrency;
 	onTagClick: (tag: string) => void;
 	onOpen: (id: number) => void;
 }) {
@@ -430,7 +427,7 @@ function LibTable({
 							</td>
 							<td className="muted">
 								<span>{formatDuration(row.duration_seconds)}</span>
-								<span>{formatCost(row.vast_cost)}</span>
+								<span>{formatUsdCost(row.vast_cost, displayCurrency)}</span>
 							</td>
 							<td className="tnum">{formatDate(row.created_at)}</td>
 						</tr>
@@ -443,10 +440,12 @@ function LibTable({
 
 function LibFeed({
 	rows,
+	displayCurrency,
 	onTagClick,
 	onOpen,
 }: {
 	rows: LibraryRow[];
+	displayCurrency: DisplayCurrency;
 	onTagClick: (tag: string) => void;
 	onOpen: (id: number) => void;
 }) {
@@ -465,7 +464,7 @@ function LibFeed({
 						{row.is_partial ? <span className="chip warn">partial</span> : null}
 					</div>
 					<p className="feed-excerpt">{row.summary_excerpt}</p>
-					<RowMeta row={row} />
+					<RowMeta row={row} displayCurrency={displayCurrency} />
 					<TagList row={row} onTagClick={onTagClick} />
 					<RowLinks row={row} />
 				</article>
@@ -476,10 +475,12 @@ function LibFeed({
 
 function LibCards({
 	rows,
+	displayCurrency,
 	onTagClick,
 	onOpen,
 }: {
 	rows: LibraryRow[];
+	displayCurrency: DisplayCurrency;
 	onTagClick: (tag: string) => void;
 	onOpen: (id: number) => void;
 }) {
@@ -499,7 +500,7 @@ function LibCards({
 					</div>
 					<p className="feed-excerpt">{row.summary_excerpt}</p>
 					<TagList row={row} onTagClick={onTagClick} />
-					<RowMeta row={row} />
+					<RowMeta row={row} displayCurrency={displayCurrency} />
 					<RowLinks row={row} />
 				</article>
 			))}
@@ -533,13 +534,19 @@ function TagList({
 	);
 }
 
-function RowMeta({ row }: { row: LibraryRow }) {
+function RowMeta({
+	row,
+	displayCurrency,
+}: {
+	row: LibraryRow;
+	displayCurrency: DisplayCurrency;
+}) {
 	return (
 		<div className="detail-meta">
 			<span className="tnum">{formatDate(row.created_at)}</span>
 			<span>{formatDuration(row.duration_seconds)}</span>
 			<span>{row.lang ?? "lang n/a"}</span>
-			<span>{formatCost(row.vast_cost)}</span>
+			<span>{formatUsdCost(row.vast_cost, displayCurrency)}</span>
 		</div>
 	);
 }

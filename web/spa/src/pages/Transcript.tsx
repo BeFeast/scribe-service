@@ -1,5 +1,8 @@
 import React from "react";
 
+import type { DisplayCurrency } from "../lib/currency";
+import { formatUsdCost } from "../lib/currency";
+
 type TranscriptRecord = {
 	id: number;
 	video_id: string;
@@ -18,6 +21,7 @@ type TranscriptRecord = {
 
 type TranscriptProps = {
 	id?: number;
+	displayCurrency: DisplayCurrency;
 	navigate: (route: {
 		page: "library" | "transcript" | "queue" | "job" | "ops" | "settings";
 		params: { id?: number; tag?: string };
@@ -244,13 +248,6 @@ function formatDate(value: string): string {
 	}).format(new Date(value));
 }
 
-function formatCost(value?: number | null): string {
-	if (value === null || value === undefined) {
-		return "n/a";
-	}
-	return `$${value.toFixed(4)}`;
-}
-
 function transcriptExcerpt(markdown: string): string {
 	const stripped = stripFrontmatter(markdown).trim();
 	if (stripped.length <= 3200) {
@@ -317,7 +314,7 @@ export function PartialNotice({
 	);
 }
 
-export function Transcript({ id, navigate }: TranscriptProps) {
+export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 	const [record, setRecord] = React.useState<TranscriptRecord | null>(null);
 	const [loading, setLoading] = React.useState(true);
 	const [error, setError] = React.useState<string | null>(null);
@@ -527,7 +524,7 @@ export function Transcript({ id, navigate }: TranscriptProps) {
 			<footer className="detail-footer">
 				<span>job_id: {record.job_id}</span>
 				<span>video_id: {record.video_id}</span>
-				<span>vast_cost: {formatCost(record.vast_cost)}</span>
+				<span>vast_cost: {formatUsdCost(record.vast_cost, displayCurrency)}</span>
 				<span>created: {created}</span>
 			</footer>
 		</section>

@@ -1,6 +1,8 @@
 import React from "react";
 
 import type { Route } from "../hooks/useRoute";
+import type { DisplayCurrency } from "../lib/currency";
+import { formatUsdCost } from "../lib/currency";
 
 type Tone = "ok" | "warn" | "err" | "info" | "accent";
 
@@ -49,6 +51,7 @@ type OpsSnapshot = {
 };
 
 type OpsProps = {
+	displayCurrency: DisplayCurrency;
 	navigate: (route: Route) => void;
 };
 
@@ -58,14 +61,6 @@ const STATUS_TONES: Record<string, Tone> = {
 	failed: "err",
 	queued: "info",
 };
-
-function money(value: number): string {
-	return new Intl.NumberFormat("en-US", {
-		style: "currency",
-		currency: "USD",
-		maximumFractionDigits: 2,
-	}).format(value);
-}
 
 function compactNumber(value: number): string {
 	return new Intl.NumberFormat("en-US").format(value);
@@ -233,7 +228,7 @@ function FailureRow({
 	);
 }
 
-export function Ops({ navigate }: OpsProps) {
+export function Ops({ displayCurrency, navigate }: OpsProps) {
 	const [snapshot, setSnapshot] = React.useState<OpsSnapshot | null>(null);
 	const [error, setError] = React.useState<string | null>(null);
 	const [loading, setLoading] = React.useState(true);
@@ -323,8 +318,8 @@ export function Ops({ navigate }: OpsProps) {
 						/>
 						<MetricCard
 							label="Vast spend 24 h"
-							value={money(snapshot.vast_spend_24h)}
-							help={`${money(snapshot.vast_spend_7d)} over 7 d`}
+							value={formatUsdCost(snapshot.vast_spend_24h, displayCurrency)}
+							help={`${formatUsdCost(snapshot.vast_spend_7d, displayCurrency)} over 7 d`}
 						/>
 						<MetricCard
 							label="Backup heartbeat"
@@ -339,10 +334,12 @@ export function Ops({ navigate }: OpsProps) {
 							<div className="card-head">
 								<div>
 									<p className="section-label">14-day spend</p>
-									<strong>{money(snapshot.vast_spend_30d)} / 30 d</strong>
+									<strong>
+										{formatUsdCost(snapshot.vast_spend_30d, displayCurrency)} / 30 d
+									</strong>
 								</div>
 								<span className="chip info">
-									cap {money(snapshot.daily_spend_cap_usd)}
+									cap {formatUsdCost(snapshot.daily_spend_cap_usd, displayCurrency)}
 								</span>
 							</div>
 							<Sparkline

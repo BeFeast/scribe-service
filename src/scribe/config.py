@@ -14,6 +14,7 @@ ConfigKind = Literal[
     "bool",
     "float",
     "int",
+    "display_currency",
     "prompt_version",
     "short_description_language",
     "url",
@@ -38,6 +39,7 @@ RUNTIME_CONFIG: dict[str, RuntimeConfigSpec] = {
     "webhook_default": RuntimeConfigSpec("webhook_default", "url_optional"),
     "webhook_embed_transcript": RuntimeConfigSpec("webhook_embed_transcript", "bool"),
     "public_base_url": RuntimeConfigSpec("public_base_url", "url"),
+    "display_currency": RuntimeConfigSpec("display_currency", "display_currency"),
     "short_description_language": RuntimeConfigSpec("short_description_language", "short_description_language"),
 }
 
@@ -89,6 +91,10 @@ def parse_runtime_config_value(key: str, value: Any) -> bool | float | int | str
         if not isinstance(value, str) or value not in _PROMPT_VERSIONS:
             raise ValueError(f"{key} must be one of: v1, v2, v3")
         return value
+    if spec.kind == "display_currency":
+        if not isinstance(value, str) or value.strip().upper() not in {"USD", "EUR", "ILS", "GBP"}:
+            raise ValueError(f"{key} must be one of: USD, EUR, ILS, GBP")
+        return value.strip().upper()
     if spec.kind == "short_description_language":
         if not isinstance(value, str) or value.strip().lower() not in {"ru", "en"}:
             raise ValueError(f"{key} must be one of: ru, en")
@@ -181,6 +187,7 @@ class Settings(BaseSettings):
     webhook_default: str = ""
     webhook_embed_transcript: bool = False
     prompt_template_active_version: str = "v1"
+    display_currency: str = "USD"
     short_description_language: str = "ru"
 
     # Path the scribe-backups sidecar writes after each successful run; surfaced

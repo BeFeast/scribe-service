@@ -37,6 +37,8 @@ def test_app_mounts_shell_and_placeholder_router() -> None:
     assert "useRoute" in source
     assert "Library" in source
     assert "layout={tweaks.libraryLayout}" in source
+    assert "displayCurrency={displayCurrency}" in source
+    assert 'fetch("/api/config")' in source
     assert 'route.page === "library"' in source
     assert 'route.page === "transcript"' in source
     assert "<Transcript" in source
@@ -67,6 +69,7 @@ def test_library_page_fetches_api_and_supports_layouts() -> None:
     assert '["limit", String(limit)]' in source
     assert '["offset", String(offset)]' in source
     assert "setRetryTick((value) => value + 1)" in source
+    assert "formatUsdCost(row.vast_cost, displayCurrency)" in source
     assert "Previous" in source
     assert "Next" in source
     assert "window.setTimeout(() => setDebouncedQuery(query), 200)" in source
