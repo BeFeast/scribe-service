@@ -44,6 +44,20 @@ _TAGS_RE = re.compile(r"^tags:\s*\[([^\]]*)\]", re.MULTILINE)
 _TAG_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _TAG_REPLACEMENTS = {
     "bytovaya-scena": "everyday-scene",
+    "detskaya-rech": "child-speech",
+    "dok-stancii": "docking-stations",
+    "internet-kultura": "internet-culture",
+    "intuiciya": "intuition",
+    "karera": "career",
+    "periferia": "peripherals",
+    "plagin": "plugins",
+    "poisk": "search",
+    "pokupka": "buying-guide",
+    "predprinimatelstvo": "entrepreneurship",
+    "produktivnost": "productivity",
+    "smertnost": "mortality",
+    "stiv-dzhobs": "steve-jobs",
+    "usb-huby": "usb-hubs",
 }
 _REJECTED_TAGS = {
     "auto-generated",
