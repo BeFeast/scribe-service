@@ -316,7 +316,7 @@ def require_config_auth(
 ) -> None:
     token = settings.config_api_bearer_token.strip()
     if not token:
-        raise HTTPException(status_code=503, detail="config API bearer token is not configured")
+        return
     if (
         credentials is None
         or credentials.scheme.lower() != "bearer"

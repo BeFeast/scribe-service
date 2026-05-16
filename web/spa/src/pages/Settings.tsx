@@ -311,9 +311,9 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 			<header className="pane-header">
 				<div>
 					<p className="eyebrow">Settings</p>
-					<h1 className="pane-h1">Pipeline, prompt, appearance, access</h1>
+					<h1 className="pane-h1">Pipeline, summaries, appearance, access</h1>
 					<p className="pane-sub">
-						Runtime controls are saved sparsely and refreshed from the API.
+						Runtime controls are saved in the service database and refreshed from the API.
 					</p>
 				</div>
 				<div className="settings-actions">
@@ -742,12 +742,15 @@ export function PromptEditor({
 	return (
 		<section className="settings-group prompt-group">
 			<div className="prompt-head">
-				<h2 className="section-label">Summary prompt</h2>
+				<h2 className="section-label">Advanced summarizer prompt</h2>
 				{isDirty ? <span className="chip warn">dirty</span> : null}
 			</div>
 			<SegRow
 				label="Version"
-				hint={selected?.first_line ?? "Choose the active prompt template."}
+				hint={
+					selected?.first_line ??
+					"LLM instructions used to generate summary markdown, tags, and card descriptions."
+				}
 				value={version}
 				options={promptVersions}
 				onChange={onVersion}

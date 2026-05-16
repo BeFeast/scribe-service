@@ -259,6 +259,25 @@ def test_config_requires_bearer_token(db_session):
         _clear_config(db_session)
 
 
+def test_config_allows_access_when_bearer_token_unset(db_session):
+    snapshot = _settings_snapshot()
+    sources = set(settings._runtime_sources)
+    try:
+        _clear_config(db_session)
+        settings.config_api_bearer_token = ""
+        app.dependency_overrides[routes_module.get_session] = lambda: db_session
+        client = TestClient(app)
+
+        resp = client.get("/api/config")
+
+        assert resp.status_code == 200
+        assert "daily_spend_cap_usd" in resp.json()["config"]
+    finally:
+        app.dependency_overrides.pop(routes_module.get_session, None)
+        _restore_settings(snapshot, sources)
+        _clear_config(db_session)
+
+
 def test_parse_runtime_config_rejects_non_finite_float():
     for value in (float("nan"), float("inf"), "-inf"):
         try:
