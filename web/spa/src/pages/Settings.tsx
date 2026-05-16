@@ -189,6 +189,7 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 		setError(null);
 		setStatus(null);
 		try {
+			const hadChanges = dirtyKeys.size > 0 || promptDirty;
 			if (dirtyKeys.size > 0) {
 				const payload: Partial<Record<ConfigKey, ConfigValue>> = {};
 				for (const key of dirtyKeys) {
@@ -226,7 +227,7 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 				}
 			}
 			if (await loadSettings()) {
-				setStatus("Saved");
+				setStatus(hadChanges ? "Saved" : "Settings are current");
 			}
 		} catch (saveError) {
 			setError(saveError instanceof Error ? saveError.message : "save failed");
@@ -323,7 +324,7 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 					<button
 						className="btn primary"
 						type="button"
-						disabled={saving || (dirtyKeys.size === 0 && !promptDirty)}
+						disabled={saving || loading}
 						onClick={save}
 					>
 						{saving ? "Saving" : "Save"}
