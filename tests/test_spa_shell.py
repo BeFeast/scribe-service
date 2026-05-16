@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -26,7 +28,7 @@ def test_spa_shell_uses_vite_manifest(monkeypatch, tmp_path):
     views._spa_asset_urls.cache_clear()
 
     client = TestClient(app)
-    response = client.get("/__spa__/")
+    response = client.get("/")
 
     assert response.status_code == 200
     assert "<title>Scribe SPA</title>" in response.text
@@ -36,3 +38,39 @@ def test_spa_shell_uses_vite_manifest(monkeypatch, tmp_path):
     assert "babel" not in response.text.lower()
     assert "unpkg" not in response.text.lower()
     assert "cdn" not in response.text.lower()
+
+    alias_response = client.get("/__spa__/")
+    assert alias_response.status_code == 200
+    assert '<div id="root"></div>' in alias_response.text
+
+
+def test_classic_transcript_list_remains_explicit():
+    rows = [
+        SimpleNamespace(
+            id=7,
+            title="Classic List Entry",
+            tags=["legacy"],
+            lang="en",
+            duration_seconds=125,
+            created_at=dt.datetime(2026, 5, 16, 9, 30),
+        )
+    ]
+
+    class FakeScalars:
+        def all(self):
+            return rows
+
+    class FakeSession:
+        def scalars(self, _stmt):
+            return FakeScalars()
+
+    app.dependency_overrides[views.get_session] = lambda: FakeSession()
+    try:
+        response = TestClient(app).get("/classic")
+    finally:
+        app.dependency_overrides.pop(views.get_session, None)
+
+    assert response.status_code == 200
+    assert "Classic List Entry" in response.text
+    assert 'action="/classic"' in response.text
+    assert 'href="/classic?tag=legacy"' in response.text

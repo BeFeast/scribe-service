@@ -1,6 +1,7 @@
-"""Web-UI: browse transcript history (server-rendered Jinja).
+"""Web-UI: SPA shell plus legacy transcript browsing.
 
-GET /                       -> transcript list (optional ?q=, ?tag=)
+GET /                       -> React SPA shell
+GET /classic                -> legacy transcript list (optional ?q=, ?tag=)
 GET /transcripts/{id}       -> transcript detail (summary + transcript, rendered)
 GET /feed.xml               -> RSS 2.0 of the latest transcripts
 
@@ -97,7 +98,19 @@ def _build_filter(stmt, *, q: str | None, tag: str | None):
 
 
 @router.get("/", response_class=HTMLResponse)
-def index(
+@router.get("/__spa__/", response_class=HTMLResponse)
+@router.get("/__spa__/{spa_path:path}", response_class=HTMLResponse)
+def spa_shell(request: Request, spa_path: str = "") -> HTMLResponse:
+    assets = _spa_asset_urls()
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "spa.html",
+        {"scripts": assets["scripts"], "styles": assets["styles"]},
+    )
+
+
+@router.get("/classic", response_class=HTMLResponse)
+def classic_index(
     request: Request,
     session: Session = Depends(get_session),
     q: str | None = Query(None, description="Substring against title + transcript_md"),
@@ -109,17 +122,6 @@ def index(
         request,
         "list.html",
         {"transcripts": rows, "q": q or "", "tag": tag or ""},
-    )
-
-
-@router.get("/__spa__/", response_class=HTMLResponse)
-@router.get("/__spa__/{spa_path:path}", response_class=HTMLResponse)
-def spa_shell(request: Request, spa_path: str = "") -> HTMLResponse:
-    assets = _spa_asset_urls()
-    return _TEMPLATES.TemplateResponse(
-        request,
-        "spa.html",
-        {"scripts": assets["scripts"], "styles": assets["styles"]},
     )
 
 

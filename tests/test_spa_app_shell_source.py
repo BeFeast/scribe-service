@@ -27,7 +27,7 @@ def test_app_mounts_shell_and_placeholder_router() -> None:
 
     assert "TopBar" in source
     assert "Sidebar" in source
-    assert "TweaksPanel" in source
+    assert "TweaksPanel" not in source
     assert "useRoute" in source
     assert "pages coming online — see issue #27" in source
     assert 'route.page === "library"' in source
@@ -50,14 +50,23 @@ def test_tweaks_defaults_persist_and_apply_to_html_dataset() -> None:
     source = read("hooks/useTweaks.ts")
 
     assert 'const STORAGE_KEY = "scribe.tweaks";' in source
-    assert 'variant: "paper"' in source
+    assert 'variant: "terminal"' in source
     assert 'theme: "light"' in source
     assert 'density: "cozy"' in source
     assert 'libraryLayout: "feed"' in source
     assert "localStorage.getItem(STORAGE_KEY)" in source
     assert "localStorage.setItem(STORAGE_KEY" in source
+    assert "parsed.variant" not in source
+    assert "parsed.density" not in source
+    assert "parsed.libraryLayout" not in source
+    assert 'type: "variant"' not in source
+    assert 'type: "density"' not in source
+    assert 'type: "libraryLayout"' not in source
     assert "document.documentElement" in source
+    assert "dataset.variant = tweaks.variant" in source
     assert "dataset.theme = tweaks.theme" in source
+    assert "dataset.density = tweaks.density" in source
+    assert "dataset.libraryLayout = tweaks.libraryLayout" in source
 
 
 def test_sidebar_has_api_fetch_and_marked_mock_fallback() -> None:

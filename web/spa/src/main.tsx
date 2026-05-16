@@ -4,7 +4,6 @@ import { createRoot } from "react-dom/client";
 import { DesignSystemPlayground } from "./DesignSystemPlayground";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
-import { TweaksPanel } from "./components/TweaksPanel";
 import { CMDK_OPEN_EVENT } from "./constants";
 import { useRoute } from "./hooks/useRoute";
 import { useTweaks } from "./hooks/useTweaks";
@@ -12,8 +11,7 @@ import "./styles.css";
 
 function App() {
 	const { route, navigate } = useRoute();
-	const { tweaks, setVariant, setTheme, setDensity, setLibraryLayout } =
-		useTweaks();
+	const { tweaks, setTheme } = useTweaks();
 
 	React.useEffect(() => {
 		const open = () => {
@@ -62,14 +60,6 @@ function App() {
 					)}
 				</main>
 			</div>
-			<TweaksPanel
-				tweaks={tweaks}
-				setVariant={setVariant}
-				setTheme={setTheme}
-				setDensity={setDensity}
-				setLibraryLayout={setLibraryLayout}
-				navigate={navigate}
-			/>
 		</div>
 	);
 }
