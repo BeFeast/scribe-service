@@ -2,62 +2,85 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 
 import { DesignSystemPlayground } from "./DesignSystemPlayground";
+import { Sidebar } from "./components/Sidebar";
+import { TopBar } from "./components/TopBar";
+import { TweaksPanel } from "./components/TweaksPanel";
+import { useRoute } from "./hooks/useRoute";
+import { useTweaks } from "./hooks/useTweaks";
 import "./styles.css";
 
-const locationChangeEvent = "scribe:locationchange";
-
-const notifyLocationChange = () => {
-	window.dispatchEvent(new Event(locationChangeEvent));
-};
-
-for (const method of ["pushState", "replaceState"] as const) {
-	const original = window.history[method];
-	window.history[method] = function updateHistory(
-		...args: Parameters<History[typeof method]>
-	) {
-		const result = original.apply(this, args);
-		notifyLocationChange();
-		return result;
-	};
-}
-
-function subscribePathname(callback: () => void) {
-	window.addEventListener("popstate", callback);
-	window.addEventListener(locationChangeEvent, callback);
-
-	return () => {
-		window.removeEventListener("popstate", callback);
-		window.removeEventListener(locationChangeEvent, callback);
-	};
-}
-
-function getPathname() {
-	return window.location.pathname;
-}
+const CMDK_EVENT = "scribe:cmdk-open";
 
 function App() {
-	const pathname = React.useSyncExternalStore(
-		subscribePathname,
-		getPathname,
-		getPathname,
-	);
+	const { route, navigate } = useRoute();
+	const { tweaks, setVariant, setTheme, setDensity, setLibraryLayout } =
+		useTweaks();
 
 	React.useEffect(() => {
-		const { dataset } = document.documentElement;
-		dataset.variant ??= "paper";
-		dataset.theme ??= "light";
-		dataset.density ??= "cozy";
+		const open = () => {
+			console.info("Command palette requested; #40 will mount the palette body.");
+		};
+		const keydown = (event: KeyboardEvent) => {
+			if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+				event.preventDefault();
+				document.dispatchEvent(new CustomEvent(CMDK_EVENT));
+			}
+		};
+		document.addEventListener(CMDK_EVENT, open);
+		document.addEventListener("keydown", keydown);
+		return () => {
+			document.removeEventListener(CMDK_EVENT, open);
+			document.removeEventListener("keydown", keydown);
+		};
 	}, []);
 
-	if (pathname === "/__spa__/__playground__") {
+	if (window.location.pathname === "/__spa__/__playground__") {
 		return <DesignSystemPlayground />;
 	}
 
 	return (
-		<main className="pane">
-			<h1 className="pane-h1">Scribe SPA</h1>
-			<p className="pane-sub">The SPA foundation is ready for page work.</p>
-		</main>
+		<div className="app-shell">
+			<TopBar theme={tweaks.theme} onThemeChange={setTheme} />
+			<div className="shell-body">
+				<Sidebar route={route} navigate={navigate} />
+				<main className="content-pane">
+					{route.page === "library" ? (
+						<section className="placeholder-pane">
+							<p className="eyebrow">Library</p>
+							<h1>pages coming online — see issue #27</h1>
+							<p>
+								The persistent app shell is mounted. Route state, tags,
+								pipeline stats, and tweaks are live for the page work that
+								follows.
+							</p>
+							{route.params.tag !== undefined ? (
+								<span className="active-filter">tag: {route.params.tag}</span>
+							) : null}
+						</section>
+					) : (
+						<Placeholder page={route.page} id={route.params.id} />
+					)}
+				</main>
+			</div>
+			<TweaksPanel
+				tweaks={tweaks}
+				setVariant={setVariant}
+				setTheme={setTheme}
+				setDensity={setDensity}
+				setLibraryLayout={setLibraryLayout}
+				navigate={navigate}
+			/>
+		</div>
+	);
+}
+
+function Placeholder({ page, id }: { page: string; id?: number }) {
+	return (
+		<section className="placeholder-pane">
+			<p className="eyebrow">{page}</p>
+			<h1>pages coming online — see issue #27</h1>
+			{id !== undefined ? <span className="active-filter">id: {id}</span> : null}
+		</section>
 	);
 }
 
