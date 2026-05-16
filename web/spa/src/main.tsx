@@ -17,7 +17,9 @@ function App() {
 
 	React.useEffect(() => {
 		const open = () => {
-			console.info("Command palette requested; #40 will mount the palette body.");
+			console.info(
+				"Command palette requested; #40 will mount the palette body.",
+			);
 		};
 		const keydown = (event: KeyboardEvent) => {
 			if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -48,9 +50,8 @@ function App() {
 							<p className="eyebrow">Library</p>
 							<h1>pages coming online — see issue #27</h1>
 							<p>
-								The persistent app shell is mounted. Route state, tags,
-								pipeline stats, and tweaks are live for the page work that
-								follows.
+								The persistent app shell is mounted. Route state, tags, pipeline
+								stats, and tweaks are live for the page work that follows.
 							</p>
 							{route.params.tag !== undefined ? (
 								<span className="active-filter">tag: {route.params.tag}</span>
@@ -78,7 +79,9 @@ function Placeholder({ page, id }: { page: string; id?: number }) {
 		<section className="placeholder-pane">
 			<p className="eyebrow">{page}</p>
 			<h1>pages coming online — see issue #27</h1>
-			{id !== undefined ? <span className="active-filter">id: {id}</span> : null}
+			{id !== undefined ? (
+				<span className="active-filter">id: {id}</span>
+			) : null}
 		</section>
 	);
 }

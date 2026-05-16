@@ -74,7 +74,9 @@ def test_sidebar_has_api_fetch_and_marked_mock_fallback() -> None:
 def test_route_hook_uses_typed_hash_routes() -> None:
     source = read("hooks/useRoute.ts")
 
-    assert 'export type RoutePage = "library" | "transcript" | "queue" | "job" | "ops" | "settings";' in source
+    assert "export type RoutePage =" in source
+    for page in ("library", "transcript", "queue", "job", "ops", "settings"):
+        assert f'| "{page}"' in source
     assert "window.location.hash" in source
     assert "window.addEventListener(\"hashchange\"" in source
     assert "type RouteAction" in source
