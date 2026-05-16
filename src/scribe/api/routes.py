@@ -27,6 +27,7 @@ from scribe.api.schemas import (
     BackupSnapshot,
     ConfigEntry,
     ConfigResponse,
+    FailedJobView,
     JobCreate,
     JobStageView,
     JobView,
@@ -40,6 +41,7 @@ from scribe.api.schemas import (
     PromptVersionView,
     PromptWrite,
     RecentFailureSnapshot,
+    RecentFailuresResponse,
     SystemSnapshot,
     TranscriptBrief,
     TranscriptFull,
@@ -163,10 +165,17 @@ def render_job_view(session: Session, job: Job) -> JobView:
     """Build the same JSON GET /jobs/<id> returns. Shared with the worker
     so webhook payloads stay in lockstep with what consumers see."""
     transcript = _latest_transcript_for_video(session, job.video_id)
+    events = _job_stage_events(session, [job.id]).get(job.id, {})
+    now = dt.datetime.now(dt.UTC)
     return JobView(
         job_id=job.id, url=job.url, video_id=job.video_id, status=job.status.value,
         error=job.error, callback_url=job.callback_url,
         transcript=_brief(transcript) if transcript else None,
+        started_at=events.get(JobStatus.queued.value, None).started_at
+        if JobStatus.queued.value in events
+        else job.created_at,
+        elapsed_s=max(0, int((now - job.created_at).total_seconds())),
+        stages=_stage_views(job, events),
     )
 
 
@@ -477,14 +486,39 @@ def _stage_duration_s(event: JobStageEvent) -> int | None:
     return max(0, int((event.finished_at - event.started_at).total_seconds()))
 
 
+def _job_stage_events(session: Session, job_ids: list[int]) -> dict[int, dict[str, JobStageEvent]]:
+    events_by_job: dict[int, dict[str, JobStageEvent]] = {job_id: {} for job_id in job_ids}
+    if not job_ids:
+        return events_by_job
+    for event in session.scalars(
+        select(JobStageEvent)
+        .where(JobStageEvent.job_id.in_(job_ids))
+        .order_by(JobStageEvent.started_at)
+    ):
+        events_by_job[event.job_id][event.stage] = event
+    return events_by_job
+
+
 def _stage_views(job: Job, events: dict[str, JobStageEvent]) -> dict[str, JobStageView]:
     status = job.status.value
     status_rank = _STATUS_ORDER.get(status, -1)
+    failed_stage = None
+    if job.status == JobStatus.failed:
+        ordered_events = [event for event in events.values() if event.stage in _STATUS_ORDER]
+        if ordered_events:
+            latest = max(ordered_events, key=lambda event: event.started_at)
+            failed_stage = latest.stage
+            status_rank = _STATUS_ORDER[latest.stage]
+        else:
+            failed_stage = JobStatus.queued.value
+            status_rank = _STATUS_ORDER[failed_stage]
     views: dict[str, JobStageView] = {}
     for stage in _PIPELINE_STAGES:
         event = events.get(stage)
         state = "pending"
-        if status == stage:
+        if failed_stage == stage:
+            state = "failed"
+        elif status == stage:
             state = "active" if stage != JobStatus.done.value else "done"
         elif status_rank > _STATUS_ORDER[stage]:
             state = "done"
@@ -513,13 +547,7 @@ def api_jobs_active(response: Response, session: Session = Depends(get_session))
         return ActiveJobsResponse(jobs=[])
 
     job_ids = [job.id for job in jobs]
-    events_by_job: dict[int, dict[str, JobStageEvent]] = {job.id: {} for job in jobs}
-    for event in session.scalars(
-        select(JobStageEvent)
-        .where(JobStageEvent.job_id.in_(job_ids))
-        .order_by(JobStageEvent.started_at)
-    ):
-        events_by_job[event.job_id][event.stage] = event
+    events_by_job = _job_stage_events(session, job_ids)
 
     video_ids = {job.video_id for job in jobs}
     transcripts = session.scalars(
@@ -545,6 +573,51 @@ def api_jobs_active(response: Response, session: Session = Depends(get_session))
                 if JobStatus.queued.value in events_by_job[job.id]
                 else job.created_at,
                 elapsed_s=max(0, int((now - job.created_at).total_seconds())),
+                stages=_stage_views(job, events_by_job[job.id]),
+            )
+            for job in jobs
+        ]
+    )
+
+
+@router.get("/api/jobs/recent-failures", response_model=RecentFailuresResponse, response_model_exclude_none=True)
+def api_jobs_recent_failures(
+    response: Response,
+    session: Session = Depends(get_session),
+    limit: int = Query(10, ge=1, le=50),
+) -> RecentFailuresResponse:
+    """Return the newest failed jobs for the Queue failure rail."""
+    _no_store(response)
+    jobs = session.scalars(
+        select(Job)
+        .where(Job.status == JobStatus.failed)
+        .order_by(Job.updated_at.desc(), Job.id.desc())
+        .limit(limit)
+    ).all()
+    if not jobs:
+        return RecentFailuresResponse(jobs=[])
+
+    events_by_job = _job_stage_events(session, [job.id for job in jobs])
+    video_ids = {job.video_id for job in jobs}
+    transcripts = session.scalars(
+        select(Transcript)
+        .where(Transcript.video_id.in_(video_ids))
+        .order_by(Transcript.id.desc())
+    ).all()
+    title_by_video: dict[str, str] = {}
+    for transcript in transcripts:
+        title_by_video.setdefault(transcript.video_id, transcript.title)
+
+    return RecentFailuresResponse(
+        jobs=[
+            FailedJobView(
+                id=job.id,
+                video_id=job.video_id,
+                url=job.url,
+                title=title_by_video.get(job.video_id),
+                source=job.source,
+                error=job.error,
+                failed_at=job.updated_at,
                 stages=_stage_views(job, events_by_job[job.id]),
             )
             for job in jobs
@@ -805,6 +878,24 @@ async def resummarize(
 
 
 _TERMINAL = (JobStatus.done, JobStatus.failed)
+
+
+@router.post("/admin/jobs/{job_id}/cancel", response_model=JobView)
+def admin_cancel_job(job_id: int, session: Session = Depends(get_session)) -> JobView:
+    """Mark an in-flight job failed so workers and queue polling stop tracking it."""
+    job = session.scalar(select(Job).where(Job.id == job_id).with_for_update())
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    if job.status in _TERMINAL:
+        raise HTTPException(
+            status_code=409,
+            detail=f"job {job_id} is {job.status.value} (terminal); cancel is only allowed for active jobs.",
+        )
+
+    job.error = "cancelled by operator"
+    transition_job_status(session, job, JobStatus.failed)
+    metrics.job_status_transitions.labels(status=JobStatus.failed.value).inc()
+    return render_job_view(session, job)
 
 
 @router.post("/admin/jobs/{job_id}/retry", response_model=JobView, status_code=201)

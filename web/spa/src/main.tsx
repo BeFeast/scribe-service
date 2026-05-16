@@ -7,8 +7,10 @@ import { TopBar } from "./components/TopBar";
 import { CMDK_OPEN_EVENT } from "./constants";
 import { useRoute } from "./hooks/useRoute";
 import { useTweaks } from "./hooks/useTweaks";
+import { JobDetail } from "./pages/JobDetail";
 import { Library } from "./pages/Library";
 import { Ops } from "./pages/Ops";
+import { Queue } from "./pages/Queue";
 import { Settings } from "./pages/Settings";
 import { Transcript } from "./pages/Transcript";
 import "./styles.css";
@@ -47,7 +49,11 @@ function App() {
 			<div className="shell-body">
 				<Sidebar route={route} navigate={navigate} />
 				<main className="content-pane">
-					{route.page === "library" ? (
+					{route.page === "queue" ? (
+						<Queue navigate={navigate} />
+					) : route.page === "job" ? (
+						<JobDetail id={route.params.id} navigate={navigate} />
+					) : route.page === "library" ? (
 						<Library
 							layout={tweaks.libraryLayout}
 							route={route}

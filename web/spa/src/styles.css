@@ -713,6 +713,39 @@ a {
 	gap: 0.45rem;
 }
 
+.status-chip {
+	display: inline-flex;
+	align-items: center;
+	min-height: 1.7rem;
+	padding: 0.25rem 0.55rem;
+	border: var(--rule);
+	border-radius: var(--radius);
+	background: var(--bg-soft);
+	color: var(--fg-soft);
+	font-size: 0.78rem;
+	font-weight: 800;
+	text-transform: uppercase;
+	white-space: nowrap;
+}
+
+.status-chip.done {
+	border-color: var(--ok);
+	color: var(--ok);
+}
+
+.status-chip.failed {
+	border-color: var(--err);
+	color: var(--err);
+}
+
+.status-chip.queued,
+.status-chip.downloading,
+.status-chip.transcribing,
+.status-chip.summarizing {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
 .transcript-body,
 .prose {
 	line-height: 1.7;
@@ -867,10 +900,52 @@ a {
 	gap: var(--row-gap);
 }
 
+.pipeline.compact {
+	grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 .stage {
+	display: grid;
+	align-content: space-between;
+	gap: 0.45rem;
 	min-height: 5rem;
 	padding: 0.75rem;
 	color: var(--muted);
+}
+
+.pipeline.compact .stage {
+	min-height: 4rem;
+	padding: 0.55rem;
+}
+
+.stage-head {
+	display: flex;
+	align-items: center;
+	gap: 0.45rem;
+	min-width: 0;
+}
+
+.stage-head strong {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.stage-index {
+	display: inline-grid;
+	flex: 0 0 auto;
+	width: 1.35rem;
+	height: 1.35rem;
+	place-items: center;
+	border: 1px solid currentcolor;
+	border-radius: 999px;
+	font-family: var(--font-mono);
+	font-size: 0.72rem;
+}
+
+.stage-state {
+	font-family: var(--font-mono);
+	font-size: 0.78rem;
 }
 
 .stage.active {
@@ -890,6 +965,132 @@ a {
 .stage.failed {
 	border-color: var(--err);
 	color: var(--err);
+}
+
+.queue-page,
+.job-detail-page {
+	display: grid;
+	align-content: start;
+	gap: 1rem;
+}
+
+.queue-count {
+	display: inline-grid;
+	min-width: 2.25rem;
+	height: 2.25rem;
+	place-items: center;
+	border: var(--rule);
+	border-radius: var(--radius);
+	background: var(--bg-card);
+	font-family: var(--font-mono);
+	font-weight: 900;
+}
+
+.queue-section {
+	display: grid;
+	gap: var(--row-gap);
+}
+
+.job-card-list,
+.failure-list {
+	display: grid;
+	gap: var(--row-gap);
+}
+
+.job-card {
+	display: grid;
+	gap: 0.85rem;
+	width: 100%;
+	border: var(--rule);
+	border-radius: var(--radius-lg);
+	padding: var(--pane-pad);
+	background: var(--bg-card);
+	color: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.job-card:hover,
+.failure-row:hover {
+	border-color: var(--accent);
+}
+
+.job-card-top,
+.failure-row {
+	display: flex;
+	align-items: start;
+	justify-content: space-between;
+	gap: 1rem;
+}
+
+.job-card h2 {
+	margin: 0;
+	color: var(--fg);
+	font-size: 1.05rem;
+	line-height: 1.25;
+}
+
+.job-card .detail-meta {
+	margin: 0.25rem 0 0;
+}
+
+.failure-row {
+	width: 100%;
+	text-align: left;
+	cursor: pointer;
+}
+
+.empty-queue,
+.error-banner,
+.job-panel,
+.log-tail {
+	border: var(--rule);
+	border-radius: var(--radius-lg);
+	padding: var(--pane-pad);
+	background: var(--bg-card);
+}
+
+.empty-queue {
+	display: grid;
+	min-height: 8rem;
+	place-items: center;
+	color: var(--muted);
+	font-family: var(--font-display);
+	font-size: 1.25rem;
+}
+
+.error-banner {
+	border-color: var(--err);
+	background: color-mix(in srgb, var(--err) 8%, var(--bg-card));
+	color: var(--err);
+}
+
+.job-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+}
+
+.log-tail {
+	display: grid;
+	gap: var(--row-gap);
+}
+
+.log-tail pre {
+	overflow: auto;
+	margin: 0;
+	border-radius: var(--radius);
+	padding: 0.85rem;
+	background: var(--bg-soft);
+	color: var(--fg-soft);
+	font-family: var(--font-mono);
+	font-size: 0.82rem;
+	line-height: 1.55;
+}
+
+.log-tail code {
+	display: block;
+	white-space: pre-wrap;
 }
 
 .failure-row {
