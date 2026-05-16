@@ -157,7 +157,10 @@ def _sentence_boundary_excerpt(summary_md: str | None, limit: int = 240) -> str:
 
 def _summary_excerpt(t: Transcript, limit: int = 240) -> str:
     if t.short_description:
-        return re.sub(r"\s+", " ", t.short_description).strip()
+        cleaned = re.sub(r"\s+", " ", t.short_description).strip()
+        if len(cleaned) <= limit:
+            return cleaned
+        return _sentence_boundary_excerpt(cleaned, limit=limit)
     return _sentence_boundary_excerpt(t.summary_md, limit=limit)
 
 

@@ -143,6 +143,28 @@ def test_api_library_fallback_excerpt_uses_sentence_boundary(client, db_session)
     assert row["summary_excerpt"] == "Heading First complete sentence."
 
 
+def test_api_library_short_description_respects_excerpt_limit(client, db_session):
+    _seed_transcript(
+        db_session,
+        video_id="shortlimit1",
+        title="Short Description Limit",
+        summary_md="Fallback should not be used.",
+        short_description=(
+            "Intentional first sentence for the library card. "
+            "Second complete sentence keeps the excerpt fluent. "
+            + "overflow " * 40
+        ),
+    )
+
+    row = client.get("/api/library").json()["rows"][0]
+
+    assert row["summary_excerpt"] == (
+        "Intentional first sentence for the library card. "
+        "Second complete sentence keeps the excerpt fluent."
+    )
+    assert len(row["summary_excerpt"]) < 240
+
+
 def test_api_library_fallback_excerpt_does_not_cut_inside_word(client, db_session):
     _seed_transcript(
         db_session,
