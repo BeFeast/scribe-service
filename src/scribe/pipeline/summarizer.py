@@ -124,12 +124,18 @@ def summarize(
     summary_date: dt.date | None = None,
     lock_timeout: float | None = None,
     prompt_version: str | None = None,
+    prompt_body: str | None = None,
 ) -> SummaryResult:
     """Produce a Russian analytical summary of `transcript_md` via codex CLI."""
     summary_date = summary_date or dt.date.today()
     transcript_slug = transcript_slug or _slugify(title)
     try:
-        template = prompts.read_prompt(prompt_version) if prompt_version else prompts.read_active_prompt()[1]
+        if prompt_body is not None:
+            template = prompt_body
+        elif prompt_version:
+            template = prompts.read_prompt(prompt_version)
+        else:
+            template = prompts.read_active_prompt()[1]
     except prompts.PromptError as exc:
         raise SummarizeError(str(exc)) from exc
     prompt = (

@@ -9,12 +9,13 @@ import { useRoute } from "./hooks/useRoute";
 import { useTweaks } from "./hooks/useTweaks";
 import { Library } from "./pages/Library";
 import { Ops } from "./pages/Ops";
+import { Settings } from "./pages/Settings";
 import { Transcript } from "./pages/Transcript";
 import "./styles.css";
 
 function App() {
 	const { route, navigate } = useRoute();
-	const { tweaks, setTheme } = useTweaks();
+	const { tweaks, setTheme, replaceTweaks } = useTweaks();
 
 	React.useEffect(() => {
 		const open = () => {
@@ -56,6 +57,12 @@ function App() {
 						<Transcript id={route.params.id} navigate={navigate} />
 					) : route.page === "ops" ? (
 						<Ops navigate={navigate} />
+					) : route.page === "settings" ? (
+						<Settings
+							tweaks={tweaks}
+							setTheme={setTheme}
+							replaceTweaks={replaceTweaks}
+						/>
 					) : (
 						<Placeholder page={route.page} id={route.params.id} />
 					)}

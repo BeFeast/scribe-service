@@ -632,6 +632,7 @@ async def dry_run_prompt(
             title=t.title,
             lock_timeout=_RESUMMARIZE_LOCK_TIMEOUT_S,
             prompt_version=body.version,
+            prompt_body=body.prompt_body,
         )
     except summarizer.LockTimeoutError as exc:
         raise HTTPException(

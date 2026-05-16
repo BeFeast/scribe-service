@@ -70,6 +70,7 @@ class PromptActiveWrite(BaseModel):
 class PromptDryRunCreate(BaseModel):
     version: str
     transcript_id: int
+    prompt_body: str | None = None
 
 
 class PromptDryRunView(BaseModel):
