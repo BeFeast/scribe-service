@@ -11,8 +11,10 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import SQLAlchemyError
 
 from scribe.api.routes import router as api_router
+from scribe.config import settings
 from scribe.obs.logging import configure as configure_logging
 from scribe.web.views import router as web_router
 from scribe.worker.loop import start_workers
@@ -23,10 +25,13 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    log = logging.getLogger("scribe")
+    try:
+        settings.runtime_overlay()
+    except (SQLAlchemyError, ValueError):
+        log.exception("runtime config overlay failed")
     threads, stop = start_workers()
-    logging.getLogger("scribe").info(
-        "workers started", extra={"thread_count": len(threads)}
-    )
+    log.info("workers started", extra={"thread_count": len(threads)})
     try:
         yield
     finally:

@@ -158,3 +158,14 @@ class OpsSnapshot(BaseModel):
     backup: BackupSnapshot
     worker_pool: WorkerPoolSnapshot
     system: list[SystemSnapshot]
+
+
+class ConfigEntry(BaseModel):
+    value: bool | float | int | str
+    source: str
+    mutable: bool
+
+
+class ConfigResponse(BaseModel):
+    config: dict[str, ConfigEntry]
+    restart_required: list[str] = []

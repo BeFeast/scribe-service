@@ -17,8 +17,9 @@ import secrets
 from collections.abc import Iterator
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Body, Depends, Form, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
@@ -26,6 +27,8 @@ from scribe.api.schemas import (
     ActiveJobsResponse,
     ActiveJobView,
     BackupSnapshot,
+    ConfigEntry,
+    ConfigResponse,
     JobCreate,
     JobStageView,
     JobView,
@@ -42,8 +45,13 @@ from scribe.api.schemas import (
     TranscriptBrief,
     WorkerPoolSnapshot,
 )
-from scribe.config import settings
-from scribe.db.models import Job, JobStageEvent, JobStatus, Transcript
+from scribe.config import (
+    RUNTIME_CONFIG,
+    parse_runtime_config_value,
+    serialize_runtime_config_value,
+    settings,
+)
+from scribe.db.models import AppConfig, Job, JobStageEvent, JobStatus, Transcript
 from scribe.db.query import escape_like
 from scribe.db.session import SessionLocal
 from scribe.obs import metrics
@@ -53,6 +61,7 @@ from scribe.pipeline.downloader import DownloadError, extract_video_id
 
 router = APIRouter()
 log = logging.getLogger("scribe.api")
+_CONFIG_AUTH = HTTPBearer(auto_error=False)
 
 # Postgres advisory-lock key used to serialise the daily-spend-cap check.
 # Arbitrary 8-byte int derived from the literal so it's stable across deploys.
@@ -228,6 +237,93 @@ def transition_job_status(session: Session, job: Job, status: JobStatus) -> None
             session.add(JobStageEvent(job_id=job.id, stage=status.value, started_at=now))
     metrics.job_status_transitions.labels(status=status.value).inc()
     session.commit()
+
+
+def _config_response(*, restart_required: list[str] | None = None) -> ConfigResponse:
+    return ConfigResponse(
+        config={
+            key: ConfigEntry(
+                value=getattr(settings, key),
+                source=settings.runtime_source(key),
+                mutable=spec.mutable,
+            )
+            for key, spec in RUNTIME_CONFIG.items()
+        },
+        restart_required=restart_required or [],
+    )
+
+
+def require_config_auth(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_CONFIG_AUTH),
+) -> None:
+    token = settings.config_api_bearer_token.strip()
+    if not token:
+        raise HTTPException(status_code=503, detail="config API bearer token is not configured")
+    if (
+        credentials is None
+        or credentials.scheme.lower() != "bearer"
+        or not secrets.compare_digest(credentials.credentials, token)
+    ):
+        raise HTTPException(status_code=401, detail="invalid bearer token")
+
+
+@router.get("/api/config", response_model=ConfigResponse)
+def get_config(_auth: None = Depends(require_config_auth)) -> ConfigResponse:
+    return _config_response()
+
+
+@router.post("/api/config", response_model=ConfigResponse)
+def update_config(
+    body: dict[str, object] = Body(...),
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_config_auth),
+) -> ConfigResponse:
+    unknown = sorted(set(body) - set(RUNTIME_CONFIG))
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"unknown config keys: {', '.join(unknown)}")
+
+    immutable = sorted(k for k in body if k in RUNTIME_CONFIG and not RUNTIME_CONFIG[k].mutable)
+    if immutable:
+        raise HTTPException(status_code=400, detail=f"read-only config keys: {', '.join(immutable)}")
+
+    parsed: dict[str, bool | float | int | str] = {}
+    errors: dict[str, str] = {}
+    for key, value in body.items():
+        try:
+            parsed[key] = parse_runtime_config_value(key, value)
+        except ValueError as exc:
+            errors[key] = str(exc)
+    if errors:
+        raise HTTPException(status_code=400, detail=errors)
+
+    existing_rows = dict(session.execute(select(AppConfig.key, AppConfig.value)).all())
+    serialized_values = {
+        key: serialize_runtime_config_value(value)
+        for key, value in parsed.items()
+    }
+    try:
+        settings.runtime_overlay(existing_rows | serialized_values)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    for key, serialized in serialized_values.items():
+        row = session.get(AppConfig, key)
+        if row is None:
+            session.add(AppConfig(key=key, value=serialized))
+        else:
+            row.value = serialized
+    session.commit()
+    restart_required = [
+        key for key in parsed if RUNTIME_CONFIG[key].restart_required
+    ]
+    return _config_response(restart_required=restart_required)
+
+
+@router.post("/api/config/rotate-token", status_code=501)
+def rotate_token(_auth: None = Depends(require_config_auth)) -> None:
+    # TODO(PRD §4.6): implement once the auth surface owns bearer-token rotation.
+    raise HTTPException(status_code=501, detail="bearer-token rotation is not implemented yet")
 
 
 @router.post("/jobs", response_model=JobView, status_code=201)
