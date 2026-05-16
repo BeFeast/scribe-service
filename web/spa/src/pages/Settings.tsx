@@ -8,6 +8,8 @@ import type {
 	ScribeVariant,
 	Tweaks,
 } from "../hooks/useTweaks";
+import type { DisplayCurrency } from "../lib/currency";
+import { displayCurrencies } from "../lib/currency";
 
 type ConfigValue = boolean | number | string;
 
@@ -41,6 +43,7 @@ type ConfigKey =
 	| "worker_concurrency"
 	| "bot_wall_retry"
 	| "public_base_url"
+	| "display_currency"
 	| "short_description_language"
 	| "webhook_default"
 	| "webhook_embed_transcript";
@@ -59,11 +62,13 @@ type SettingsRowProps = {
 };
 
 const CONFIG_TOKEN_KEY = "scribe.configToken";
+const CONFIG_SAVED_EVENT = "scribe-config-saved";
 const configKeys: ConfigKey[] = [
 	"daily_spend_cap_usd",
 	"worker_concurrency",
 	"bot_wall_retry",
 	"public_base_url",
+	"display_currency",
 	"short_description_language",
 	"webhook_default",
 	"webhook_embed_transcript",
@@ -230,6 +235,7 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 				}
 			}
 			if (await loadSettings()) {
+				document.dispatchEvent(new CustomEvent(CONFIG_SAVED_EVENT));
 				setSavedTweaks(tweaks);
 				setStatus("Saved");
 			}
@@ -411,6 +417,14 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 						onChange={(value) =>
 							updateDraft("short_description_language", value)
 						}
+					/>
+					<CurrencyRow
+						label="Display currency"
+						hint="Display Vast costs in the UI. Stored costs and spend caps remain USD."
+						source={config.display_currency?.source}
+						value={stringDraft(draft.display_currency)}
+						disabled={!isMutable(config.display_currency)}
+						onChange={(value) => updateDraft("display_currency", value)}
 					/>
 					<UrlRow
 						label="Default webhook"
@@ -681,6 +695,39 @@ export function LanguageRow({
 			>
 				<option value="ru">Russian</option>
 				<option value="en">English</option>
+			</select>
+		</SettingsRow>
+	);
+}
+
+export function CurrencyRow({
+	label,
+	hint,
+	source,
+	value,
+	disabled,
+	onChange,
+}: {
+	label: string;
+	hint: string;
+	source?: string;
+	value: string;
+	disabled: boolean;
+	onChange: (value: DisplayCurrency) => void;
+}) {
+	return (
+		<SettingsRow label={label} hint={hint} source={source}>
+			<select
+				className="settings-input"
+				value={value || "USD"}
+				disabled={disabled}
+				onChange={(event) => onChange(event.currentTarget.value as DisplayCurrency)}
+			>
+				{displayCurrencies.map((currency) => (
+					<option value={currency} key={currency}>
+						{currency}
+					</option>
+				))}
 			</select>
 		</SettingsRow>
 	);

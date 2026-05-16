@@ -7,6 +7,8 @@ import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { useRoute } from "./hooks/useRoute";
 import { useTweaks } from "./hooks/useTweaks";
+import type { DisplayCurrency } from "./lib/currency";
+import { parseDisplayCurrency } from "./lib/currency";
 import { JobDetail } from "./pages/JobDetail";
 import { Library } from "./pages/Library";
 import { Ops } from "./pages/Ops";
@@ -15,9 +17,37 @@ import { Settings } from "./pages/Settings";
 import { Transcript } from "./pages/Transcript";
 import "./styles.css";
 
+const CONFIG_SAVED_EVENT = "scribe-config-saved";
+
 function App() {
 	const { route, navigate } = useRoute();
 	const { tweaks, setTheme, replaceTweaks } = useTweaks();
+	const [displayCurrency, setDisplayCurrency] =
+		React.useState<DisplayCurrency>("USD");
+
+	const loadDisplayCurrency = React.useCallback(async () => {
+		try {
+			const response = await fetch("/api/config");
+			if (!response.ok) {
+				return;
+			}
+			const body = (await response.json()) as {
+				config?: { display_currency?: { value?: unknown } };
+			};
+			setDisplayCurrency(
+				parseDisplayCurrency(body.config?.display_currency?.value),
+			);
+		} catch {
+			// Display falls back to USD if the runtime config endpoint is unavailable.
+		}
+	}, []);
+
+	React.useEffect(() => {
+		void loadDisplayCurrency();
+		document.addEventListener(CONFIG_SAVED_EVENT, loadDisplayCurrency);
+		return () =>
+			document.removeEventListener(CONFIG_SAVED_EVENT, loadDisplayCurrency);
+	}, [loadDisplayCurrency]);
 
 	if (window.location.pathname === "/__spa__/__playground__") {
 		return <DesignSystemPlayground />;
@@ -36,13 +66,18 @@ function App() {
 					) : route.page === "library" ? (
 						<Library
 							layout={tweaks.libraryLayout}
+							displayCurrency={displayCurrency}
 							route={route}
 							navigate={navigate}
 						/>
 					) : route.page === "transcript" ? (
-						<Transcript id={route.params.id} navigate={navigate} />
+						<Transcript
+							id={route.params.id}
+							displayCurrency={displayCurrency}
+							navigate={navigate}
+						/>
 					) : route.page === "ops" ? (
-						<Ops navigate={navigate} />
+						<Ops displayCurrency={displayCurrency} navigate={navigate} />
 					) : route.page === "settings" ? (
 						<Settings
 							tweaks={tweaks}
