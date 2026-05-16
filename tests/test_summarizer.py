@@ -216,6 +216,35 @@ def test_summarize_reads_active_prompt_each_invocation(tmp_path, monkeypatch):
     assert "Prompt v2" in seen_prompts[1]
 
 
+def test_summarize_injects_short_description_language(tmp_path, monkeypatch):
+    (tmp_path / "transcript-summary.v1.md").write_text(
+        "Prompt {date} {transcript_slug} {short_description_language_name}",
+        encoding="utf-8",
+    )
+    (tmp_path / "transcript-summary.active").write_text("v1\n", encoding="utf-8")
+
+    monkeypatch.setattr(prompts.settings, "prompt_dir", str(tmp_path))
+    monkeypatch.setattr(summarizer.settings, "codex_lock_path", str(tmp_path / "codex.lock"))
+    monkeypatch.setattr(summarizer.settings, "codex_bin", "codex")
+    monkeypatch.setattr(summarizer.settings, "codex_model", "")
+    monkeypatch.setattr(summarizer.settings, "short_description_language", "ru")
+
+    seen_prompts: list[str] = []
+
+    def fake_run(cmd, input, text, capture_output, timeout):  # noqa: A002
+        seen_prompts.append(input)
+        out_file = Path(cmd[cmd.index("-o") + 1])
+        out_file.write_text("---\ntags: [dry-run]\n---\n\nsummary", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(summarizer.subprocess, "run", fake_run)
+
+    summarizer.summarize("Transcript", title="Language Test")
+
+    assert "Russian" in seen_prompts[0]
+    assert "{short_description_language_name}" not in seen_prompts[0]
+
+
 def test_summarize_parses_short_description_from_frontmatter(tmp_path, monkeypatch):
     (tmp_path / "transcript-summary.v1.md").write_text(
         "Prompt {date} {transcript_slug}",
@@ -233,7 +262,7 @@ def test_summarize_parses_short_description_from_frontmatter(tmp_path, monkeypat
         out_file.write_text(
             "---\n"
             "tags: [systems, ai]\n"
-            'short_description: "A fluent card description for the library. It ends cleanly."\n'
+            'short_description: "Короткое описание для карточки. Оно звучит завершённо."\n'
             "---\n\n"
             "# Summary\n\nFull body stays intact.",
             encoding="utf-8",
@@ -245,5 +274,5 @@ def test_summarize_parses_short_description_from_frontmatter(tmp_path, monkeypat
     result = summarizer.summarize("Transcript", title="Parser Test")
 
     assert result.tags == ["systems", "ai"]
-    assert result.short_description == "A fluent card description for the library. It ends cleanly."
+    assert result.short_description == "Короткое описание для карточки. Оно звучит завершённо."
     assert "Full body stays intact." in result.summary_md

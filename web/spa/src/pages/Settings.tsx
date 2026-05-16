@@ -41,6 +41,7 @@ type ConfigKey =
 	| "worker_concurrency"
 	| "bot_wall_retry"
 	| "public_base_url"
+	| "short_description_language"
 	| "webhook_default"
 	| "webhook_embed_transcript";
 
@@ -63,6 +64,7 @@ const configKeys: ConfigKey[] = [
 	"worker_concurrency",
 	"bot_wall_retry",
 	"public_base_url",
+	"short_description_language",
 	"webhook_default",
 	"webhook_embed_transcript",
 ];
@@ -395,6 +397,16 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 						disabled={!isMutable(config.public_base_url)}
 						onChange={(value) => updateDraft("public_base_url", value)}
 					/>
+					<LanguageRow
+						label="Card description language"
+						hint="Language used for generated short descriptions in the library feed."
+						source={config.short_description_language?.source}
+						value={stringDraft(draft.short_description_language)}
+						disabled={!isMutable(config.short_description_language)}
+						onChange={(value) =>
+							updateDraft("short_description_language", value)
+						}
+					/>
 					<UrlRow
 						label="Default webhook"
 						hint="Callback URL used when a job does not provide one."
@@ -635,6 +647,36 @@ export function ToggleRow({
 				/>
 				<span />
 			</label>
+		</SettingsRow>
+	);
+}
+
+export function LanguageRow({
+	label,
+	hint,
+	source,
+	value,
+	disabled,
+	onChange,
+}: {
+	label: string;
+	hint: string;
+	source?: string;
+	value: string;
+	disabled: boolean;
+	onChange: (value: string) => void;
+}) {
+	return (
+		<SettingsRow label={label} hint={hint} source={source}>
+			<select
+				className="settings-input"
+				value={value || "ru"}
+				disabled={disabled}
+				onChange={(event) => onChange(event.currentTarget.value)}
+			>
+				<option value="ru">Russian</option>
+				<option value="en">English</option>
+			</select>
 		</SettingsRow>
 	);
 }

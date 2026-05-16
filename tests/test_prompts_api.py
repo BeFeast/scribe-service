@@ -208,10 +208,10 @@ def test_bundled_prompts_require_english_semantic_tag_slugs(monkeypatch):
         assert "no transliterated Russian/Hebrew/etc." in body
 
 
-def test_bundled_prompts_require_english_short_descriptions(monkeypatch):
+def test_bundled_prompts_use_configurable_short_description_language(monkeypatch):
     monkeypatch.setattr(prompts.settings, "prompt_dir", "")
     for version in prompts.PROMPT_VERSIONS:
         body = prompts.read_prompt(version)
-        assert 'short_description: "<1-2 complete English sentences' in body
-        assert "`short_description` must be English" in body
-        assert "fluent English sentences for library cards/feed" in body
+        assert 'short_description: "<1-2 complete {short_description_language_name} sentences' in body
+        assert "`short_description` must be {short_description_language_name}" in body
+        assert "fluent {short_description_language_name} sentences for library cards/feed" in body
