@@ -2,6 +2,7 @@ import React from "react";
 
 import { CMDK_OPEN_EVENT } from "../constants";
 import type { Route } from "../hooks/useRoute";
+import { usePoll } from "../hooks/usePoll";
 import type { LibraryLayout } from "../hooks/useTweaks";
 
 type LibraryRow = {
@@ -318,71 +319,25 @@ export function Library({ layout, route, navigate }: LibraryProps) {
 function InFlightStrip({ navigate }: { navigate: (route: Route) => void }) {
 	const [jobs, setJobs] = React.useState<ActiveJob[]>([]);
 	const [error, setError] = React.useState(false);
+	const interval = hasNonTerminalJob(jobs) ? 5000 : 30000;
 
-	React.useEffect(() => {
-		let abort: AbortController | null = null;
-		let timer: number | undefined;
-		let stopped = false;
-		let isPolling = false;
-
-		function schedulePoll(delayMs: number) {
-			window.clearTimeout(timer);
-			if (!stopped) {
-				timer = window.setTimeout(poll, delayMs);
+	const poll = React.useCallback(async (signal: AbortSignal) => {
+		try {
+			const response = await fetch("/api/jobs/active", { signal });
+			if (!response.ok) {
+				throw new Error("active jobs request failed");
+			}
+			const body = (await response.json()) as ActiveJobsResponse;
+			setJobs(body.jobs);
+			setError(false);
+		} catch (loadError) {
+			if (!signal.aborted) {
+				setError(true);
 			}
 		}
-
-		async function poll() {
-			if (stopped || isPolling) {
-				return;
-			}
-			if (document.hidden) {
-				schedulePoll(30000);
-				return;
-			}
-			isPolling = true;
-			const controller = new AbortController();
-			abort = controller;
-			try {
-				const response = await fetch("/api/jobs/active", {
-					signal: controller.signal,
-				});
-				if (!response.ok) {
-					throw new Error("active jobs request failed");
-				}
-				const body = (await response.json()) as ActiveJobsResponse;
-				setJobs(body.jobs);
-				setError(false);
-				schedulePoll(hasNonTerminalJob(body.jobs) ? 5000 : 30000);
-			} catch (loadError) {
-				if (!controller.signal.aborted) {
-					setError(true);
-					schedulePoll(30000);
-				}
-			} finally {
-				if (abort === controller) {
-					abort = null;
-				}
-				isPolling = false;
-			}
-		}
-
-		function resumeWhenVisible() {
-			if (!document.hidden) {
-				window.clearTimeout(timer);
-				void poll();
-			}
-		}
-
-		void poll();
-		document.addEventListener("visibilitychange", resumeWhenVisible);
-		return () => {
-			stopped = true;
-			window.clearTimeout(timer);
-			abort?.abort();
-			document.removeEventListener("visibilitychange", resumeWhenVisible);
-		};
 	}, []);
+
+	usePoll(poll, interval);
 
 	if (jobs.length === 0) {
 		return null;

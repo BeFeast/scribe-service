@@ -4,6 +4,7 @@ import { LogTail } from "../components/LogTail";
 import { PipelineDiagram, type StageMap } from "../components/PipelineDiagram";
 import { StatusChip } from "../components/StatusChip";
 import type { Route } from "../hooks/useRoute";
+import { usePoll } from "../hooks/usePoll";
 
 type TranscriptBrief = {
 	id: number;
@@ -45,46 +46,30 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 	const [error, setError] = React.useState<string | null>(null);
 	const [busy, setBusy] = React.useState<string | null>(null);
 	const [copied, setCopied] = React.useState(false);
+	const isTerminal = job !== null && TERMINAL.has(job.status);
 
-	React.useEffect(() => {
+	const load = React.useCallback(async (signal: AbortSignal) => {
 		if (id === undefined) {
 			return;
 		}
-		let mounted = true;
-		let timer: number | undefined;
-
-		async function load() {
-			try {
-				const response = await fetch(`/jobs/${id}`);
-				if (!response.ok) {
-					throw new Error(`job ${id} returned ${response.status}`);
-				}
-				const body = (await response.json()) as JobDetailPayload;
-				if (!mounted) {
-					return;
-				}
-				setJob(body);
-				setError(null);
-				if (!TERMINAL.has(body.status)) {
-					timer = window.setTimeout(load, 2000);
-				}
-			} catch (jobError) {
-				if (!mounted) {
-					return;
-				}
+		try {
+			const response = await fetch(`/jobs/${id}`, { signal });
+			if (!response.ok) {
+				throw new Error(`job ${id} returned ${response.status}`);
+			}
+			const body = (await response.json()) as JobDetailPayload;
+			setJob(body);
+			setError(null);
+		} catch (jobError) {
+			if (!signal.aborted) {
 				setError(
 					jobError instanceof Error ? jobError.message : "job load failed",
 				);
-				timer = window.setTimeout(load, 2000);
 			}
 		}
-
-		void load();
-		return () => {
-			mounted = false;
-			window.clearTimeout(timer);
-		};
 	}, [id]);
+
+	usePoll(load, 2000, { enabled: id !== undefined && !isTerminal });
 
 	async function cancelJob() {
 		if (!job) {
@@ -217,7 +202,6 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 						jobId={job.job_id}
 						status={job.status}
 						error={job.error}
-						stages={job.stages}
 					/>
 				</>
 			) : (

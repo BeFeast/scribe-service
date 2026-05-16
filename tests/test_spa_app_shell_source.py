@@ -17,6 +17,8 @@ def test_app_shell_files_exist() -> None:
         "components/Sidebar.tsx",
         "components/TweaksPanel.tsx",
         "constants.ts",
+        "hooks/useEventSource.ts",
+        "hooks/usePoll.ts",
         "hooks/useRoute.ts",
         "hooks/useTweaks.ts",
         "pages/Library.tsx",
@@ -69,14 +71,27 @@ def test_library_page_fetches_api_and_supports_layouts() -> None:
     assert "Next" in source
     assert "window.setTimeout(() => setDebouncedQuery(query), 200)" in source
     assert 'fetch("/api/jobs/active"' in source
-    assert "document.hidden" in source
-    assert "hasNonTerminalJob(body.jobs) ? 5000 : 30000" in source
+    assert "hasNonTerminalJob(jobs) ? 5000 : 30000" in source
+    assert "usePoll(poll, interval)" in source
     assert "CMDK_OPEN_EVENT" in source
     assert "chip warn" in source
     assert "partial" in source
     assert 'layout === "table"' in source
     assert 'layout === "feed"' in source
     assert 'layout === "cards"' in source
+
+
+def test_live_update_hooks_wrap_poll_and_eventsource_lifecycles() -> None:
+    use_poll = read("hooks/usePoll.ts")
+    use_event_source = read("hooks/useEventSource.ts")
+
+    assert "document.hidden" in use_poll
+    assert 'document.addEventListener("visibilitychange"' in use_poll
+    assert "AbortController" in use_poll
+    assert "window.clearTimeout" in use_poll
+    assert "controller?.abort()" in use_poll
+    assert "new EventSource(url)" in use_event_source
+    assert "source.close()" in use_event_source
 
 
 def test_cmdk_custom_event_is_wired_without_window_globals() -> None:

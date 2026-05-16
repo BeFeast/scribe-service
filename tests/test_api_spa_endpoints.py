@@ -13,6 +13,7 @@ from scribe.api import routes as routes_module
 from scribe.config import settings
 from scribe.db.models import Job, JobStageEvent, JobStatus, Transcript
 from scribe.main import app
+from scribe.obs.live_logs import job_log_buffer
 
 
 @pytest.fixture(autouse=True)
@@ -362,6 +363,26 @@ def test_api_jobs_recent_failures(client, db_session):
     assert row["id"] == job.id
     assert row["error"] == "whisper failed"
     assert row["stages"]["transcribing"]["state"] == "failed"
+
+
+def test_api_job_log_stream_returns_buffered_worker_lines_and_closes(client, db_session):
+    job = Job(url="https://youtu.be/logstream1", video_id="logstream1", status=JobStatus.done)
+    db_session.add(job)
+    db_session.commit()
+    job_log_buffer.clear()
+    job_log_buffer.append({"ts": "2026-05-16T12:00:00+00:00", "job_id": job.id, "stage": "whisper", "msg": "whisper done"})
+    job_log_buffer.append({"ts": "2026-05-16T12:00:01+00:00", "job_id": job.id + 1, "stage": "done", "msg": "other"})
+    job_log_buffer.append({"ts": "2026-05-16T12:00:02+00:00", "job_id": job.id, "stage": "done", "msg": "job done"})
+
+    with client.stream("GET", f"/api/jobs/{job.id}/log/stream") as resp:
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+        body = "".join(resp.iter_text())
+
+    assert "whisper done" in body
+    assert "job done" in body
+    assert "other" not in body
+    job_log_buffer.clear()
 
 
 def test_api_ops_empty(client, tmp_path, monkeypatch):

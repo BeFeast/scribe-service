@@ -7,6 +7,7 @@ import logging
 
 from scribe.obs import logging as obs_logging
 from scribe.obs import metrics
+from scribe.obs.live_logs import JobLogBuffer, JobLogBufferHandler, job_log_buffer
 
 
 def test_metrics_export_contains_scribe_metrics():
@@ -124,3 +125,36 @@ def test_json_formatter_ignores_underscore_record_attrs():
     payload = json.loads(buf.getvalue().strip())
     assert "_internal" not in payload
     assert payload["public"] == "keep"
+
+
+def test_job_log_buffer_is_fifo_bounded():
+    buffer = JobLogBuffer(max_lines=2)
+    buffer.append({"job_id": 7, "msg": "one"})
+    buffer.append({"job_id": 7, "msg": "two"})
+    buffer.append({"job_id": 7, "msg": "three"})
+
+    version, lines = buffer.snapshot(7)
+    assert version == 3
+    assert [line["msg"] for line in lines] == ["two", "three"]
+
+
+def test_job_log_buffer_handler_captures_worker_job_lines():
+    job_log_buffer.clear()
+    handler = JobLogBufferHandler()
+    record = logging.LogRecord(
+        "scribe.worker",
+        logging.INFO,
+        __file__,
+        1,
+        "hello %s",
+        ("job",),
+        None,
+    )
+    record.job_id = 42
+    record.stage = "whisper"
+    handler.emit(record)
+
+    _, lines = job_log_buffer.snapshot(42)
+    assert lines[0]["msg"] == "hello job"
+    assert lines[0]["stage"] == "whisper"
+    job_log_buffer.clear()

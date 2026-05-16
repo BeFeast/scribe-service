@@ -3,6 +3,7 @@ import React from "react";
 import { type FailureJob, FailureRow } from "../components/FailureRow";
 import { JobCard, type JobCardJob } from "../components/JobCard";
 import type { Route } from "../hooks/useRoute";
+import { usePoll } from "../hooks/usePoll";
 
 type ActiveJobsResponse = {
 	jobs: JobCardJob[];
@@ -22,52 +23,35 @@ export function Queue({ navigate }: QueueProps) {
 	const [error, setError] = React.useState<string | null>(null);
 	const [loading, setLoading] = React.useState(true);
 
-	React.useEffect(() => {
-		let mounted = true;
-		let timer: number | undefined;
-
-		async function load() {
-			try {
-				const [activeResponse, failuresResponse] = await Promise.all([
-					fetch("/api/jobs/active"),
-					fetch("/api/jobs/recent-failures?limit=5"),
-				]);
-				if (!activeResponse.ok || !failuresResponse.ok) {
-					throw new Error("queue endpoints unavailable");
-				}
-				const activeBody = (await activeResponse.json()) as ActiveJobsResponse;
-				const failuresBody =
-					(await failuresResponse.json()) as RecentFailuresResponse;
-				if (!mounted) {
-					return;
-				}
-				setActive(activeBody.jobs ?? []);
-				setFailures(failuresBody.jobs ?? []);
-				setError(null);
-				setLoading(false);
-			} catch (queueError) {
-				if (!mounted) {
-					return;
-				}
+	const load = React.useCallback(async (signal: AbortSignal) => {
+		try {
+			const [activeResponse, failuresResponse] = await Promise.all([
+				fetch("/api/jobs/active", { signal }),
+				fetch("/api/jobs/recent-failures?limit=5", { signal }),
+			]);
+			if (!activeResponse.ok || !failuresResponse.ok) {
+				throw new Error("queue endpoints unavailable");
+			}
+			const activeBody = (await activeResponse.json()) as ActiveJobsResponse;
+			const failuresBody =
+				(await failuresResponse.json()) as RecentFailuresResponse;
+			setActive(activeBody.jobs ?? []);
+			setFailures(failuresBody.jobs ?? []);
+			setError(null);
+			setLoading(false);
+		} catch (queueError) {
+			if (!signal.aborted) {
 				setError(
 					queueError instanceof Error
 						? queueError.message
 						: "queue load failed",
 				);
 				setLoading(false);
-			} finally {
-				if (mounted) {
-					timer = window.setTimeout(load, 2000);
-				}
 			}
 		}
-
-		void load();
-		return () => {
-			mounted = false;
-			window.clearTimeout(timer);
-		};
 	}, []);
+
+	usePoll(load, 2000);
 
 	const openJob = React.useCallback(
 		(id: number) => navigate({ page: "job", params: { id } }),
