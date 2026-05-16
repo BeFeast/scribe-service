@@ -1086,8 +1086,7 @@ a {
 	border-color: var(--accent);
 }
 
-.job-card-top,
-.failure-row {
+.job-card-top {
 	display: flex;
 	align-items: start;
 	justify-content: space-between;
@@ -1106,6 +1105,10 @@ a {
 }
 
 .failure-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: start;
+	gap: 1rem;
 	width: 100%;
 	text-align: left;
 }
@@ -1171,6 +1174,7 @@ a {
 .failure-action {
 	display: block;
 	width: 100%;
+	min-width: 0;
 	border: 0;
 	padding: 0;
 	background: transparent;
@@ -1181,6 +1185,12 @@ a {
 
 .failure-action:hover {
 	background: color-mix(in srgb, var(--err) 14%, var(--bg-card));
+}
+
+.failure-row-actions {
+	display: flex;
+	align-items: center;
+	gap: 0.45rem;
 }
 
 .err-title {

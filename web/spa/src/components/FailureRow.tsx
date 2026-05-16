@@ -43,15 +43,17 @@ export function FailureRow({ job, onOpen, onDismiss, busy }: FailureRowProps) {
 					</p>
 				</div>
 			</button>
-			<StatusChip status="failed" />
-			<button
-				type="button"
-				className="btn ghost"
-				onClick={() => onDismiss(job.id)}
-				disabled={busy}
-			>
-				{busy ? "Clearing" : "Clear"}
-			</button>
+			<div className="failure-row-actions">
+				<StatusChip status="failed" />
+				<button
+					type="button"
+					className="btn ghost"
+					onClick={() => onDismiss(job.id)}
+					disabled={busy}
+				>
+					{busy ? "Clearing" : "Clear"}
+				</button>
+			</div>
 		</div>
 	);
 }
