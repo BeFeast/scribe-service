@@ -76,3 +76,85 @@ class PromptDryRunView(BaseModel):
     transcript_id: int
     summary_md: str
     tags: list[str]
+
+
+class LibraryRow(BaseModel):
+    id: int
+    video_id: str
+    title: str
+    tags: list[str] | None = None
+    lang: str | None = None
+    duration_seconds: int | None = None
+    vast_cost: float | None = None
+    created_at: dt.datetime
+    summary_shortlink: str | None = None
+    transcript_shortlink: str | None = None
+    summary_excerpt: str
+    is_partial: bool
+
+
+class LibraryResponse(BaseModel):
+    rows: list[LibraryRow]
+    total: int
+    limit: int
+    offset: int
+
+
+class JobStageView(BaseModel):
+    state: str
+    started_at: dt.datetime | None = None
+    finished_at: dt.datetime | None = None
+    duration_s: int | None = None
+    progress: float | None = None
+    note: str | None = None
+
+
+class ActiveJobView(BaseModel):
+    id: int
+    video_id: str
+    url: str
+    title: str | None = None
+    status: str
+    source: str | None = None
+    started_at: dt.datetime
+    elapsed_s: int
+    stages: dict[str, JobStageView]
+
+
+class ActiveJobsResponse(BaseModel):
+    jobs: list[ActiveJobView]
+
+
+class BackupSnapshot(BaseModel):
+    last_success_iso: str | None = None
+    age_seconds: int | None = None
+    stale_after: int
+    stale: bool
+    path: str
+
+
+class WorkerPoolSnapshot(BaseModel):
+    active: int
+    total: int
+
+
+class SystemSnapshot(BaseModel):
+    label: str
+    value: str
+    status: str
+
+
+class OpsSnapshot(BaseModel):
+    window_days: int
+    jobs_by_status: dict[str, int]
+    transcripts_done: int
+    transcripts_partial: int
+    queue_depth: int
+    vast_spend_24h: float
+    vast_spend_7d: float
+    vast_spend_30d: float
+    daily_spend_cap_usd: float
+    spend_series_14d: list[float]
+    backup: BackupSnapshot
+    worker_pool: WorkerPoolSnapshot
+    system: list[SystemSnapshot]

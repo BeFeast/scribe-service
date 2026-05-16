@@ -128,6 +128,10 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
         tables = _table_names(eng)
         assert "jobs" in tables, f"upgrade head did not create jobs (got {tables})"
         assert "transcripts" in tables, f"upgrade head did not create transcripts (got {tables})"
+        assert "job_stage_events" in tables, (
+            "upgrade head did not create job_stage_events — "
+            "revision e4f5a6b7c801 likely silent-noop'd"
+        )
 
         jobs_cols = _column_names(eng, "jobs")
         assert "callback_url" in jobs_cols, (
@@ -156,6 +160,12 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
         assert summary_md_col["nullable"], (
             "transcripts.summary_md should be nullable after upgrade head — "
             "revision a7c1d3e4f201 likely silent-noop'd"
+        )
+
+        stage_cols = _column_names(eng, "job_stage_events")
+        assert {"job_id", "stage", "started_at", "finished_at"} <= stage_cols, (
+            "job_stage_events missing expected columns — "
+            "revision e4f5a6b7c801 likely silent-noop'd"
         )
 
         command.downgrade(cfg, "base")

@@ -10,29 +10,41 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import importlib.metadata
 import logging
+import re
 import secrets
 from collections.abc import Iterator
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
 from scribe.api.schemas import (
+    ActiveJobsResponse,
+    ActiveJobView,
+    BackupSnapshot,
     JobCreate,
+    JobStageView,
     JobView,
+    LibraryResponse,
+    LibraryRow,
+    OpsSnapshot,
     PromptActiveWrite,
     PromptDryRunCreate,
     PromptDryRunView,
     PromptListView,
     PromptVersionView,
     PromptWrite,
+    SystemSnapshot,
     TranscriptBrief,
+    WorkerPoolSnapshot,
 )
 from scribe.config import settings
-from scribe.db.models import Job, JobStatus, Transcript
+from scribe.db.models import Job, JobStageEvent, JobStatus, Transcript
+from scribe.db.query import escape_like
 from scribe.db.session import SessionLocal
 from scribe.obs import metrics
 from scribe.obs import ops as ops_helpers
@@ -52,6 +64,14 @@ _ACTIVE = (
     JobStatus.transcribing,
     JobStatus.summarizing,
 )
+_PIPELINE_STAGES = (
+    JobStatus.queued.value,
+    JobStatus.downloading.value,
+    JobStatus.transcribing.value,
+    JobStatus.summarizing.value,
+    JobStatus.done.value,
+)
+_STATUS_ORDER = {stage: idx for idx, stage in enumerate(_PIPELINE_STAGES)}
 
 
 def get_session() -> Iterator[Session]:
@@ -68,6 +88,36 @@ def _brief(t: Transcript) -> TranscriptBrief:
         duration_seconds=t.duration_seconds, lang=t.lang,
         summary_shortlink=t.summary_shortlink, transcript_shortlink=t.transcript_shortlink,
         created_at=t.created_at,
+    )
+
+
+def _no_store(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store"
+
+
+def _summary_excerpt(summary_md: str | None, limit: int = 240) -> str:
+    body = summary_md or ""
+    body = re.sub(r"^---\s*\n.*?\n---\s*", "", body, flags=re.DOTALL)
+    body = re.sub(r"^#+\s*", "", body, flags=re.MULTILINE)
+    body = re.sub(r"[*_`]+", "", body)
+    body = re.sub(r"\s+", " ", body).strip()
+    return body[:limit]
+
+
+def _library_row(t: Transcript) -> LibraryRow:
+    return LibraryRow(
+        id=t.id,
+        video_id=t.video_id,
+        title=t.title,
+        tags=t.tags,
+        lang=t.lang,
+        duration_seconds=t.duration_seconds,
+        vast_cost=t.vast_cost,
+        created_at=t.created_at,
+        summary_shortlink=t.summary_shortlink,
+        transcript_shortlink=t.transcript_shortlink,
+        summary_excerpt=_summary_excerpt(t.summary_md),
+        is_partial=t.summary_md is None,
     )
 
 
@@ -111,9 +161,73 @@ def _vast_spend_usd_since(session: Session, since: dt.datetime) -> float:
     return float(total or 0.0)
 
 
+def _vast_spend_usd_between(session: Session, since: dt.datetime, until: dt.datetime) -> float:
+    total = session.scalar(
+        select(func.coalesce(func.sum(Transcript.vast_cost), 0.0))
+        .where(
+            Transcript.created_at >= since,
+            Transcript.created_at < until,
+            Transcript.vast_cost.is_not(None),
+        )
+    )
+    return float(total or 0.0)
+
+
 def _recent_vast_spend_usd(session: Session, hours: int = 24) -> float:
     """Convenience wrapper — rolling N-hour spend."""
     return _vast_spend_usd_since(session, dt.datetime.now(dt.UTC) - dt.timedelta(hours=hours))
+
+
+def record_job_stage_start(session: Session, job: Job, stage: JobStatus) -> None:
+    """Create a stage event if it does not already exist for this job/stage."""
+    if stage.value not in _STATUS_ORDER:
+        return
+    existing = session.scalar(
+        select(JobStageEvent).where(
+            JobStageEvent.job_id == job.id,
+            JobStageEvent.stage == stage.value,
+        )
+    )
+    if existing is None:
+        session.add(JobStageEvent(job_id=job.id, stage=stage.value, started_at=dt.datetime.now(dt.UTC)))
+
+
+def transition_job_status(session: Session, job: Job, status: JobStatus) -> None:
+    """Update Job.status and persist stage timing edges."""
+    now = dt.datetime.now(dt.UTC)
+    old_status = job.status
+    if old_status == status:
+        job.updated_at = now
+        session.commit()
+        return
+
+    if old_status.value in _STATUS_ORDER:
+        current = session.scalar(
+            select(JobStageEvent)
+            .where(
+                JobStageEvent.job_id == job.id,
+                JobStageEvent.stage == old_status.value,
+                JobStageEvent.finished_at.is_(None),
+            )
+            .order_by(JobStageEvent.started_at.desc())
+        )
+        if current is None:
+            current = JobStageEvent(job_id=job.id, stage=old_status.value, started_at=job.created_at)
+            session.add(current)
+        current.finished_at = now
+
+    job.status = status
+    if status.value in _STATUS_ORDER:
+        existing_new = session.scalar(
+            select(JobStageEvent).where(
+                JobStageEvent.job_id == job.id,
+                JobStageEvent.stage == status.value,
+            )
+        )
+        if existing_new is None:
+            session.add(JobStageEvent(job_id=job.id, stage=status.value, started_at=now))
+    metrics.job_status_transitions.labels(status=status.value).inc()
+    session.commit()
 
 
 @router.post("/jobs", response_model=JobView, status_code=201)
@@ -172,6 +286,8 @@ def create_job(body: JobCreate, session: Session = Depends(get_session)) -> JobV
         callback_url=str(body.callback_url) if body.callback_url else None,
     )
     session.add(job)
+    session.flush()
+    record_job_stage_start(session, job, JobStatus.queued)
     session.commit()
     metrics.job_status_transitions.labels(status=JobStatus.queued.value).inc()
     return JobView(
@@ -200,6 +316,115 @@ def list_transcripts(
         stmt = stmt.where(Transcript.summary_md.is_not(None))
     rows = session.scalars(stmt.limit(limit).offset(offset)).all()
     return [_brief(t) for t in rows]
+
+
+@router.get("/api/library", response_model=LibraryResponse)
+def api_library(
+    response: Response,
+    session: Session = Depends(get_session),
+    q: str | None = Query(None, description="Fuzzy match against title and summary markdown."),
+    tag: str | None = Query(None, description="Exact tag match."),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> LibraryResponse:
+    """List transcript rows for the SPA Library view without full summary bodies."""
+    _no_store(response)
+    stmt = select(Transcript)
+    if q and q.strip():
+        like = f"%{escape_like(q.strip())}%"
+        stmt = stmt.where(or_(Transcript.title.ilike(like), Transcript.summary_md.ilike(like)))
+    if tag and tag.strip():
+        stmt = stmt.where(Transcript.tags.any(tag.strip()))
+
+    total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = session.scalars(stmt.order_by(Transcript.id.desc()).limit(limit).offset(offset)).all()
+    return LibraryResponse(
+        rows=[_library_row(t) for t in rows],
+        total=int(total),
+        limit=limit,
+        offset=offset,
+    )
+
+
+def _stage_duration_s(event: JobStageEvent) -> int | None:
+    if event.finished_at is None:
+        return None
+    return max(0, int((event.finished_at - event.started_at).total_seconds()))
+
+
+def _stage_views(job: Job, events: dict[str, JobStageEvent]) -> dict[str, JobStageView]:
+    status = job.status.value
+    status_rank = _STATUS_ORDER.get(status, -1)
+    views: dict[str, JobStageView] = {}
+    for stage in _PIPELINE_STAGES:
+        event = events.get(stage)
+        state = "pending"
+        if status == stage:
+            state = "active" if stage != JobStatus.done.value else "done"
+        elif status_rank > _STATUS_ORDER[stage]:
+            state = "done"
+        started_at = event.started_at if event else None
+        finished_at = event.finished_at if event else None
+        if stage == JobStatus.queued.value and started_at is None:
+            started_at = job.created_at
+        if state == "done" and finished_at is None and stage != JobStatus.done.value:
+            finished_at = job.updated_at
+        views[stage] = JobStageView(
+            state=state,
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_s=_stage_duration_s(event) if event else None,
+            progress=0.0 if state == "active" else None,
+        )
+    return views
+
+
+@router.get("/api/jobs/active", response_model=ActiveJobsResponse, response_model_exclude_none=True)
+def api_jobs_active(response: Response, session: Session = Depends(get_session)) -> ActiveJobsResponse:
+    """Return all queued/in-flight jobs with derived pipeline stage state."""
+    _no_store(response)
+    jobs = session.scalars(select(Job).where(Job.status.in_(_ACTIVE)).order_by(Job.id)).all()
+    if not jobs:
+        return ActiveJobsResponse(jobs=[])
+
+    job_ids = [job.id for job in jobs]
+    events_by_job: dict[int, dict[str, JobStageEvent]] = {job.id: {} for job in jobs}
+    for event in session.scalars(
+        select(JobStageEvent)
+        .where(JobStageEvent.job_id.in_(job_ids))
+        .order_by(JobStageEvent.started_at)
+    ):
+        events_by_job[event.job_id][event.stage] = event
+
+    video_ids = {job.video_id for job in jobs}
+    transcripts = session.scalars(
+        select(Transcript)
+        .where(Transcript.video_id.in_(video_ids))
+        .order_by(Transcript.id.desc())
+    ).all()
+    title_by_video: dict[str, str] = {}
+    for transcript in transcripts:
+        title_by_video.setdefault(transcript.video_id, transcript.title)
+
+    now = dt.datetime.now(dt.UTC)
+    return ActiveJobsResponse(
+        jobs=[
+            ActiveJobView(
+                id=job.id,
+                video_id=job.video_id,
+                url=job.url,
+                title=title_by_video.get(job.video_id),
+                status=job.status.value,
+                source=job.source,
+                started_at=events_by_job[job.id].get(JobStatus.queued.value, None).started_at
+                if JobStatus.queued.value in events_by_job[job.id]
+                else job.created_at,
+                elapsed_s=max(0, int((now - job.created_at).total_seconds())),
+                stages=_stage_views(job, events_by_job[job.id]),
+            )
+            for job in jobs
+        ]
+    )
 
 
 def _require_transcript(transcript_id: int, session: Session) -> Transcript:
@@ -443,9 +668,8 @@ async def resummarize(
         # while the job_id still reports failed with the old error.
         owning_job = session.get(Job, t.job_id)
         if owning_job is not None and owning_job.status == JobStatus.failed:
-            owning_job.status = JobStatus.done
             owning_job.error = None
-            metrics.job_status_transitions.labels(status=JobStatus.done.value).inc()
+            transition_job_status(session, owning_job, JobStatus.done)
         metrics.transcripts_total.labels(kind="promoted").inc()
 
     session.commit()
@@ -512,6 +736,7 @@ def admin_retry_job(job_id: int, session: Session = Depends(get_session)) -> Job
     )
     session.add(new_job)
     session.flush()
+    record_job_stage_start(session, new_job, JobStatus.queued)
 
     # Only annotate `error` on already-failed jobs. Writing to `error` on a
     # `done` row would flip a clean terminal state into one that looks failed
@@ -559,6 +784,103 @@ def backup_status() -> dict:
     by sharing the helper rather than duplicating the logic.
     """
     return ops_helpers._backup_heartbeat()
+
+
+def _backup_snapshot() -> BackupSnapshot:
+    payload = backup_status()
+    return BackupSnapshot(
+        last_success_iso=payload.get("last_success_iso"),
+        age_seconds=payload.get("age_seconds"),
+        stale_after=int(payload["stale_after_seconds"]),
+        stale=bool(payload["stale"]),
+        path=str(payload["path"]),
+    )
+
+
+def _spend_series_14d(session: Session, now: dt.datetime) -> list[float]:
+    today = now.date()
+    start_day = today - dt.timedelta(days=13)
+    start = dt.datetime.combine(start_day, dt.time.min, tzinfo=dt.UTC)
+    end = dt.datetime.combine(today + dt.timedelta(days=1), dt.time.min, tzinfo=dt.UTC)
+    rows = session.execute(
+        text(
+            """
+            SELECT (created_at AT TIME ZONE 'UTC')::date AS day,
+                   COALESCE(SUM(vast_cost), 0) AS spend
+            FROM transcripts
+            WHERE created_at >= :start
+              AND created_at < :end
+              AND vast_cost IS NOT NULL
+            GROUP BY 1
+            ORDER BY 1
+            """
+        ),
+        {"start": start, "end": end},
+    ).all()
+    by_day = {row[0]: float(row[1] or 0.0) for row in rows}
+    return [round(by_day.get(start_day + dt.timedelta(days=i), 0.0), 4) for i in range(14)]
+
+
+def _service_version() -> str:
+    try:
+        return f"v{importlib.metadata.version('scribe')}"
+    except importlib.metadata.PackageNotFoundError:
+        return "vunknown"
+
+
+@router.get("/api/ops", response_model=OpsSnapshot)
+def api_ops(response: Response, session: Session = Depends(get_session)) -> OpsSnapshot:
+    """One-shot JSON snapshot for the SPA Ops dashboard."""
+    _no_store(response)
+    now = dt.datetime.now(dt.UTC)
+    since = now - dt.timedelta(days=1)
+    by_status = dict(
+        session.execute(
+            select(Job.status, func.count())
+            .where(Job.created_at >= since)
+            .group_by(Job.status)
+        ).all()
+    )
+    transcripts_done = session.scalar(
+        select(func.count()).select_from(Transcript)
+        .where(Transcript.created_at >= since, Transcript.summary_md.is_not(None))
+    ) or 0
+    transcripts_partial = session.scalar(
+        select(func.count()).select_from(Transcript)
+        .where(Transcript.created_at >= since, Transcript.summary_md.is_(None))
+    ) or 0
+    queue_depth = session.scalar(
+        select(func.count()).select_from(Job).where(Job.status.in_(_ACTIVE))
+    ) or 0
+    active_workers = session.scalar(
+        select(func.count()).select_from(Job).where(
+            Job.status.in_((JobStatus.downloading, JobStatus.transcribing, JobStatus.summarizing))
+        )
+    ) or 0
+    # DB-derived proxy for worker occupancy. It can lag real OS thread state
+    # after a worker crash until retry/recovery updates the in-flight jobs.
+
+    return OpsSnapshot(
+        window_days=1,
+        jobs_by_status={str(k.value if hasattr(k, "value") else k): int(v) for k, v in by_status.items()},
+        transcripts_done=int(transcripts_done),
+        transcripts_partial=int(transcripts_partial),
+        queue_depth=int(queue_depth),
+        vast_spend_24h=round(_vast_spend_usd_since(session, now - dt.timedelta(hours=24)), 4),
+        vast_spend_7d=round(_vast_spend_usd_since(session, now - dt.timedelta(days=7)), 4),
+        vast_spend_30d=round(_vast_spend_usd_since(session, now - dt.timedelta(days=30)), 4),
+        daily_spend_cap_usd=settings.daily_spend_cap_usd,
+        spend_series_14d=_spend_series_14d(session, now),
+        backup=_backup_snapshot(),
+        worker_pool=WorkerPoolSnapshot(
+            active=min(int(active_workers), settings.worker_concurrency),
+            total=settings.worker_concurrency,
+        ),
+        system=[
+            SystemSnapshot(label="scribe-service", value=_service_version(), status="ok"),
+            SystemSnapshot(label="Postgres", value="connected", status="ok"),
+        ],
+    )
 
 
 @router.get("/admin/daily-report")
