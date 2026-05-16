@@ -23,7 +23,7 @@ export const DEFAULT_TWEAKS: Tweaks = {
 
 type TweakAction =
 	| { type: "theme"; value: ScribeTheme }
-	| { type: "replace"; value: Tweaks };
+	| { type: "replace"; value: { theme: ScribeTheme } };
 
 const themes = new Set<ScribeTheme>(["light", "dark"]);
 
@@ -79,7 +79,7 @@ export function useTweaks() {
 		[],
 	);
 	const replaceTweaks = React.useCallback(
-		(value: Tweaks) => dispatch({ type: "replace", value }),
+		(value: { theme: ScribeTheme }) => dispatch({ type: "replace", value }),
 		[],
 	);
 
