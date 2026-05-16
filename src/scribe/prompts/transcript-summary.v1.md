@@ -34,6 +34,7 @@ tags: [video-summary]
 
 ## Rules
 
-- Language: Russian for all content.
+- Language: Russian for summary content.
+- Tags must be English semantic lowercase slugs: English words only, hyphen-separated, no Cyrillic, no transliterated Russian/Hebrew/etc. Keep proper nouns or widely used product/project names such as `apple`, `apple-silicon`, or `claude-code`.
 - Generate 3-7 lowercase tags yourself in the frontmatter.
 - Do not output placeholders, examples, or commentary outside the markdown.

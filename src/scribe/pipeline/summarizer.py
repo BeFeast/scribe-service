@@ -41,6 +41,18 @@ from scribe.pipeline import prompts
 log = logging.getLogger("scribe.summarizer")
 
 _TAGS_RE = re.compile(r"^tags:\s*\[([^\]]*)\]", re.MULTILINE)
+_TAG_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_TAG_REPLACEMENTS = {
+    "bytovaya-scena": "everyday-scene",
+}
+_REJECTED_TAGS = {
+    "auto-generated",
+    "example",
+    "tag1",
+    "tag2",
+    "tag3",
+    "transcript",
+}
 
 # Signatures emitted by codex on OAuth/refresh-token problems. Any of these
 # in stderr → the token is dead and a human needs to re-login.
@@ -98,6 +110,20 @@ class SummaryResult:
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")
     return slug or "transcript"
+
+
+def _normalize_tags(values: list[str]) -> list[str]:
+    tags: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        slug = _slugify(value)
+        slug = _TAG_REPLACEMENTS.get(slug, slug)
+        if slug in _REJECTED_TAGS or not _TAG_SLUG_RE.fullmatch(slug):
+            continue
+        if slug not in seen:
+            tags.append(slug)
+            seen.add(slug)
+    return tags
 
 
 def _is_token_revoked(stderr: str) -> bool:
@@ -202,5 +228,6 @@ def summarize(
     tags: list[str] = []
     match = _TAGS_RE.search(summary_md)
     if match:
-        tags = [t.strip().strip("\"'") for t in match.group(1).split(",") if t.strip()]
+        raw_tags = [t.strip().strip("\"'") for t in match.group(1).split(",") if t.strip()]
+        tags = _normalize_tags(raw_tags)
     return SummaryResult(summary_md=summary_md, tags=tags)
