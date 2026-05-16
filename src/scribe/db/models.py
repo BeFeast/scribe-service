@@ -88,6 +88,7 @@ class Transcript(Base):
     transcript_md: Mapped[str] = mapped_column(Text, nullable=False)
     # NULL = partial (whisper done, summary pending or failed).
     summary_md: Mapped[str | None] = mapped_column(Text, nullable=True)
+    short_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     tags: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     lang: Mapped[str | None] = mapped_column(Text, nullable=True)

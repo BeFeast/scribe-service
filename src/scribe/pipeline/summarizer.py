@@ -105,6 +105,7 @@ def _acquire_codex_lock(lock_fd: int, timeout: float | None) -> None:
 class SummaryResult:
     summary_md: str
     tags: list[str]
+    short_description: str | None = None
 
 
 def _slugify(value: str) -> str:
@@ -128,6 +129,22 @@ def _normalize_tags(values: list[str]) -> list[str]:
 
 def _is_token_revoked(stderr: str) -> bool:
     return any(sig in stderr for sig in _TOKEN_REVOKED_PATTERNS)
+
+
+def _extract_frontmatter_value(summary_md: str, key: str) -> str | None:
+    match = re.search(
+        rf"(?ms)^---\s*\n.*?^{re.escape(key)}:\s*(?P<value>.+?)\s*$.*?\n---\s*",
+        summary_md,
+    )
+    if not match:
+        return None
+    value = match.group("value").strip()
+    if (value.startswith('"') and value.endswith('"')) or (
+        value.startswith("'") and value.endswith("'")
+    ):
+        value = value[1:-1]
+    value = re.sub(r"\s+", " ", value).strip()
+    return value or None
 
 
 def _alert_token_revoked(stderr_tail: str) -> None:
@@ -230,4 +247,5 @@ def summarize(
     if match:
         raw_tags = [t.strip().strip("\"'") for t in match.group(1).split(",") if t.strip()]
         tags = _normalize_tags(raw_tags)
-    return SummaryResult(summary_md=summary_md, tags=tags)
+    short_description = _extract_frontmatter_value(summary_md, "short_description")
+    return SummaryResult(summary_md=summary_md, tags=tags, short_description=short_description)

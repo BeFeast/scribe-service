@@ -151,6 +151,10 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
             "transcripts.vast_cost missing after upgrade head — "
             "revision c8b2e5f3a402 likely silent-noop'd"
         )
+        assert "short_description" in transcripts_cols, (
+            "transcripts.short_description missing after upgrade head — "
+            "revision f3a9b7c2d104 likely silent-noop'd"
+        )
 
         # Revision a7c1d3e4f201 relaxes transcripts.summary_md to nullable.
         # Asserting column presence alone would miss a silent-noop of that

@@ -39,6 +39,7 @@ def _seed_transcript(
     video_id: str,
     title: str,
     summary_md: str | None,
+    short_description: str | None = None,
     tags: list[str] | None = None,
     created_at: dt.datetime | None = None,
     vast_cost: float | None = None,
@@ -52,6 +53,7 @@ def _seed_transcript(
         title=title,
         transcript_md="transcript body",
         summary_md=summary_md,
+        short_description=short_description,
         tags=tags,
         duration_seconds=123,
         lang="en",
@@ -101,6 +103,7 @@ def test_api_library_happy_path_excerpts_and_paginates(client, db_session):
         video_id="libone12345",
         title="Library One",
         summary_md="# Heading\n\n**Important** `summary` text " + "x" * 260,
+        short_description="Intentional fluent card description.",
         tags=["systems"],
         vast_cost=0.0184,
     )
@@ -123,9 +126,42 @@ def test_api_library_happy_path_excerpts_and_paginates(client, db_session):
 
     second = client.get("/api/library", params={"limit": 1, "offset": 1}).json()["rows"][0]
     assert second["title"] == "Library One"
-    assert second["summary_excerpt"].startswith("Heading Important summary text")
-    assert len(second["summary_excerpt"]) == 240
+    assert second["summary_excerpt"] == "Intentional fluent card description."
     assert second["vast_cost"] == 0.0184
+
+
+def test_api_library_fallback_excerpt_uses_sentence_boundary(client, db_session):
+    _seed_transcript(
+        db_session,
+        video_id="fallback111",
+        title="Fallback Sentence",
+        summary_md="# Heading\n\nFirst complete sentence. Second sentence has more detail " + "x" * 260,
+    )
+
+    row = client.get("/api/library").json()["rows"][0]
+
+    assert row["summary_excerpt"] == "Heading First complete sentence."
+
+
+def test_api_library_fallback_excerpt_does_not_cut_inside_word(client, db_session):
+    _seed_transcript(
+        db_session,
+        video_id="fallback222",
+        title="Fallback Word",
+        summary_md="word " * 47 + "supercalifragilisticexpialidocious tail",
+    )
+
+    row = client.get("/api/library").json()["rows"][0]
+
+    assert row["summary_excerpt"].endswith("word")
+    assert "supercalifragilisticexpialidocious" not in row["summary_excerpt"]
+    assert len(row["summary_excerpt"]) < 240
+
+
+def test_sentence_boundary_excerpt_never_cuts_single_long_word():
+    long_word = "x" * 260
+
+    assert routes_module._sentence_boundary_excerpt(long_word) == long_word
 
 
 def test_api_library_filters_q_and_tag(client, db_session):

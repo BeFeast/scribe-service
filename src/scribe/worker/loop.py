@@ -194,6 +194,7 @@ def _summarize_and_finalize(session, job: Job, transcript: Transcript, title: st
     with _time_stage("summary"):
         summary = summarizer.summarize(transcript.transcript_md, title=title)
     transcript.summary_md = summary.summary_md
+    transcript.short_description = summary.short_description
     transcript.tags = summary.tags or None
     session.flush()
     _mint_shortlinks(transcript)

@@ -127,13 +127,38 @@ def _no_store(response: Response) -> None:
     response.headers["Cache-Control"] = "no-store"
 
 
-def _summary_excerpt(summary_md: str | None, limit: int = 240) -> str:
+def _clean_summary_excerpt_text(summary_md: str | None) -> str:
     body = summary_md or ""
     body = re.sub(r"^---\s*\n.*?\n---\s*", "", body, flags=re.DOTALL)
     body = re.sub(r"^#+\s*", "", body, flags=re.MULTILINE)
     body = re.sub(r"[*_`]+", "", body)
-    body = re.sub(r"\s+", " ", body).strip()
-    return body[:limit]
+    return re.sub(r"\s+", " ", body).strip()
+
+
+def _sentence_boundary_excerpt(summary_md: str | None, limit: int = 240) -> str:
+    body = _clean_summary_excerpt_text(summary_md)
+    if len(body) <= limit:
+        return body
+
+    sentence_end = None
+    for match in re.finditer(r"[.!?。！？…](?=\s|$)", body):
+        if match.end() <= limit:
+            sentence_end = match.end()
+        else:
+            break
+    if sentence_end is not None:
+        return body[:sentence_end].strip()
+
+    word_end = body.rfind(" ", 0, limit + 1)
+    if word_end > 0:
+        return body[:word_end].rstrip(" ,;:–-")
+    return body
+
+
+def _summary_excerpt(t: Transcript, limit: int = 240) -> str:
+    if t.short_description:
+        return re.sub(r"\s+", " ", t.short_description).strip()
+    return _sentence_boundary_excerpt(t.summary_md, limit=limit)
 
 
 def _library_row(t: Transcript) -> LibraryRow:
@@ -148,7 +173,7 @@ def _library_row(t: Transcript) -> LibraryRow:
         created_at=t.created_at,
         summary_shortlink=t.summary_shortlink,
         transcript_shortlink=t.transcript_shortlink,
-        summary_excerpt=_summary_excerpt(t.summary_md),
+        summary_excerpt=_summary_excerpt(t),
         is_partial=t.summary_md is None,
     )
 
@@ -894,6 +919,7 @@ async def resummarize(
     was_partial = t.summary_md is None
 
     t.summary_md = result.summary_md
+    t.short_description = result.short_description
     t.tags = result.tags or None
     base = settings.public_base_url.rstrip("/")
     if not t.summary_shortlink:
