@@ -72,6 +72,28 @@ def test_api_library_empty(client):
     assert resp.json() == {"rows": [], "total": 0, "limit": 50, "offset": 0}
 
 
+def test_production_home_serves_spa_and_classic_list_is_explicit(client, db_session):
+    _seed_transcript(
+        db_session,
+        video_id="classic1111",
+        title="Classic List Entry",
+        summary_md="done",
+        tags=["legacy"],
+    )
+
+    home = client.get("/")
+    assert home.status_code == 200
+    assert "<title>Scribe SPA</title>" in home.text
+    assert '<div id="root"></div>' in home.text
+    assert "Classic List Entry" not in home.text
+
+    classic = client.get("/classic")
+    assert classic.status_code == 200
+    assert "Classic List Entry" in classic.text
+    assert 'action="/classic"' in classic.text
+    assert 'href="/classic?tag=legacy"' in classic.text
+
+
 def test_api_library_happy_path_excerpts_and_paginates(client, db_session):
     _seed_transcript(
         db_session,

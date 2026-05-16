@@ -2,17 +2,17 @@
 {% block subtitle %}{{ transcripts|length }} transcript(s){% if tag %} · tag <code>{{ tag }}</code>{% endif %}{% if q %} · search <code>{{ q }}</code>{% endif %}{% endblock %}
 {% block content %}
 
-<form class="filters" method="get" action="/">
+<form class="filters" method="get" action="/classic">
   <input type="search" name="q" value="{{ q }}" placeholder="Search title + transcript…" autocomplete="off">
   {% if tag %}<input type="hidden" name="tag" value="{{ tag }}">{% endif %}
   <button type="submit">Search</button>
-  {% if q or tag %}<a class="reset" href="/">clear</a>{% endif %}
+  {% if q or tag %}<a class="reset" href="/classic">clear</a>{% endif %}
 </form>
 
 {% if not transcripts %}
   <p class="muted">
     {% if q or tag %}
-      No transcripts match this filter. <a href="/">Clear</a> to see everything.
+      No transcripts match this filter. <a href="/classic">Clear</a> to see everything.
     {% else %}
       No transcripts yet. Submit a YouTube URL via <code>POST /jobs</code>.
     {% endif %}
@@ -25,7 +25,7 @@
     <tr>
       <td>
         <a href="/transcripts/{{ t.id }}">{{ t.title }}</a>
-        {% if t.tags %}<div class="tags">{% for tg in t.tags %}<a class="tag" href="/?tag={{ tg|urlencode }}">{{ tg }}</a>{% endfor %}</div>{% endif %}
+        {% if t.tags %}<div class="tags">{% for tg in t.tags %}<a class="tag" href="/classic?tag={{ tg|urlencode }}">{{ tg }}</a>{% endfor %}</div>{% endif %}
       </td>
       <td>{{ t.lang or "—" }}</td>
       <td>{% if t.duration_seconds %}{{ "%d:%02d"|format(t.duration_seconds // 60, t.duration_seconds % 60) }}{% else %}—{% endif %}</td>
