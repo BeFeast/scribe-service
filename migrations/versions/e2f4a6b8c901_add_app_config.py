@@ -1,7 +1,7 @@
 """add app_config runtime overlay
 
 Revision ID: e2f4a6b8c901
-Revises: d1e3f4a5b603
+Revises: e4f5a6b7c801
 Create Date: 2026-05-16 00:00:00.000000
 """
 from typing import Sequence, Union
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 
 revision: str = "e2f4a6b8c901"
-down_revision: Union[str, Sequence[str], None] = "d1e3f4a5b603"
+down_revision: Union[str, Sequence[str], None] = "e4f5a6b7c801"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
