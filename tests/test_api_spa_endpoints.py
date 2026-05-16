@@ -97,6 +97,14 @@ def test_production_home_serves_spa_and_classic_list_is_explicit(client, db_sess
     assert 'href="/classic?tag=legacy"' in classic.text
 
 
+def test_production_spa_deep_links_serve_shell(client):
+    for route in ("/queue", "/ops", "/settings"):
+        resp = client.get(route)
+        assert resp.status_code == 200
+        assert "<title>Scribe SPA</title>" in resp.text
+        assert '<div id="root"></div>' in resp.text
+
+
 def test_api_library_happy_path_excerpts_and_paginates(client, db_session):
     _seed_transcript(
         db_session,
