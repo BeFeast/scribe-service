@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-import uuid
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,6 +17,14 @@ _BUNDLED_PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
 
 
 class PromptError(ValueError):
+    pass
+
+
+class PromptNotFoundError(PromptError):
+    pass
+
+
+class PromptValidationError(PromptError):
     pass
 
 
@@ -58,14 +66,16 @@ def _active_path() -> Path:
 
 def validate_version(version: str) -> None:
     if version not in PROMPT_VERSIONS:
-        raise PromptError(f"unknown prompt version {version!r}; expected one of {', '.join(PROMPT_VERSIONS)}")
+        raise PromptValidationError(
+            f"unknown prompt version {version!r}; expected one of {', '.join(PROMPT_VERSIONS)}"
+        )
 
 
 def active_version() -> str:
     try:
         version = _active_path().read_text(encoding="utf-8").strip()
     except FileNotFoundError as exc:
-        raise PromptError(f"active prompt selector missing: {_active_path()}") from exc
+        raise PromptNotFoundError(f"active prompt selector missing: {_active_path()}") from exc
     validate_version(version)
     return version
 
@@ -75,7 +85,7 @@ def read_prompt(version: str) -> str:
     try:
         return path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
-        raise PromptError(f"prompt template missing: {path}") from exc
+        raise PromptNotFoundError(f"prompt template missing: {path}") from exc
 
 
 def read_active_prompt() -> tuple[str, str]:
@@ -93,25 +103,28 @@ def list_prompts() -> tuple[str, list[PromptVersion]]:
 
 def validate_prompt_body(body: str) -> None:
     if len(body) > MAX_PROMPT_CHARS:
-        raise PromptError(f"prompt body must be <= {MAX_PROMPT_CHARS} characters")
+        raise PromptValidationError(f"prompt body must be <= {MAX_PROMPT_CHARS} characters")
     if "## TL;DR" not in body:
-        raise PromptError("prompt body must contain a '## TL;DR' section")
+        raise PromptValidationError("prompt body must contain a '## TL;DR' section")
     headers = [line for line in body.splitlines() if line.startswith("## ")]
     if len(headers) < 2:
-        raise PromptError("prompt body must contain at least two level-2 markdown headers")
+        raise PromptValidationError("prompt body must contain at least two level-2 markdown headers")
     missing = [placeholder for placeholder in REQUIRED_PLACEHOLDERS if placeholder not in body]
     if missing:
-        raise PromptError(f"prompt body must contain placeholders: {', '.join(missing)}")
+        raise PromptValidationError(f"prompt body must contain placeholders: {', '.join(missing)}")
 
 
 def _atomic_write(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    tmp_path = Path(tmp_name)
     try:
-        tmp_path.write_text(body, encoding="utf-8")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(body)
         os.replace(tmp_path, path)
-    finally:
+    except BaseException:
         tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def write_prompt(version: str, body: str) -> None:
@@ -123,5 +136,5 @@ def write_prompt(version: str, body: str) -> None:
 def set_active_version(version: str) -> None:
     validate_version(version)
     if not _version_path(version).is_file():
-        raise PromptError(f"prompt template missing: {_version_path(version)}")
+        raise PromptNotFoundError(f"prompt template missing: {_version_path(version)}")
     _atomic_write(_active_path(), f"{version}\n")

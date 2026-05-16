@@ -91,7 +91,7 @@ def test_write_prompt_version_is_atomic_and_validates(pure_client, prompt_dir):
     resp = pure_client.post("/api/prompts/v1", json={"body": new_body})
     assert resp.status_code == 204, resp.text
     assert (prompt_dir / "transcript-summary.v1.md").read_text(encoding="utf-8") == new_body
-    assert not (prompt_dir / "transcript-summary.v1.md.tmp").exists()
+    assert not list(prompt_dir.glob("*.tmp"))
 
     invalid = pure_client.post("/api/prompts/v1", json={"body": "## Details\nmissing required header"})
     assert invalid.status_code == 422
@@ -110,7 +110,7 @@ def test_switch_active_prompt(pure_client, prompt_dir):
     assert resp.status_code == 200, resp.text
     assert resp.json()["active_version"] == "v1"
     assert (prompt_dir / "transcript-summary.active").read_text(encoding="utf-8") == "v1\n"
-    assert not (prompt_dir / "transcript-summary.active.tmp").exists()
+    assert not list(prompt_dir.glob("*.tmp"))
 
 
 def test_missing_prompt_template_is_404(pure_client, prompt_dir):

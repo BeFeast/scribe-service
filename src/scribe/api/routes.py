@@ -210,10 +210,9 @@ def _require_transcript(transcript_id: int, session: Session) -> Transcript:
 
 
 def _prompt_error(exc: prompts.PromptError) -> HTTPException:
-    message = str(exc)
-    if message.startswith(("active prompt selector missing:", "prompt template missing:")):
-        return HTTPException(status_code=404, detail=message)
-    return HTTPException(status_code=422, detail=message)
+    if isinstance(exc, prompts.PromptNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    return HTTPException(status_code=422, detail=str(exc))
 
 
 @router.get("/api/prompts", response_model=PromptListView, tags=["prompts"])
