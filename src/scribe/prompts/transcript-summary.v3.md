@@ -38,7 +38,8 @@ tags: [llm, local-ai, performance]
 
 ## Rules
 
-- Language: Russian for all content. Tags: lowercase, transliterated or Russian.
+- Language: Russian for summary content.
+- Tags must be English semantic lowercase slugs: English words only, hyphen-separated, no Cyrillic, no transliterated Russian/Hebrew/etc. Keep proper nouns or widely used product/project names such as `apple`, `apple-silicon`, or `claude-code`.
 - Do NOT paraphrase the transcript — ANALYZE it. Ask yourself: what is the author trying to convince me of? What evidence do they use?
 - Each key point must add analytical value — explain implications, not just restate facts.
 - Generate 3-7 lowercase tags yourself in the frontmatter `tags` list. Replace the example tags with specific core topics from the video.

@@ -130,6 +130,31 @@ def test_slugify(value: str, expected: str) -> None:
     assert summarizer._slugify(value) == expected
 
 
+def test_normalize_tags_replaces_transliteration_and_keeps_technical_tags() -> None:
+    assert summarizer._normalize_tags(
+        [
+            "bytovaya-scena",
+            "Apple",
+            "ai-economics",
+            "ai-security",
+            "apple-silicon",
+            "backups",
+            "Claude Code",
+            "coding-agent",
+            "tag1",
+        ]
+    ) == [
+        "everyday-scene",
+        "apple",
+        "ai-economics",
+        "ai-security",
+        "apple-silicon",
+        "backups",
+        "claude-code",
+        "coding-agent",
+    ]
+
+
 def test_summarize_reads_active_prompt_each_invocation(tmp_path, monkeypatch):
     """The worker path should pick up active-version changes without restart."""
     for version in prompts.PROMPT_VERSIONS:

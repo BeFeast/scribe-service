@@ -198,3 +198,11 @@ def test_prompts_are_in_openapi(pure_client):
     assert "/api/prompts" in paths
     assert "/api/prompts/{version}" in paths
     assert "/api/prompts/dry-run" in paths
+
+
+def test_bundled_prompts_require_english_semantic_tag_slugs(monkeypatch):
+    monkeypatch.setattr(prompts.settings, "prompt_dir", "")
+    for version in prompts.PROMPT_VERSIONS:
+        body = prompts.read_prompt(version)
+        assert "English semantic lowercase slugs" in body
+        assert "no transliterated Russian/Hebrew/etc." in body
