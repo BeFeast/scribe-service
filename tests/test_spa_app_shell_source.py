@@ -18,6 +18,7 @@ def test_app_shell_files_exist() -> None:
         "constants.ts",
         "hooks/useRoute.ts",
         "hooks/useTweaks.ts",
+        "pages/Library.tsx",
     ):
         assert (SPA_SRC / path).is_file()
 
@@ -29,8 +30,33 @@ def test_app_mounts_shell_and_placeholder_router() -> None:
     assert "Sidebar" in source
     assert "TweaksPanel" not in source
     assert "useRoute" in source
-    assert "pages coming online — see issue #27" in source
+    assert "Library" in source
+    assert "layout={tweaks.libraryLayout}" in source
     assert 'route.page === "library"' in source
+
+
+def test_library_page_fetches_api_and_supports_layouts() -> None:
+    source = read("pages/Library.tsx")
+
+    assert "function InFlightStrip" in source
+    assert "function InFlightRow" in source
+    assert "function LibTable" in source
+    assert "function LibFeed" in source
+    assert "function LibCards" in source
+    assert "buildLibraryUrl(debouncedQuery, selectedTag)" in source
+    assert '["tag", tag ?? ""]' in source
+    assert '["limit", "50"]' in source
+    assert '["offset", "0"]' in source
+    assert "window.setTimeout(() => setDebouncedQuery(query), 200)" in source
+    assert 'fetch("/api/jobs/active"' in source
+    assert "document.hidden" in source
+    assert "hasNonTerminalJob(body.jobs) ? 5000 : 30000" in source
+    assert "CMDK_OPEN_EVENT" in source
+    assert "chip warn" in source
+    assert "partial" in source
+    assert 'layout === "table"' in source
+    assert 'layout === "feed"' in source
+    assert 'layout === "cards"' in source
 
 
 def test_cmdk_custom_event_is_wired_without_window_globals() -> None:
@@ -89,3 +115,5 @@ def test_route_hook_uses_typed_hash_routes() -> None:
     assert "window.location.hash" in source
     assert "window.addEventListener(\"hashchange\"" in source
     assert "type RouteAction" in source
+    assert 'case "jobs":' in source
+    assert 'parts[0] = "jobs";' in source

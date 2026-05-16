@@ -50,6 +50,7 @@ function routeFromHash(hash: string): Route {
 		case "settings":
 			return { page, params: { tag } };
 		case "job":
+		case "jobs":
 			return { page: "job", params: { id: parseId(id), tag } };
 		default:
 			return { page: "library", params: { tag } };
@@ -62,6 +63,9 @@ function routeToHash(route: Route): string {
 		(route.page === "transcript" || route.page === "job") &&
 		route.params.id !== undefined
 	) {
+		if (route.page === "job") {
+			parts[0] = "jobs";
+		}
 		parts.push(String(route.params.id));
 	}
 	const params = new URLSearchParams();
