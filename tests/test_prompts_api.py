@@ -156,6 +156,41 @@ def test_dry_run_prompt_does_not_persist(db_client, db_session, monkeypatch):
     ]
 
 
+def test_dry_run_prompt_can_use_unsaved_body(db_client, db_session, monkeypatch):
+    transcript = _seed_done_transcript(db_session)
+
+    def fake_summarize(
+        transcript_md,
+        *,
+        title,
+        lock_timeout=None,
+        prompt_version=None,
+        prompt_body=None,
+        **_,
+    ):
+        assert transcript_md == "Transcript body"
+        assert title == "Prompt Dry Run"
+        assert prompt_version == "v3"
+        assert prompt_body == "Draft prompt text"
+        assert lock_timeout == routes_module._RESUMMARIZE_LOCK_TIMEOUT_S
+        return summarizer_module.SummaryResult(summary_md="Draft dry-run", tags=["draft"])
+
+    monkeypatch.setattr(summarizer_module, "summarize", fake_summarize)
+    resp = db_client.post(
+        "/api/prompts/dry-run",
+        json={
+            "version": "v3",
+            "transcript_id": transcript.id,
+            "prompt_body": "Draft prompt text",
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["summary_md"] == "Draft dry-run"
+    db_session.refresh(transcript)
+    assert transcript.summary_md == "Original summary"
+
+
 def test_prompts_are_in_openapi(pure_client):
     resp = pure_client.get("/openapi.json")
     assert resp.status_code == 200

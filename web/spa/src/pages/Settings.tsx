@@ -132,8 +132,10 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 			setPromptBody(body);
 			setSavedPromptBody(body);
 			setStatus(null);
+			return true;
 		} catch (loadError) {
 			setError(loadError instanceof Error ? loadError.message : "load failed");
+			return false;
 		} finally {
 			setLoading(false);
 		}
@@ -221,8 +223,9 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 					throw new Error(await responseMessage(response));
 				}
 			}
-			await loadSettings();
-			setStatus("Saved");
+			if (await loadSettings()) {
+				setStatus("Saved");
+			}
 		} catch (saveError) {
 			setError(saveError instanceof Error ? saveError.message : "save failed");
 		} finally {
@@ -245,6 +248,7 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 				body: JSON.stringify({
 					version: promptVersion,
 					transcript_id: transcriptId,
+					prompt_body: promptBody,
 				}),
 			});
 			if (!response.ok) {

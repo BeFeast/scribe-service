@@ -38,7 +38,7 @@ function parseBlocks(body: string): Block[] {
 				index += 1;
 			}
 			blocks.push({
-				key: blockKey("code", code.join("\n")),
+				key: blockKey("code", code.join("\n"), blocks.length),
 				type: "code",
 				text: code.join("\n"),
 			});
@@ -48,7 +48,7 @@ function parseBlocks(body: string): Block[] {
 		const heading = /^(#{1,6})\s+(.+)$/.exec(line);
 		if (heading !== null) {
 			blocks.push({
-				key: blockKey("heading", line),
+				key: blockKey("heading", line, blocks.length),
 				type: "heading",
 				level: heading[1].length,
 				text: heading[2],
@@ -63,7 +63,7 @@ function parseBlocks(body: string): Block[] {
 				index += 1;
 			}
 			blocks.push({
-				key: blockKey("blockquote", quote.join(" ")),
+				key: blockKey("blockquote", quote.join(" "), blocks.length),
 				type: "blockquote",
 				text: quote.join(" "),
 			});
@@ -86,7 +86,7 @@ function parseBlocks(body: string): Block[] {
 				index += 1;
 			}
 			blocks.push({
-				key: blockKey("list", items.join("|")),
+				key: blockKey("list", items.join("|"), blocks.length),
 				type: "list",
 				ordered: isOrdered,
 				items,
@@ -100,7 +100,7 @@ function parseBlocks(body: string): Block[] {
 			index += 1;
 		}
 		blocks.push({
-			key: blockKey("paragraph", paragraph.join(" ")),
+			key: blockKey("paragraph", paragraph.join(" "), blocks.length),
 			type: "paragraph",
 			text: paragraph.join(" "),
 		});
@@ -131,8 +131,8 @@ function renderBlock(block: Block): React.ReactNode {
 			const Tag = block.ordered ? "ol" : "ul";
 			return (
 				<Tag key={block.key}>
-					{block.items.map((item) => (
-						<li key={blockKey("item", item)}>{renderInline(item)}</li>
+					{block.items.map((item, index) => (
+						<li key={blockKey("item", item, index)}>{renderInline(item)}</li>
 					))}
 				</Tag>
 			);
@@ -191,10 +191,10 @@ function renderInline(text: string): React.ReactNode[] {
 	});
 }
 
-function blockKey(kind: string, text: string): string {
+function blockKey(kind: string, text: string, index: number): string {
 	let hash = 0;
-	for (let index = 0; index < text.length; index += 1) {
-		hash = (hash * 31 + text.charCodeAt(index)) | 0;
+	for (let offset = 0; offset < text.length; offset += 1) {
+		hash = (hash * 31 + text.charCodeAt(offset)) | 0;
 	}
-	return `${kind}-${hash}`;
+	return `${kind}-${index}-${hash}`;
 }
