@@ -44,6 +44,11 @@ _POLL_INTERVAL = 5.0
 LOOP_TICK_MS = int(_POLL_INTERVAL * 1000)
 _WEBHOOK_TIMEOUT_S = 10.0
 _WEBHOOK_RETRY_BACKOFFS_S = (1.0, 4.0, 16.0)
+_INTERRUPTED_ON_STARTUP = (
+    JobStatus.downloading,
+    JobStatus.transcribing,
+    JobStatus.summarizing,
+)
 
 # Live references to worker threads started via start_workers(); the ops
 # rollcall reads this to flag the worker pool as `err` when any thread has died.
@@ -161,6 +166,36 @@ def _claim_next_job(session) -> Job | None:
         return None
     _set_job_status(session, job, JobStatus.downloading)
     return job
+
+
+def recover_interrupted_jobs(session) -> int:
+    """Requeue jobs left mid-stage by a process restart.
+
+    Workers run in-process with the FastAPI container. If the container is
+    restarted during download/transcribe/summarize, no thread remains to finish
+    that row. Requeueing on startup lets the normal pipeline resume; partial
+    transcripts skip download+whisper and only re-run summary.
+    """
+    jobs = session.scalars(
+        select(Job)
+        .where(Job.status.in_(_INTERRUPTED_ON_STARTUP))
+        .order_by(Job.id)
+        .with_for_update()
+    ).all()
+    for job in jobs:
+        old_status = job.status
+        log.warning(
+            "requeueing interrupted job",
+            extra={
+                "job_id": job.id,
+                "video_id": job.video_id,
+                "from_status": old_status.value,
+            },
+        )
+        transition_job_status(session, job, JobStatus.queued)
+    if not jobs:
+        session.commit()
+    return len(jobs)
 
 
 def _find_partial_transcript(session, video_id: str) -> Transcript | None:
@@ -307,6 +342,17 @@ def run_worker(stop: threading.Event) -> None:
 def start_workers(n: int | None = None) -> tuple[list[threading.Thread], threading.Event]:
     """Spawn `n` daemon worker threads. Returns (threads, stop_event)."""
     n = max(1, n or settings.worker_concurrency)
+    session = SessionLocal()
+    try:
+        recovered = recover_interrupted_jobs(session)
+        if recovered:
+            log.warning("requeued interrupted jobs on startup", extra={"count": recovered})
+    except Exception:
+        session.rollback()
+        log.exception("interrupted job recovery failed")
+    finally:
+        session.close()
+
     stop = threading.Event()
     threads: list[threading.Thread] = []
     for i in range(n):
