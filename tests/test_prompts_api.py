@@ -206,3 +206,12 @@ def test_bundled_prompts_require_english_semantic_tag_slugs(monkeypatch):
         body = prompts.read_prompt(version)
         assert "English semantic lowercase slugs" in body
         assert "no transliterated Russian/Hebrew/etc." in body
+
+
+def test_bundled_prompts_require_english_short_descriptions(monkeypatch):
+    monkeypatch.setattr(prompts.settings, "prompt_dir", "")
+    for version in prompts.PROMPT_VERSIONS:
+        body = prompts.read_prompt(version)
+        assert 'short_description: "<1-2 complete English sentences' in body
+        assert "`short_description` must be English" in body
+        assert "fluent English sentences for library cards/feed" in body

@@ -134,6 +134,20 @@ def test_normalize_tags_replaces_transliteration_and_keeps_technical_tags() -> N
     assert summarizer._normalize_tags(
         [
             "bytovaya-scena",
+            "detskaya-rech",
+            "dok-stancii",
+            "internet-kultura",
+            "intuiciya",
+            "karera",
+            "periferia",
+            "plagin",
+            "poisk",
+            "pokupka",
+            "predprinimatelstvo",
+            "produktivnost",
+            "smertnost",
+            "stiv-dzhobs",
+            "usb-huby",
             "Apple",
             "ai-economics",
             "ai-security",
@@ -145,6 +159,20 @@ def test_normalize_tags_replaces_transliteration_and_keeps_technical_tags() -> N
         ]
     ) == [
         "everyday-scene",
+        "child-speech",
+        "docking-stations",
+        "internet-culture",
+        "intuition",
+        "career",
+        "peripherals",
+        "plugins",
+        "search",
+        "buying-guide",
+        "entrepreneurship",
+        "productivity",
+        "mortality",
+        "steve-jobs",
+        "usb-hubs",
         "apple",
         "ai-economics",
         "ai-security",
@@ -205,7 +233,7 @@ def test_summarize_parses_short_description_from_frontmatter(tmp_path, monkeypat
         out_file.write_text(
             "---\n"
             "tags: [systems, ai]\n"
-            'short_description: "Короткое описание для карточки. Оно звучит завершённо."\n'
+            'short_description: "A fluent card description for the library. It ends cleanly."\n'
             "---\n\n"
             "# Summary\n\nFull body stays intact.",
             encoding="utf-8",
@@ -217,5 +245,5 @@ def test_summarize_parses_short_description_from_frontmatter(tmp_path, monkeypat
     result = summarizer.summarize("Transcript", title="Parser Test")
 
     assert result.tags == ["systems", "ai"]
-    assert result.short_description == "Короткое описание для карточки. Оно звучит завершённо."
+    assert result.short_description == "A fluent card description for the library. It ends cleanly."
     assert "Full body stays intact." in result.summary_md
