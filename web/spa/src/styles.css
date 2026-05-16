@@ -2060,7 +2060,7 @@ a {
 	overflow-wrap: anywhere;
 }
 
-.lib-table td:nth-child(3) {
+.table-meta-stack {
 	display: grid;
 	gap: 0.2rem;
 	white-space: nowrap;
