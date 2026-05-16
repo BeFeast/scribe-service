@@ -5,10 +5,12 @@ These are the building blocks the future `/api/ops` endpoint composes; keeping
 them here means routes.py stays a thin caller and individual pieces are
 unit-testable without a FastAPI client.
 
-The probes in `_system_rollcall` are best-effort: each runs in a dedicated
-worker thread bounded by a 2 s wall-clock budget. A probe that times out or
-raises is reported as `status: "warn"` with a short reason; the rollcall never
-raises.
+The probes in `_system_rollcall` are best-effort. Each probe is responsible
+for bounding its own I/O (urlopen `timeout=`, postgres `statement_timeout`),
+so we don't need a wall-clock executor on top — that pattern would have
+abandoned a stuck thread on every call and slowly leaked the worker pool.
+A probe that raises is reported as `status: "warn"` with a short reason; the
+rollcall never raises.
 """
 from __future__ import annotations
 
@@ -17,8 +19,6 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeout
 from importlib import metadata as _md
 from pathlib import Path
 from typing import Literal
@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from scribe.config import settings
 from scribe.db.models import Job, JobStatus
+from scribe.db.session import SessionLocal
 from scribe.obs import metrics
 
 # Statuses surfaced by the rollcall — alphabetised for readability.
@@ -58,9 +59,7 @@ def _queue_depth(session: Session) -> int:
 def _workers_busy() -> int:
     """Current value of the `scribe_workers_busy` gauge. The gauge is updated
     by `worker/loop.py::process_job` and is process-wide."""
-    # prometheus_client Gauges expose a private `_value.get()` that returns the
-    # current float; the public surface is `set()`/`inc()`/`dec()` only.
-    return int(metrics.workers_busy._value.get())
+    return int(metrics.gauge_value(metrics.workers_busy))
 
 
 def _spend_series_14d(session: Session) -> list[float]:
@@ -121,25 +120,16 @@ def _backup_heartbeat() -> dict:
 
 
 # ---------------------------------------------------------------- rollcall
-def _probe(label: str, fn: Callable[[], tuple[str, Status]], *, timeout_s: float = _PROBE_TIMEOUT_S) -> dict:
-    """Run `fn` in a worker thread with a hard wall-clock timeout. On success
-    fn returns (value, status); on timeout/exception the probe is degraded to
-    `warn` with a short reason. Never raises."""
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="scribe-probe")
+def _probe(label: str, fn: Callable[[], tuple[str, Status]]) -> dict:
+    """Run `fn` and surface its (value, status). Any exception is converted
+    to a `warn` entry with a short reason — the rollcall never raises and
+    never blocks beyond what `fn` itself does. Each probe is responsible for
+    bounding its own I/O (e.g. urlopen `timeout=`, postgres `statement_timeout`)."""
     try:
-        future = executor.submit(fn)
-        try:
-            value, status = future.result(timeout=timeout_s)
-        except FutureTimeout:
-            return {"label": label, "value": f"probe failed: timeout >{timeout_s:.0f}s", "status": "warn"}
-        except Exception as exc:
-            return {"label": label, "value": f"probe failed: {type(exc).__name__}: {exc}"[:200], "status": "warn"}
-        return {"label": label, "value": value, "status": status}
-    finally:
-        # Don't block on a stuck probe thread — abandon it; the timeout was
-        # the contract. The thread is a daemon-of-daemons that holds no DB
-        # session of its own.
-        executor.shutdown(wait=False, cancel_futures=True)
+        value, status = fn()
+    except Exception as exc:
+        return {"label": label, "value": f"probe failed: {type(exc).__name__}: {exc}"[:200], "status": "warn"}
+    return {"label": label, "value": value, "status": status}
 
 
 def _probe_scribe_service() -> tuple[str, Status]:
@@ -166,18 +156,23 @@ def _probe_worker_pool() -> tuple[str, Status]:
     return value, "ok"
 
 
-def _probe_postgres(session: Session) -> tuple[str, Status]:
-    # Two cheap SQL calls: SELECT 1 (liveness) + pg_stat_activity count
-    # (connection count). Both bounded by the probe's outer 2 s timeout.
-    session.execute(text("SELECT 1")).scalar()
-    conns = session.execute(
-        text("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()")
-    ).scalar()
+def _probe_postgres() -> tuple[str, Status]:
+    """Liveness + connection count for the configured database. Owns its own
+    short-lived Session so we never share a request-scoped connection across
+    threads; bounds itself with `statement_timeout` so a stuck DB can't hang
+    the rollcall."""
+    timeout_ms = int(_PROBE_TIMEOUT_S * 1000)
+    with SessionLocal() as s:
+        s.execute(text(f"SET statement_timeout = {timeout_ms}"))
+        s.execute(text("SELECT 1")).scalar()
+        conns = s.execute(
+            text("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()")
+        ).scalar()
     return f"ready · {int(conns or 0)} conn", "ok"
 
 
 def _probe_vast() -> tuple[str, Status]:
-    ts = float(metrics.last_vast_launch_timestamp._value.get())
+    ts = float(metrics.gauge_value(metrics.last_vast_launch_timestamp))
     if ts <= 0:
         return "no recent launches recorded", "warn"
     age = time.time() - ts
@@ -191,7 +186,7 @@ def _probe_chhoto() -> tuple[str, Status]:
     if not base:
         return "shortlink_base not configured", "warn"
     req = urllib.request.Request(base, method="HEAD")
-    # urlopen honours `timeout`; the outer probe budget is a hard upper bound.
+    # urlopen honours `timeout`; this bounds the probe's I/O on its own.
     try:
         with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT_S) as resp:
             code = resp.status
@@ -204,7 +199,7 @@ def _probe_chhoto() -> tuple[str, Status]:
 
 
 def _probe_codex() -> tuple[str, Status]:
-    ts = float(metrics.last_codex_success_timestamp._value.get())
+    ts = float(metrics.gauge_value(metrics.last_codex_success_timestamp))
     if ts <= 0:
         return "no recent summaries recorded", "warn"
     age = time.time() - ts
@@ -213,14 +208,15 @@ def _probe_codex() -> tuple[str, Status]:
     return f"last success {iso} ({int(age)}s ago)", status
 
 
-def _system_rollcall(session: Session) -> list[dict]:
+def _system_rollcall() -> list[dict]:
     """Best-effort probe of each external dependency. Each entry is
     `{"label": str, "value": str, "status": "ok|warn|err"}`; probe failures
-    degrade to `warn` rather than raising."""
+    degrade to `warn` rather than raising. The Postgres probe owns its own
+    short-lived session; no request-scoped session is needed here."""
     return [
         _probe("scribe-service", _probe_scribe_service),
         _probe("Worker", _probe_worker_pool),
-        _probe("Postgres", lambda: _probe_postgres(session)),
+        _probe("Postgres", _probe_postgres),
         _probe("Vast.ai", _probe_vast),
         _probe("Chhoto shortlinks", _probe_chhoto),
         _probe("codex CLI", _probe_codex),

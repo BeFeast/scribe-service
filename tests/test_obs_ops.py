@@ -59,19 +59,6 @@ def test_probe_swallows_exceptions_and_returns_warn():
     assert "RuntimeError" in result["value"]
 
 
-def test_probe_times_out_at_budget():
-    def slow():
-        time.sleep(5)
-        return "never", "ok"
-    start = time.monotonic()
-    result = ops._probe("slow-thing", slow, timeout_s=0.2)
-    elapsed = time.monotonic() - start
-    assert result["status"] == "warn"
-    assert "timeout" in result["value"]
-    # Should return promptly — well under the slow function's 5 s sleep.
-    assert elapsed < 1.5
-
-
 def test_probe_scribe_service_returns_ok_with_version():
     value, status = ops._probe_scribe_service()
     assert status == "ok"
@@ -165,13 +152,15 @@ def test_backup_heartbeat_fresh(tmp_path, monkeypatch):
     assert payload["age_seconds"] < 5
 
 
-def test_system_rollcall_returns_six_entries():
+def test_system_rollcall_returns_six_entries(monkeypatch):
     """The rollcall must include the six labels documented in the issue."""
-    # Use a stubbed session — the Postgres probe is the only one that touches it.
-    class _Session:
-        def execute(self, *_args, **_kwargs):
-            raise RuntimeError("no DB in this unit test")
-    rollcall = ops._system_rollcall(_Session())
+    # Force the Postgres probe to fail without touching a real DB; the other
+    # probes are pure-Python or read gauges, so the rollcall stays offline.
+    def _boom():
+        raise RuntimeError("no DB in this unit test")
+    monkeypatch.setattr(ops, "_probe_postgres", _boom)
+
+    rollcall = ops._system_rollcall()
     labels = [item["label"] for item in rollcall]
     assert labels == [
         "scribe-service",
@@ -181,7 +170,7 @@ def test_system_rollcall_returns_six_entries():
         "Chhoto shortlinks",
         "codex CLI",
     ]
-    # Postgres probe degrades to warn because the stub session raises.
+    # Postgres probe degrades to warn because the stub raised.
     pg = next(item for item in rollcall if item["label"] == "Postgres")
     assert pg["status"] == "warn"
     assert "probe failed" in pg["value"]

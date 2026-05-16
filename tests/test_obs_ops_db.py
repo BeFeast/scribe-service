@@ -92,9 +92,18 @@ def test_spend_series_14d_buckets_by_day_and_zero_pads(db_session):
         db_session.commit()
 
 
-def test_probe_postgres_returns_ok_with_conn_count(db_session):
-    """Live SELECT 1 + pg_stat_activity probe — must return ok + a conn count."""
-    value, status = ops._probe_postgres(db_session)
+def test_probe_postgres_returns_ok_with_conn_count(engine, monkeypatch):
+    """Live SELECT 1 + pg_stat_activity probe — must return ok + a conn count.
+
+    `_probe_postgres` opens its own short-lived session via the module-level
+    `SessionLocal`. We point that at the test engine so the probe runs against
+    SCRIBE_TEST_DATABASE_URL rather than the production URL."""
+    from sqlalchemy.orm import sessionmaker
+
+    test_factory = sessionmaker(engine, autoflush=False, autocommit=False, future=True)
+    monkeypatch.setattr(ops, "SessionLocal", test_factory)
+
+    value, status = ops._probe_postgres()
     assert status == "ok"
     assert "ready" in value
     assert "conn" in value

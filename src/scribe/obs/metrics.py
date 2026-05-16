@@ -140,6 +140,17 @@ webhook_attempts_total = Counter(
 )
 
 
+def gauge_value(g: Gauge) -> float:
+    """Read the current value of an unlabelled Gauge using prometheus_client's
+    public `Collector.collect()` surface. We use this in place of touching the
+    private `_value.get()` so that an upstream refactor of internals stays a
+    one-line fix here rather than scattered access in every caller."""
+    metric = next(iter(g.collect()), None)
+    if metric is None or not metric.samples:
+        return 0.0
+    return float(metric.samples[0].value)
+
+
 def export() -> tuple[bytes, str]:
     """Return (body, content_type) for the /metrics endpoint."""
     return generate_latest(REGISTRY), CONTENT_TYPE_LATEST
