@@ -2,9 +2,9 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 
 import { DesignSystemPlayground } from "./DesignSystemPlayground";
+import { CommandPalette } from "./components/CommandPalette";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
-import { CMDK_OPEN_EVENT } from "./constants";
 import { useRoute } from "./hooks/useRoute";
 import { useTweaks } from "./hooks/useTweaks";
 import { JobDetail } from "./pages/JobDetail";
@@ -18,26 +18,6 @@ import "./styles.css";
 function App() {
 	const { route, navigate } = useRoute();
 	const { tweaks, setTheme, replaceTweaks } = useTweaks();
-
-	React.useEffect(() => {
-		const open = () => {
-			console.info(
-				"Command palette requested; #40 will mount the palette body.",
-			);
-		};
-		const keydown = (event: KeyboardEvent) => {
-			if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-				event.preventDefault();
-				document.dispatchEvent(new CustomEvent(CMDK_OPEN_EVENT));
-			}
-		};
-		document.addEventListener(CMDK_OPEN_EVENT, open);
-		document.addEventListener("keydown", keydown);
-		return () => {
-			document.removeEventListener(CMDK_OPEN_EVENT, open);
-			document.removeEventListener("keydown", keydown);
-		};
-	}, []);
 
 	if (window.location.pathname === "/__spa__/__playground__") {
 		return <DesignSystemPlayground />;
@@ -74,6 +54,7 @@ function App() {
 					)}
 				</main>
 			</div>
+			<CommandPalette navigate={navigate} />
 		</div>
 	);
 }

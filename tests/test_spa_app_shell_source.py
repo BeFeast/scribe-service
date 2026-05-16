@@ -12,6 +12,7 @@ def read(path: str) -> str:
 
 def test_app_shell_files_exist() -> None:
     for path in (
+        "components/CommandPalette.tsx",
         "components/TopBar.tsx",
         "components/Sidebar.tsx",
         "components/TweaksPanel.tsx",
@@ -29,6 +30,7 @@ def test_app_mounts_shell_and_placeholder_router() -> None:
 
     assert "TopBar" in source
     assert "Sidebar" in source
+    assert "CommandPalette" in source
     assert "TweaksPanel" not in source
     assert "useRoute" in source
     assert "Library" in source
@@ -81,13 +83,41 @@ def test_cmdk_custom_event_is_wired_without_window_globals() -> None:
     constants = read("constants.ts")
     main = read("main.tsx")
     topbar = read("components/TopBar.tsx")
+    palette = read("components/CommandPalette.tsx")
 
     assert 'export const CMDK_OPEN_EVENT = "scribe:cmdk-open";' in constants
-    assert "CMDK_OPEN_EVENT" in main
+    assert "CommandPalette" in main
     assert "CMDK_OPEN_EVENT" in topbar
-    assert "document.dispatchEvent(new CustomEvent(CMDK_OPEN_EVENT))" in main
+    assert "CMDK_OPEN_EVENT" in palette
+    assert 'document.addEventListener(CMDK_OPEN_EVENT, open)' in palette
+    assert 'document.addEventListener("keydown", keydown)' in palette
     assert "document.dispatchEvent(new CustomEvent(CMDK_OPEN_EVENT))" in topbar
-    assert "window.scribe" not in main + topbar
+    assert "window.scribe" not in main + topbar + palette
+
+
+def test_command_palette_covers_submit_search_navigation_and_a11y() -> None:
+    source = read("components/CommandPalette.tsx")
+
+    for shape in ("youtu.be", "/watch", "/shorts/"):
+        assert shape in source
+    assert 'fetch("/jobs"' in source
+    assert 'source: "manual"' in source
+    assert "Queued as job #" in source
+    assert "Watch pipeline →" in source
+    assert 'fetch("/api/library?limit=100"' in source
+    assert 'fetch("/api/jobs/active"' in source
+    assert "Library" in source
+    assert "Queue" in source
+    assert "Ops" in source
+    assert "Settings" in source
+    assert 'aria-modal="true"' in source
+    assert 'event.key === "Escape"' in source
+    assert 'event.key === "Enter"' in source
+    assert "new AbortController()" in source
+    assert 'setQuery("")' in source
+    assert "isRecentSubmission" in source
+    assert 'submitState.state === "success"' in source
+    assert "selectedIndex - urlModeOffset" in source
 
 
 def test_tweaks_defaults_persist_and_apply_to_html_dataset() -> None:
