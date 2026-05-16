@@ -43,3 +43,36 @@ class JobView(BaseModel):
     deduplicated: bool = False
     callback_url: str | None = None
     transcript: TranscriptBrief | None = None
+
+
+class PromptVersionView(BaseModel):
+    id: str
+    len_chars: int
+    len_tokens_est: int
+    first_line: str
+    is_active: bool = False
+
+
+class PromptListView(BaseModel):
+    active_version: str
+    versions: list[PromptVersionView]
+
+
+class PromptWrite(BaseModel):
+    body: str
+
+
+class PromptActiveWrite(BaseModel):
+    version: str
+
+
+class PromptDryRunCreate(BaseModel):
+    version: str
+    transcript_id: int
+
+
+class PromptDryRunView(BaseModel):
+    version: str
+    transcript_id: int
+    summary_md: str
+    tags: list[str]

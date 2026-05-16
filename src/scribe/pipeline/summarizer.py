@@ -36,10 +36,10 @@ from pathlib import Path
 from scribe.alerts import send_admin_alert
 from scribe.config import settings
 from scribe.obs import metrics
+from scribe.pipeline import prompts
 
 log = logging.getLogger("scribe.summarizer")
 
-_PROMPT_TEMPLATE = Path(__file__).resolve().parents[1] / "prompts" / "transcript-summary.md"
 _TAGS_RE = re.compile(r"^tags:\s*\[([^\]]*)\]", re.MULTILINE)
 
 # Signatures emitted by codex on OAuth/refresh-token problems. Any of these
@@ -123,15 +123,17 @@ def summarize(
     transcript_slug: str | None = None,
     summary_date: dt.date | None = None,
     lock_timeout: float | None = None,
+    prompt_version: str | None = None,
 ) -> SummaryResult:
     """Produce a Russian analytical summary of `transcript_md` via codex CLI."""
     summary_date = summary_date or dt.date.today()
     transcript_slug = transcript_slug or _slugify(title)
-    if not _PROMPT_TEMPLATE.is_file():
-        raise SummarizeError(f"prompt template missing: {_PROMPT_TEMPLATE}")
+    try:
+        template = prompts.read_prompt(prompt_version) if prompt_version else prompts.read_active_prompt()[1]
+    except prompts.PromptError as exc:
+        raise SummarizeError(str(exc)) from exc
     prompt = (
-        _PROMPT_TEMPLATE.read_text(encoding="utf-8")
-        .replace("{date}", summary_date.isoformat())
+        template.replace("{date}", summary_date.isoformat())
         .replace("{transcript_slug}", transcript_slug)
         + "\n\nTranscript to summarize:\n\n"
         + transcript_md

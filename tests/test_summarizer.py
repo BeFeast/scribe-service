@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import fcntl
 import os
+import subprocess
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
-from scribe.pipeline import summarizer
+from scribe.pipeline import prompts, summarizer
 
 # ---------- _is_token_revoked --------------------------------------------------
 
@@ -126,3 +128,36 @@ def test_acquire_codex_lock_timeout_raises_when_contended(tmp_path):
 )
 def test_slugify(value: str, expected: str) -> None:
     assert summarizer._slugify(value) == expected
+
+
+def test_summarize_reads_active_prompt_each_invocation(tmp_path, monkeypatch):
+    """The worker path should pick up active-version changes without restart."""
+    for version in prompts.PROMPT_VERSIONS:
+        (tmp_path / f"transcript-summary.{version}.md").write_text(
+            f"Prompt {version} {{date}} {{transcript_slug}}\n\n## TL;DR\n\nx\n\n## Details\n\ny\n",
+            encoding="utf-8",
+        )
+    active_path = tmp_path / "transcript-summary.active"
+    active_path.write_text("v1\n", encoding="utf-8")
+
+    monkeypatch.setattr(prompts.settings, "prompt_dir", str(tmp_path))
+    monkeypatch.setattr(summarizer.settings, "codex_lock_path", str(tmp_path / "codex.lock"))
+    monkeypatch.setattr(summarizer.settings, "codex_bin", "codex")
+    monkeypatch.setattr(summarizer.settings, "codex_model", "")
+
+    seen_prompts: list[str] = []
+
+    def fake_run(cmd, input, text, capture_output, timeout):  # noqa: A002
+        seen_prompts.append(input)
+        out_file = Path(cmd[cmd.index("-o") + 1])
+        out_file.write_text("---\ntags: [dry-run]\n---\n\nsummary", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(summarizer.subprocess, "run", fake_run)
+
+    summarizer.summarize("Transcript", title="First Title")
+    active_path.write_text("v2\n", encoding="utf-8")
+    summarizer.summarize("Transcript", title="Second Title")
+
+    assert "Prompt v1" in seen_prompts[0]
+    assert "Prompt v2" in seen_prompts[1]
