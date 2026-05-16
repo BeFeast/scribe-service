@@ -186,3 +186,36 @@ def test_summarize_reads_active_prompt_each_invocation(tmp_path, monkeypatch):
 
     assert "Prompt v1" in seen_prompts[0]
     assert "Prompt v2" in seen_prompts[1]
+
+
+def test_summarize_parses_short_description_from_frontmatter(tmp_path, monkeypatch):
+    (tmp_path / "transcript-summary.v1.md").write_text(
+        "Prompt {date} {transcript_slug}",
+        encoding="utf-8",
+    )
+    (tmp_path / "transcript-summary.active").write_text("v1\n", encoding="utf-8")
+
+    monkeypatch.setattr(prompts.settings, "prompt_dir", str(tmp_path))
+    monkeypatch.setattr(summarizer.settings, "codex_lock_path", str(tmp_path / "codex.lock"))
+    monkeypatch.setattr(summarizer.settings, "codex_bin", "codex")
+    monkeypatch.setattr(summarizer.settings, "codex_model", "")
+
+    def fake_run(cmd, input, text, capture_output, timeout):  # noqa: A002, ARG001
+        out_file = Path(cmd[cmd.index("-o") + 1])
+        out_file.write_text(
+            "---\n"
+            "tags: [systems, ai]\n"
+            'short_description: "Короткое описание для карточки. Оно звучит завершённо."\n'
+            "---\n\n"
+            "# Summary\n\nFull body stays intact.",
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(summarizer.subprocess, "run", fake_run)
+
+    result = summarizer.summarize("Transcript", title="Parser Test")
+
+    assert result.tags == ["systems", "ai"]
+    assert result.short_description == "Короткое описание для карточки. Оно звучит завершённо."
+    assert "Full body stays intact." in result.summary_md
