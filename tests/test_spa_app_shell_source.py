@@ -74,11 +74,17 @@ def test_library_page_fetches_api_and_supports_layouts() -> None:
     assert "Next" in source
     assert "window.setTimeout(() => setDebouncedQuery(query), 200)" in source
     assert 'fetch("/api/jobs/active"' in source
+    assert 'fetch("/jobs"' in source
+    assert 'source: "manual"' in source
+    assert "Queued job #" in source
+    assert 'className="library-submit"' in source
+    assert 'type="url"' in source
     assert "hasNonTerminalJob(jobs) ? 5000 : 30000" in source
     assert "usePoll(poll, interval)" in source
-    assert "CMDK_OPEN_EVENT" in source
     assert "chip warn" in source
     assert "partial" in source
+    assert "<colgroup>" in source
+    assert 'className="lib-table-meta-col"' in source
     assert 'layout === "table"' in source
     assert 'layout === "feed"' in source
     assert 'layout === "cards"' in source
