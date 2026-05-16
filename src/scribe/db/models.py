@@ -22,6 +22,18 @@ class JobStatus(StrEnum):
     failed = "failed"
 
 
+class AppConfig(Base):
+    """Runtime config overlay. Values are stored as text and parsed by Settings."""
+
+    __tablename__ = "app_config"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class Job(Base):
     """One video-summary request. Dedup is by video_id against completed transcripts."""
 

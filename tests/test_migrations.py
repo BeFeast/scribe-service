@@ -132,6 +132,13 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
             "upgrade head did not create job_stage_events — "
             "revision e4f5a6b7c801 likely silent-noop'd"
         )
+        assert "app_config" in tables, f"upgrade head did not create app_config (got {tables})"
+
+        app_config_cols = _column_names(eng, "app_config")
+        assert {"key", "value", "updated_at"}.issubset(app_config_cols), (
+            "app_config columns missing after upgrade head — "
+            "revision e2f4a6b8c901 likely silent-noop'd"
+        )
 
         jobs_cols = _column_names(eng, "jobs")
         assert "callback_url" in jobs_cols, (

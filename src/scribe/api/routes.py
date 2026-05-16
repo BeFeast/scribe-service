@@ -17,7 +17,7 @@ import secrets
 from collections.abc import Iterator
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Body, Depends, Form, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
@@ -26,6 +26,8 @@ from scribe.api.schemas import (
     ActiveJobsResponse,
     ActiveJobView,
     BackupSnapshot,
+    ConfigEntry,
+    ConfigResponse,
     JobCreate,
     JobStageView,
     JobView,
@@ -42,8 +44,13 @@ from scribe.api.schemas import (
     TranscriptBrief,
     WorkerPoolSnapshot,
 )
-from scribe.config import settings
-from scribe.db.models import Job, JobStageEvent, JobStatus, Transcript
+from scribe.config import (
+    RUNTIME_CONFIG,
+    parse_runtime_config_value,
+    serialize_runtime_config_value,
+    settings,
+)
+from scribe.db.models import AppConfig, Job, JobStageEvent, JobStatus, Transcript
 from scribe.db.query import escape_like
 from scribe.db.session import SessionLocal
 from scribe.obs import metrics
@@ -228,6 +235,69 @@ def transition_job_status(session: Session, job: Job, status: JobStatus) -> None
             session.add(JobStageEvent(job_id=job.id, stage=status.value, started_at=now))
     metrics.job_status_transitions.labels(status=status.value).inc()
     session.commit()
+
+
+def _config_response(*, restart_required: list[str] | None = None) -> ConfigResponse:
+    return ConfigResponse(
+        config={
+            key: ConfigEntry(
+                value=getattr(settings, key),
+                source=settings.runtime_source(key),
+                mutable=spec.mutable,
+            )
+            for key, spec in RUNTIME_CONFIG.items()
+        },
+        restart_required=restart_required or [],
+    )
+
+
+@router.get("/api/config", response_model=ConfigResponse)
+def get_config(session: Session = Depends(get_session)) -> ConfigResponse:
+    rows = dict(session.execute(select(AppConfig.key, AppConfig.value)).all())
+    settings.runtime_overlay(rows)
+    return _config_response()
+
+
+@router.post("/api/config", response_model=ConfigResponse)
+def update_config(
+    body: dict[str, object] = Body(...),
+    session: Session = Depends(get_session),
+) -> ConfigResponse:
+    unknown = sorted(set(body) - set(RUNTIME_CONFIG))
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"unknown config keys: {', '.join(unknown)}")
+
+    parsed: dict[str, bool | float | int | str] = {}
+    errors: dict[str, str] = {}
+    for key, value in body.items():
+        try:
+            parsed[key] = parse_runtime_config_value(key, value)
+        except ValueError as exc:
+            errors[key] = str(exc)
+    if errors:
+        raise HTTPException(status_code=400, detail=errors)
+
+    for key, value in parsed.items():
+        row = session.get(AppConfig, key)
+        serialized = serialize_runtime_config_value(value)
+        if row is None:
+            session.add(AppConfig(key=key, value=serialized))
+        else:
+            row.value = serialized
+    session.commit()
+
+    rows = dict(session.execute(select(AppConfig.key, AppConfig.value)).all())
+    settings.runtime_overlay(rows)
+    restart_required = [
+        key for key in parsed if RUNTIME_CONFIG[key].restart_required
+    ]
+    return _config_response(restart_required=restart_required)
+
+
+@router.post("/api/config/rotate-token", status_code=501)
+def rotate_token() -> None:
+    # TODO(PRD §4.6): implement once the auth surface owns bearer-token rotation.
+    raise HTTPException(status_code=501, detail="bearer-token rotation is not implemented yet")
 
 
 @router.post("/jobs", response_model=JobView, status_code=201)
