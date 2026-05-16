@@ -75,6 +75,7 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 	const [draft, setDraft] = React.useState<Record<ConfigKey, ConfigValue>>(
 		{} as Record<ConfigKey, ConfigValue>,
 	);
+	const [savedTweaks, setSavedTweaks] = React.useState<Tweaks>(tweaks);
 	const [dirtyKeys, setDirtyKeys] = React.useState<Set<ConfigKey>>(new Set());
 	const [restartKeys, setRestartKeys] = React.useState<string[]>([]);
 	const [token, setToken] = React.useState(readStoredToken);
@@ -101,6 +102,9 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 	const headers = React.useMemo(() => authHeaders(token), [token]);
 	const promptDirty =
 		promptBody !== savedPromptBody || promptVersion !== savedPromptVersion;
+	const appearanceDirty = !tweaksEqual(tweaks, savedTweaks);
+	const hasUnsavedChanges =
+		dirtyKeys.size > 0 || promptDirty || appearanceDirty;
 
 	const loadSettings = React.useCallback(async () => {
 		setLoading(true);
@@ -189,7 +193,6 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 		setError(null);
 		setStatus(null);
 		try {
-			const hadChanges = dirtyKeys.size > 0 || promptDirty;
 			if (dirtyKeys.size > 0) {
 				const payload: Partial<Record<ConfigKey, ConfigValue>> = {};
 				for (const key of dirtyKeys) {
@@ -227,7 +230,8 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 				}
 			}
 			if (await loadSettings()) {
-				setStatus(hadChanges ? "Saved" : "Settings are current");
+				setSavedTweaks(tweaks);
+				setStatus("Saved");
 			}
 		} catch (saveError) {
 			setError(saveError instanceof Error ? saveError.message : "save failed");
@@ -324,7 +328,7 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 					<button
 						className="btn primary"
 						type="button"
-						disabled={saving || loading}
+						disabled={saving || loading || !hasUnsavedChanges}
 						onClick={save}
 					>
 						{saving ? "Saving" : "Save"}
@@ -876,6 +880,15 @@ function numberDraft(value: ConfigValue | undefined): number {
 
 function booleanDraft(value: ConfigValue | undefined): boolean {
 	return typeof value === "boolean" ? value : false;
+}
+
+function tweaksEqual(left: Tweaks, right: Tweaks): boolean {
+	return (
+		left.variant === right.variant &&
+		left.theme === right.theme &&
+		left.density === right.density &&
+		left.libraryLayout === right.libraryLayout
+	);
 }
 
 function maskToken(token: string): string {
