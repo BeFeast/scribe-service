@@ -403,6 +403,9 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 	const onQueryChange = (event: React.ChangeEvent<HTMLInputElement>) => {
 		setQuery(event.target.value);
 		setSelectedIndex(0);
+		if (submitState.state !== "submitting") {
+			setSubmitState({ state: "idle" });
+		}
 	};
 
 	if (!isOpen) {
