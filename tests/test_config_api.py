@@ -139,6 +139,44 @@ def test_post_config_rejects_invalid_url(db_session):
         _clear_config(db_session)
 
 
+def test_post_config_updates_short_description_language(db_session):
+    snapshot = _settings_snapshot()
+    sources = set(settings._runtime_sources)
+    try:
+        _clear_config(db_session)
+        settings.config_api_bearer_token = TEST_TOKEN
+        client = _client(db_session)
+
+        resp = client.post("/api/config", json={"short_description_language": "en"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["config"]["short_description_language"]["value"] == "en"
+        assert body["config"]["short_description_language"]["source"] == "db"
+    finally:
+        app.dependency_overrides.pop(routes_module.get_session, None)
+        _restore_settings(snapshot, sources)
+        _clear_config(db_session)
+
+
+def test_post_config_rejects_invalid_short_description_language(db_session):
+    snapshot = _settings_snapshot()
+    sources = set(settings._runtime_sources)
+    try:
+        _clear_config(db_session)
+        settings.config_api_bearer_token = TEST_TOKEN
+        client = _client(db_session)
+
+        resp = client.post("/api/config", json={"short_description_language": "de"})
+
+        assert resp.status_code == 400
+        assert "short_description_language" in resp.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(routes_module.get_session, None)
+        _restore_settings(snapshot, sources)
+        _clear_config(db_session)
+
+
 def test_post_config_returns_restart_required_for_worker_concurrency(db_session):
     snapshot = _settings_snapshot()
     sources = set(settings._runtime_sources)

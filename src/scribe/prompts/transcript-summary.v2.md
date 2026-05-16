@@ -11,7 +11,7 @@ type: summary
 date: {date}
 source: "[[{transcript_slug}]]"
 language: ru
-short_description: "<1-2 complete English sentences for library cards/feed. Fluent, no abrupt cuts.>"
+short_description: "<1-2 complete {short_description_language_name} sentences for library cards/feed. Fluent, no abrupt cuts.>"
 tags: [video-summary]
 ---
 
@@ -40,9 +40,9 @@ tags: [video-summary]
 
 ## Rules
 
-- Language: Russian for summary content. `short_description` must be English for the library UI.
+- Language: Russian for summary content. `short_description` must be {short_description_language_name} for the library UI.
 - Tags must be English semantic lowercase slugs: English words only, hyphen-separated, no Cyrillic, no transliterated Russian/Hebrew/etc. Keep proper nouns or widely used product/project names such as `apple`, `apple-silicon`, or `claude-code`.
 - Do NOT paraphrase the transcript. Analyze what the author is trying to prove and why it matters.
-- Generate `short_description` as 1-2 complete fluent English sentences for library cards/feed. Do not copy a hard-truncated fragment from the full summary.
+- Generate `short_description` as 1-2 complete fluent {short_description_language_name} sentences for library cards/feed. Do not copy a hard-truncated fragment from the full summary.
 - Generate 3-7 specific tags in the frontmatter; replace the example tag.
 - Return ONLY markdown content, with no code fences.

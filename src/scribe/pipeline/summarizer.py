@@ -59,6 +59,10 @@ _TAG_REPLACEMENTS = {
     "stiv-dzhobs": "steve-jobs",
     "usb-huby": "usb-hubs",
 }
+_SHORT_DESCRIPTION_LANGUAGE_NAMES = {
+    "ru": "Russian",
+    "en": "English",
+}
 _REJECTED_TAGS = {
     "auto-generated",
     "example",
@@ -141,6 +145,10 @@ def _normalize_tags(values: list[str]) -> list[str]:
     return tags
 
 
+def _short_description_language_name(code: str) -> str:
+    return _SHORT_DESCRIPTION_LANGUAGE_NAMES.get(code, "Russian")
+
+
 def _is_token_revoked(stderr: str) -> bool:
     return any(sig in stderr for sig in _TOKEN_REVOKED_PATTERNS)
 
@@ -198,6 +206,11 @@ def summarize(
     prompt = (
         template.replace("{date}", summary_date.isoformat())
         .replace("{transcript_slug}", transcript_slug)
+        .replace("{short_description_language_code}", settings.short_description_language)
+        .replace(
+            "{short_description_language_name}",
+            _short_description_language_name(settings.short_description_language),
+        )
         + "\n\nTranscript to summarize:\n\n"
         + transcript_md
     )

@@ -10,7 +10,15 @@ from typing import Any, Literal
 from pydantic import AnyHttpUrl, PrivateAttr, TypeAdapter, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ConfigKind = Literal["bool", "float", "int", "prompt_version", "url", "url_optional"]
+ConfigKind = Literal[
+    "bool",
+    "float",
+    "int",
+    "prompt_version",
+    "short_description_language",
+    "url",
+    "url_optional",
+]
 
 
 @dataclass(frozen=True)
@@ -30,6 +38,7 @@ RUNTIME_CONFIG: dict[str, RuntimeConfigSpec] = {
     "webhook_default": RuntimeConfigSpec("webhook_default", "url_optional"),
     "webhook_embed_transcript": RuntimeConfigSpec("webhook_embed_transcript", "bool"),
     "public_base_url": RuntimeConfigSpec("public_base_url", "url"),
+    "short_description_language": RuntimeConfigSpec("short_description_language", "short_description_language"),
 }
 
 _URL_ADAPTER = TypeAdapter(AnyHttpUrl)
@@ -80,6 +89,10 @@ def parse_runtime_config_value(key: str, value: Any) -> bool | float | int | str
         if not isinstance(value, str) or value not in _PROMPT_VERSIONS:
             raise ValueError(f"{key} must be one of: v1, v2, v3")
         return value
+    if spec.kind == "short_description_language":
+        if not isinstance(value, str) or value.strip().lower() not in {"ru", "en"}:
+            raise ValueError(f"{key} must be one of: ru, en")
+        return value.strip().lower()
     if spec.kind == "url_optional":
         if value is None:
             return ""
@@ -168,6 +181,7 @@ class Settings(BaseSettings):
     webhook_default: str = ""
     webhook_embed_transcript: bool = False
     prompt_template_active_version: str = "v1"
+    short_description_language: str = "ru"
 
     # Path the scribe-backups sidecar writes after each successful run; surfaced
     # by GET /admin/backup-status for healthcheck curl-polling (PRD §4.12).
