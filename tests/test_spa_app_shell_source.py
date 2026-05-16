@@ -43,10 +43,13 @@ def test_library_page_fetches_api_and_supports_layouts() -> None:
     assert "function LibTable" in source
     assert "function LibFeed" in source
     assert "function LibCards" in source
-    assert "buildLibraryUrl(debouncedQuery, selectedTag)" in source
+    assert "buildLibraryUrl(debouncedQuery, selectedTag, libraryPageSize, offset)" in source
     assert '["tag", tag ?? ""]' in source
-    assert '["limit", "50"]' in source
-    assert '["offset", "0"]' in source
+    assert '["limit", String(limit)]' in source
+    assert '["offset", String(offset)]' in source
+    assert "setRetryTick((value) => value + 1)" in source
+    assert "Previous" in source
+    assert "Next" in source
     assert "window.setTimeout(() => setDebouncedQuery(query), 200)" in source
     assert 'fetch("/api/jobs/active"' in source
     assert "document.hidden" in source

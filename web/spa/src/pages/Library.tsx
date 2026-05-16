@@ -59,6 +59,7 @@ type LibraryProps = {
 
 const terminalStatuses = new Set(["done", "failed", "cancelled", "canceled"]);
 const stageLabels = ["queued", "downloading", "transcribing", "summarizing"];
+const libraryPageSize = 50;
 
 function publishCmdkOpen(): void {
 	document.dispatchEvent(new CustomEvent(CMDK_OPEN_EVENT));
@@ -82,7 +83,7 @@ function formatDuration(seconds: number | null): string {
 		return "duration n/a";
 	}
 	const minutes = Math.floor(seconds / 60);
-	const rest = seconds % 60;
+	const rest = Math.floor(seconds % 60);
 	return `${minutes}:${String(rest).padStart(2, "0")}`;
 }
 
@@ -97,12 +98,17 @@ function formatCost(value: number | null): string {
 	}).format(value);
 }
 
-function buildLibraryUrl(query: string, tag: string | undefined): string {
+function buildLibraryUrl(
+	query: string,
+	tag: string | undefined,
+	limit: number,
+	offset: number,
+): string {
 	const params = new URLSearchParams([
 		["q", query],
 		["tag", tag ?? ""],
-		["limit", "50"],
-		["offset", "0"],
+		["limit", String(limit)],
+		["offset", String(offset)],
 	]);
 	return `/api/library?${params.toString()}`;
 }
@@ -117,6 +123,8 @@ export function Library({ layout, route, navigate }: LibraryProps) {
 	const [debouncedQuery, setDebouncedQuery] = React.useState("");
 	const [rows, setRows] = React.useState<LibraryRow[]>([]);
 	const [total, setTotal] = React.useState(0);
+	const [offset, setOffset] = React.useState(0);
+	const [retryTick, setRetryTick] = React.useState(0);
 	const [isLoading, setIsLoading] = React.useState(true);
 	const [error, setError] = React.useState<string | null>(null);
 
@@ -125,13 +133,19 @@ export function Library({ layout, route, navigate }: LibraryProps) {
 		return () => window.clearTimeout(timer);
 	}, [query]);
 
+	React.useEffect(() => {
+		void debouncedQuery;
+		void selectedTag;
+		setOffset(0);
+	}, [debouncedQuery, selectedTag]);
+
 	const loadLibrary = React.useCallback(
 		async (signal: AbortSignal) => {
 			setIsLoading(true);
 			setError(null);
 			try {
 				const response = await fetch(
-					buildLibraryUrl(debouncedQuery, selectedTag),
+					buildLibraryUrl(debouncedQuery, selectedTag, libraryPageSize, offset),
 					{
 						signal,
 					},
@@ -158,17 +172,25 @@ export function Library({ layout, route, navigate }: LibraryProps) {
 				}
 			}
 		},
-		[debouncedQuery, selectedTag],
+		[debouncedQuery, offset, selectedTag],
 	);
 
 	React.useEffect(() => {
+		void retryTick;
 		const abort = new AbortController();
 		void loadLibrary(abort.signal);
 		return () => abort.abort();
-	}, [loadLibrary]);
+	}, [loadLibrary, retryTick]);
 
 	const clearTag = () => navigate({ page: "library", params: {} });
-	const retry = () => void loadLibrary(new AbortController().signal);
+	const retry = () => setRetryTick((value) => value + 1);
+	const canPageBack = offset > 0;
+	const canPageForward = offset + rows.length < total;
+	const pageStart = total === 0 ? 0 : offset + 1;
+	const pageEnd = offset + rows.length;
+	const previousPage = () =>
+		setOffset((value) => Math.max(0, value - libraryPageSize));
+	const nextPage = () => setOffset((value) => value + libraryPageSize);
 	const tagClick = (tag: string) =>
 		navigate({ page: "library", params: { tag } });
 	const transcriptClick = (id: number) =>
@@ -243,6 +265,29 @@ export function Library({ layout, route, navigate }: LibraryProps) {
 
 			{rows.length > 0 ? (
 				<div className="library-results">
+					<div className="library-pager">
+						<span className="chip info">
+							{pageStart}-{pageEnd} of {total}
+						</span>
+						<div className="pager-actions">
+							<button
+								type="button"
+								className="btn"
+								onClick={previousPage}
+								disabled={!canPageBack || isLoading}
+							>
+								Previous
+							</button>
+							<button
+								type="button"
+								className="btn"
+								onClick={nextPage}
+								disabled={!canPageForward || isLoading}
+							>
+								Next
+							</button>
+						</div>
+					</div>
 					{layout === "table" ? (
 						<LibTable
 							rows={rows}
