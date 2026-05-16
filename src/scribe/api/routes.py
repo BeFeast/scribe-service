@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import importlib.metadata
+import json
 import logging
 import re
 import secrets
@@ -16,7 +17,7 @@ from collections.abc import Iterator
 from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Query, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
@@ -58,6 +59,7 @@ from scribe.db.query import escape_like
 from scribe.db.session import SessionLocal
 from scribe.obs import metrics
 from scribe.obs import ops as ops_helpers
+from scribe.obs.live_logs import job_log_buffer
 from scribe.pipeline import prompts, shortlinks, summarizer
 from scribe.pipeline.downloader import DownloadError, extract_video_id
 
@@ -83,6 +85,7 @@ _PIPELINE_STAGES = (
     JobStatus.done.value,
 )
 _STATUS_ORDER = {stage: idx for idx, stage in enumerate(_PIPELINE_STAGES)}
+_TERMINAL = (JobStatus.done, JobStatus.failed)
 
 
 def get_session() -> Iterator[Session]:
@@ -425,6 +428,45 @@ def get_job(job_id: int, session: Session = Depends(get_session)) -> JobView:
     if job is None:
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
     return render_job_view(session, job)
+
+
+def _sse_data(payload: dict[str, object]) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
+
+
+async def _stream_job_logs(job_id: int):
+    version, lines = job_log_buffer.snapshot(job_id)
+    for line in lines:
+        yield _sse_data(line)
+
+    discard_on_exit = False
+    try:
+        while True:
+            await asyncio.sleep(0.5)
+            version, lines = job_log_buffer.since(job_id, version)
+            for line in lines:
+                yield _sse_data(line)
+            if not lines:
+                yield ":\n\n"
+            with SessionLocal() as session:
+                job = session.get(Job, job_id)
+                if job is None or job.status in _TERMINAL:
+                    discard_on_exit = True
+                    break
+    finally:
+        if discard_on_exit:
+            job_log_buffer.discard(job_id)
+
+
+@router.get("/api/jobs/{job_id}/log/stream", include_in_schema=False)
+def stream_job_log(job_id: int, session: Session = Depends(get_session)) -> StreamingResponse:
+    if session.get(Job, job_id) is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    return StreamingResponse(
+        _stream_job_logs(job_id),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/transcripts", response_model=list[TranscriptBrief])
@@ -875,9 +917,6 @@ async def resummarize(
     if html_client:
         return _flash_redirect(t.id, "Summary regenerated.", level="success")
     return _brief(t)
-
-
-_TERMINAL = (JobStatus.done, JobStatus.failed)
 
 
 @router.post("/admin/jobs/{job_id}/cancel", response_model=JobView)

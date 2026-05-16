@@ -1,19 +1,29 @@
-import type { StageMap } from "./PipelineDiagram";
+import React from "react";
+
+import { useEventSource } from "../hooks/useEventSource";
 
 type LogTailProps = {
 	jobId: number;
 	status: string;
 	error?: string | null;
-	stages?: StageMap | null;
 };
 
-const STAGE_LABELS: Record<string, string> = {
-	queued: "queue",
-	downloading: "download",
-	transcribing: "whisper",
-	summarizing: "summary",
-	done: "done",
+type WorkerLogLine = {
+	ts?: string | null;
+	lvl?: string;
+	stage?: string;
+	msg?: string;
 };
+
+const TERMINAL = new Set(["done", "failed"]);
+
+function parseLine(raw: string): WorkerLogLine | null {
+	try {
+		return JSON.parse(raw) as WorkerLogLine;
+	} catch {
+		return null;
+	}
+}
 
 function formatStamp(value?: string | null) {
 	if (!value) {
@@ -26,57 +36,51 @@ function formatStamp(value?: string | null) {
 	}).format(new Date(value));
 }
 
-function buildLog(
-	jobId: number,
-	status: string,
-	stages?: StageMap | null,
-	error?: string | null,
-) {
-	const lines: string[] = [];
-	for (const [key, label] of Object.entries(STAGE_LABELS)) {
-		const stage = stages?.[key];
-		if (!stage || stage.state === "pending") {
-			continue;
-		}
-		lines.push(
-			`${formatStamp(stage.started_at)} job=${jobId} stage=${label} start`,
-		);
-		if (stage.state === "done") {
-			lines.push(
-				`${formatStamp(stage.finished_at)} job=${jobId} stage=${label} ok`,
-			);
-		}
-		if (stage.state === "failed") {
-			lines.push(
-				`${formatStamp(stage.finished_at)} job=${jobId} stage=${label} failed ${error ?? ""}`.trim(),
-			);
-		}
-	}
-	if (status === "failed" && lines.length === 0) {
-		lines.push(
-			`${formatStamp(null)} job=${jobId} stage=job failed ${error ?? ""}`.trim(),
-		);
-	}
-	if (status === "done") {
-		lines.push(
-			`${formatStamp(stages?.done?.finished_at)} job=${jobId} pipeline complete`,
-		);
-	}
-	return lines.length > 0
-		? lines
-		: [`${formatStamp(null)} job=${jobId} waiting for worker`];
+function tag(line: WorkerLogLine) {
+	return line.stage ?? line.lvl?.toLowerCase() ?? "job";
 }
 
-export function LogTail({ jobId, status, error, stages }: LogTailProps) {
+export function LogTail({ jobId, status, error }: LogTailProps) {
+	const [lines, setLines] = React.useState<WorkerLogLine[]>([]);
+	const terminal = TERMINAL.has(status);
+
+	React.useEffect(() => {
+		setLines([]);
+	}, [jobId]);
+
+	useEventSource(
+		`/api/jobs/${jobId}/log/stream`,
+		(raw) => {
+			const parsed = parseLine(raw);
+			if (parsed !== null) {
+				setLines((current) => [...current, parsed].slice(-200));
+			}
+		},
+		{ enabled: !terminal || lines.length === 0 },
+	);
+
+	const displayLines =
+		lines.length > 0
+			? lines
+			: [
+					{
+						ts: null,
+						stage: status,
+						msg: status === "failed" ? (error ?? "job failed") : "waiting for worker logs",
+					},
+				];
+
 	return (
 		<section className="log-tail" aria-label="Log tail">
 			<div className="section-heading">
 				<h2>Log tail</h2>
-				<span className="mock-chip">synthetic</span>
+				{!terminal ? <span className="live-dot" aria-hidden="true" /> : null}
 			</div>
 			<pre>
-				{buildLog(jobId, status, stages, error).map((line) => (
-					<code key={line}>{line}</code>
+				{displayLines.map((line, index) => (
+					<code key={`${line.ts ?? "pending"}-${index}`}>
+						{formatStamp(line.ts)} {tag(line)} {line.msg ?? ""}
+					</code>
 				))}
 			</pre>
 		</section>

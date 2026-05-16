@@ -12,41 +12,17 @@ into the JSON object.
 """
 from __future__ import annotations
 
-import datetime as dt
 import json
 import logging
 import os
 import sys
 
-# Fields that LogRecord sets natively. Everything else passed via `extra`
-# is treated as a structured field and merged into the JSON object.
-_STD_RECORD_ATTRS = frozenset(
-    {
-        "args", "asctime", "created", "exc_info", "exc_text", "filename",
-        "funcName", "levelname", "levelno", "lineno", "message", "module",
-        "msecs", "msg", "name", "pathname", "process", "processName",
-        "relativeCreated", "stack_info", "thread", "threadName", "taskName",
-    }
-)
+from scribe.obs.live_logs import JobLogBufferHandler, payload_from_record
 
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:  # noqa: D401
-        message = record.getMessage()
-        payload: dict[str, object] = {
-            "ts": dt.datetime.fromtimestamp(record.created, dt.UTC)
-            .astimezone()
-            .isoformat(timespec="milliseconds"),
-            "lvl": record.levelname,
-            "logger": record.name,
-            "msg": message,
-        }
-        if record.exc_info:
-            payload["exc"] = self.formatException(record.exc_info)
-        for key, value in record.__dict__.items():
-            if key in _STD_RECORD_ATTRS or key.startswith("_"):
-                continue
-            payload[key] = value
+        payload = payload_from_record(record)
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 
@@ -62,6 +38,7 @@ def configure(level: str | int | None = None) -> None:
     for h in list(root.handlers):
         root.removeHandler(h)
     root.addHandler(handler)
+    root.addHandler(JobLogBufferHandler())
     root.setLevel(level)
     # Quiet uvicorn's access log noise; access events go through the same
     # handler but at WARNING by default. Flip to INFO via env if needed.
