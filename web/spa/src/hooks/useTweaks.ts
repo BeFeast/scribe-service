@@ -80,6 +80,14 @@ function applyTweaks(tweaks: Tweaks): void {
 
 export function useTweaks() {
   const [tweaks, dispatch] = React.useReducer(reducer, DEFAULT_TWEAKS, readStoredTweaks);
+  const setVariant = React.useCallback((value: ScribeVariant) => dispatch({ type: "variant", value }), []);
+  const setTheme = React.useCallback((value: ScribeTheme) => dispatch({ type: "theme", value }), []);
+  const setDensity = React.useCallback((value: ScribeDensity) => dispatch({ type: "density", value }), []);
+  const setLibraryLayout = React.useCallback(
+    (value: LibraryLayout) => dispatch({ type: "libraryLayout", value }),
+    [],
+  );
+  const replaceTweaks = React.useCallback((value: Tweaks) => dispatch({ type: "replace", value }), []);
 
   React.useEffect(() => {
     applyTweaks(tweaks);
@@ -92,10 +100,10 @@ export function useTweaks() {
 
   return {
     tweaks,
-    setVariant: (value: ScribeVariant) => dispatch({ type: "variant", value }),
-    setTheme: (value: ScribeTheme) => dispatch({ type: "theme", value }),
-    setDensity: (value: ScribeDensity) => dispatch({ type: "density", value }),
-    setLibraryLayout: (value: LibraryLayout) => dispatch({ type: "libraryLayout", value }),
-    replaceTweaks: (value: Tweaks) => dispatch({ type: "replace", value }),
+    setVariant,
+    setTheme,
+    setDensity,
+    setLibraryLayout,
+    replaceTweaks,
   };
 }

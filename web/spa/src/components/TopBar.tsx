@@ -1,14 +1,13 @@
 import type { ScribeTheme } from "../hooks/useTweaks";
+import { CMDK_OPEN_EVENT } from "../constants";
 
 type TopBarProps = {
   theme: ScribeTheme;
   onThemeChange: (theme: ScribeTheme) => void;
 };
 
-const CMDK_EVENT = "scribe:cmdk-open";
-
 function publishCmdkOpen(): void {
-  document.dispatchEvent(new CustomEvent(CMDK_EVENT));
+  document.dispatchEvent(new CustomEvent(CMDK_OPEN_EVENT));
 }
 
 export function TopBar({ theme, onThemeChange }: TopBarProps) {

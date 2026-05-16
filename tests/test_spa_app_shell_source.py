@@ -15,6 +15,7 @@ def test_app_shell_files_exist() -> None:
         "components/TopBar.tsx",
         "components/Sidebar.tsx",
         "components/TweaksPanel.tsx",
+        "constants.ts",
         "hooks/useRoute.ts",
         "hooks/useTweaks.ts",
     ):
@@ -33,13 +34,15 @@ def test_app_mounts_shell_and_placeholder_router() -> None:
 
 
 def test_cmdk_custom_event_is_wired_without_window_globals() -> None:
+    constants = read("constants.ts")
     main = read("main.tsx")
     topbar = read("components/TopBar.tsx")
 
-    assert '"scribe:cmdk-open"' in main
-    assert '"scribe:cmdk-open"' in topbar
-    assert "document.dispatchEvent(new CustomEvent(CMDK_EVENT))" in main
-    assert "document.dispatchEvent(new CustomEvent(CMDK_EVENT))" in topbar
+    assert 'export const CMDK_OPEN_EVENT = "scribe:cmdk-open";' in constants
+    assert "CMDK_OPEN_EVENT" in main
+    assert "CMDK_OPEN_EVENT" in topbar
+    assert "document.dispatchEvent(new CustomEvent(CMDK_OPEN_EVENT))" in main
+    assert "document.dispatchEvent(new CustomEvent(CMDK_OPEN_EVENT))" in topbar
     assert "window.scribe" not in main + topbar
 
 

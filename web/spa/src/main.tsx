@@ -5,11 +5,10 @@ import { DesignSystemPlayground } from "./DesignSystemPlayground";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { TweaksPanel } from "./components/TweaksPanel";
+import { CMDK_OPEN_EVENT } from "./constants";
 import { useRoute } from "./hooks/useRoute";
 import { useTweaks } from "./hooks/useTweaks";
 import "./styles.css";
-
-const CMDK_EVENT = "scribe:cmdk-open";
 
 function App() {
 	const { route, navigate } = useRoute();
@@ -23,13 +22,13 @@ function App() {
 		const keydown = (event: KeyboardEvent) => {
 			if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
 				event.preventDefault();
-				document.dispatchEvent(new CustomEvent(CMDK_EVENT));
+				document.dispatchEvent(new CustomEvent(CMDK_OPEN_EVENT));
 			}
 		};
-		document.addEventListener(CMDK_EVENT, open);
+		document.addEventListener(CMDK_OPEN_EVENT, open);
 		document.addEventListener("keydown", keydown);
 		return () => {
-			document.removeEventListener(CMDK_EVENT, open);
+			document.removeEventListener(CMDK_OPEN_EVENT, open);
 			document.removeEventListener("keydown", keydown);
 		};
 	}, []);
