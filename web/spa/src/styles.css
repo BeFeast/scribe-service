@@ -634,6 +634,32 @@ a {
 	font-size: 1.45rem;
 }
 
+.metric-help {
+	color: var(--muted);
+	font-size: 0.9rem;
+}
+
+.metric-ok {
+	border-color: var(--ok);
+}
+
+.metric-warn {
+	border-color: var(--warn);
+}
+
+.metric-err {
+	border-color: var(--err);
+	background: color-mix(in srgb, var(--err) 8%, var(--bg-card));
+}
+
+.metric-info {
+	border-color: var(--info);
+}
+
+.metric-accent {
+	border-color: var(--accent);
+}
+
 .lib-table {
 	width: 100%;
 	border-collapse: collapse;
@@ -871,6 +897,17 @@ a {
 	background: color-mix(in srgb, var(--err) 9%, var(--bg-card));
 }
 
+.failure-action {
+	display: block;
+	width: 100%;
+	cursor: pointer;
+	text-align: left;
+}
+
+.failure-action:hover {
+	background: color-mix(in srgb, var(--err) 14%, var(--bg-card));
+}
+
 .err-title {
 	margin: 0;
 	color: var(--err);
@@ -899,6 +936,94 @@ a {
 
 .spark .dot {
 	fill: var(--accent);
+}
+
+.ops-page {
+	display: grid;
+	gap: 1rem;
+}
+
+.ops-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1.35fr) minmax(18rem, 0.85fr);
+	gap: var(--row-gap);
+}
+
+.ops-section,
+.failure-list,
+.system-list,
+.status-bars {
+	display: grid;
+	gap: var(--row-gap);
+}
+
+.card-head,
+.section-line,
+.status-bar-head,
+.system-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+}
+
+.card-head strong {
+	font-family: var(--font-mono);
+	font-size: 1.25rem;
+}
+
+.ops-spark {
+	height: 8rem;
+}
+
+.spark .cap-line {
+	stroke: var(--warn);
+	stroke-width: 1.5;
+	stroke-dasharray: 6 5;
+}
+
+.status-bar {
+	display: grid;
+	gap: 0.35rem;
+}
+
+.status-bar-head span {
+	color: var(--fg);
+	font-weight: 700;
+}
+
+.status-fill.ok {
+	background: var(--ok);
+}
+
+.status-fill.err {
+	background: var(--err);
+}
+
+.status-fill.info {
+	background: var(--info);
+}
+
+.status-fill.accent {
+	background: var(--accent);
+}
+
+.system-row {
+	border-bottom: 1px solid var(--border-soft);
+	padding-block: var(--row-y);
+}
+
+.system-row:last-child {
+	border-bottom: 0;
+}
+
+.system-row div {
+	display: grid;
+	gap: 0.15rem;
+}
+
+.system-row span:not(.chip) {
+	color: var(--muted);
 }
 
 .settings-group {
@@ -933,6 +1058,19 @@ a {
 
 .tnum {
 	font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 760px) {
+	.ops-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.card-head,
+	.section-line,
+	.status-bar-head,
+	.system-row {
+		align-items: flex-start;
+	}
 }
 
 .ds-playground {
