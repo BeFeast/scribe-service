@@ -11,9 +11,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import secrets
-import time
 from collections.abc import Iterator
-from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response
@@ -26,6 +24,7 @@ from scribe.config import settings
 from scribe.db.models import Job, JobStatus, Transcript
 from scribe.db.session import SessionLocal
 from scribe.obs import metrics
+from scribe.obs import ops as ops_helpers
 from scribe.pipeline import shortlinks, summarizer
 from scribe.pipeline.downloader import DownloadError, extract_video_id
 
@@ -436,33 +435,11 @@ def backup_status() -> dict:
     Cheap, file-based, no DB hit — designed for `curl -f` healthcheck polling.
     Returns 200 with `stale=true` (and `last_success_ts=null`) when the file
     is missing or unreadable so the endpoint itself stays observable; callers
-    decide on alerting via the `stale` flag.
+    decide on alerting via the `stale` flag. The future /api/ops endpoint
+    reads the same data via `ops._backup_heartbeat()` — keep the two in sync
+    by sharing the helper rather than duplicating the logic.
     """
-    path = Path(settings.backup_status_path)
-    payload: dict = {
-        "path": str(path),
-        "last_success_ts": None,
-        "last_success_iso": None,
-        "age_seconds": None,
-        "stale_after_seconds": settings.backup_stale_after_seconds,
-        "stale": True,
-    }
-    try:
-        ts = int(path.read_text().strip())
-        now = int(time.time())
-        age = max(0, now - ts)
-        threshold = settings.backup_stale_after_seconds
-        payload.update(
-            last_success_ts=ts,
-            last_success_iso=dt.datetime.fromtimestamp(ts, tz=dt.UTC).isoformat(timespec="seconds"),
-            age_seconds=age,
-            stale=bool(threshold) and age >= threshold,
-        )
-    except FileNotFoundError:
-        payload["error"] = "no backup recorded yet"
-    except (OSError, ValueError, OverflowError) as exc:
-        payload["error"] = f"unreadable heartbeat: {exc}"
-    return payload
+    return ops_helpers._backup_heartbeat()
 
 
 @router.get("/admin/daily-report")

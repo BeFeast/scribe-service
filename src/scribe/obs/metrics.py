@@ -79,6 +79,32 @@ last_success_timestamp = Gauge(
 )
 last_success_timestamp.set(-1)
 
+# Worker pool busy count — how many of the configured workers are currently
+# running `process_job`. inc()/dec() bracket the call in worker/loop.py so
+# the gauge is process-wide and observable via /metrics + /api/ops.
+workers_busy = Gauge(
+    "scribe_workers_busy",
+    "Number of worker threads currently inside process_job (vs idle in poll loop).",
+)
+
+# Unix epoch of the most recent successful Vast.ai instance launch (whisper
+# transcription returned a result). -1 if none yet. Used by the ops rollcall
+# to flag the Vast.ai service as `warn` when no recent launches have landed.
+last_vast_launch_timestamp = Gauge(
+    "scribe_last_vast_launch_timestamp_seconds",
+    "Unix epoch of the most recent successful Vast.ai whisper launch.",
+)
+last_vast_launch_timestamp.set(-1)
+
+# Unix epoch of the most recent successful codex summarizer call. -1 if none
+# yet. Used by the ops rollcall to flag the codex CLI as `warn` after >1h of
+# silence.
+last_codex_success_timestamp = Gauge(
+    "scribe_last_codex_success_timestamp_seconds",
+    "Unix epoch of the most recent successful codex summarizer call.",
+)
+last_codex_success_timestamp.set(-1)
+
 # Codex OAuth-token revocations detected in stderr. A spike here means the
 # operator needs to re-login (`docker exec -it scribe codex login --device-auth`).
 codex_token_revoked_total = Counter(

@@ -181,6 +181,10 @@ def summarize(
 
     if not summary_md:
         raise SummarizeError("codex exec produced an empty summary")
+    # Ops rollcall reads this gauge to flag the codex CLI as `warn` after >1h
+    # of silence. Sampled only on the success path so a stuck/revoked-token
+    # codex doesn't keep the timestamp fresh.
+    metrics.last_codex_success_timestamp.set(time.time())
     # strip accidental ``` fences wrapping the whole output
     if summary_md.startswith("```"):
         lines = summary_md.splitlines()
