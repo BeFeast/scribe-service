@@ -1,6 +1,5 @@
 import React from "react";
 
-import { CMDK_OPEN_EVENT } from "../constants";
 import type { Route } from "../hooks/useRoute";
 import { usePoll } from "../hooks/usePoll";
 import type { LibraryLayout } from "../hooks/useTweaks";
@@ -54,6 +53,13 @@ type ActiveJobsResponse = {
 	jobs: ActiveJob[];
 };
 
+type JobView = {
+	job_id: number;
+	video_id: string;
+	status: string;
+	deduplicated?: boolean;
+};
+
 type LibraryProps = {
 	layout: LibraryLayout;
 	displayCurrency: DisplayCurrency;
@@ -64,10 +70,6 @@ type LibraryProps = {
 const terminalStatuses = new Set(["done", "failed", "cancelled", "canceled"]);
 const stageLabels = ["queued", "downloading", "transcribing", "summarizing"];
 const libraryPageSize = 50;
-
-function publishCmdkOpen(): void {
-	document.dispatchEvent(new CustomEvent(CMDK_OPEN_EVENT));
-}
 
 function formatDate(value: string): string {
 	const date = new Date(value);
@@ -110,9 +112,28 @@ function hasNonTerminalJob(jobs: ActiveJob[]): boolean {
 	return jobs.some((job) => !terminalStatuses.has(job.status));
 }
 
+function errorMessage(status: number, body: unknown): string {
+	if (
+		typeof body === "object" &&
+		body !== null &&
+		"detail" in body &&
+		typeof body.detail === "string"
+	) {
+		return body.detail;
+	}
+	return `Submit failed: ${status}`;
+}
+
 export function Library({ layout, displayCurrency, route, navigate }: LibraryProps) {
 	const selectedTag = route.params.tag;
 	const [query, setQuery] = React.useState("");
+	const [submitUrl, setSubmitUrl] = React.useState("");
+	const [submitState, setSubmitState] = React.useState<
+		| { state: "idle" }
+		| { state: "submitting" }
+		| { state: "success"; job: JobView }
+		| { state: "error"; message: string }
+	>({ state: "idle" });
 	const [debouncedQuery, setDebouncedQuery] = React.useState("");
 	const [rows, setRows] = React.useState<LibraryRow[]>([]);
 	const [total, setTotal] = React.useState(0);
@@ -188,6 +209,49 @@ export function Library({ layout, displayCurrency, route, navigate }: LibraryPro
 		navigate({ page: "library", params: { tag } });
 	const transcriptClick = (id: number) =>
 		navigate({ page: "transcript", params: { id } });
+	const submitTrimmed = submitUrl.trim();
+	const canSubmitUrl = submitTrimmed.length > 0 && submitState.state !== "submitting";
+	const submitMessage =
+		submitState.state === "success"
+			? `Queued job #${submitState.job.job_id}`
+			: submitState.state === "error"
+				? submitState.message
+				: null;
+	const submitClass =
+		submitState.state === "error"
+			? "library-submit-status err-msg"
+			: "library-submit-status muted";
+	const submitJob = async (event: React.FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		if (!canSubmitUrl) {
+			return;
+		}
+		setSubmitState({ state: "submitting" });
+		try {
+			const response = await fetch("/jobs", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ url: submitTrimmed, source: "manual" }),
+			});
+			const body = (await response.json()) as unknown;
+			if (!response.ok) {
+				setSubmitState({
+					state: "error",
+					message: errorMessage(response.status, body),
+				});
+				return;
+			}
+			setSubmitUrl("");
+			setSubmitState({ state: "success", job: body as JobView });
+			retry();
+		} catch (submitError) {
+			setSubmitState({
+				state: "error",
+				message:
+					submitError instanceof Error ? submitError.message : "Submit failed",
+			});
+		}
+	};
 
 	return (
 		<section className="library-page">
@@ -218,13 +282,28 @@ export function Library({ layout, displayCurrency, route, navigate }: LibraryPro
 							placeholder="Title or summary"
 						/>
 					</label>
-					<button
-						type="button"
-						className="btn primary"
-						onClick={publishCmdkOpen}
-					>
-						Submit URL
-					</button>
+					<form className="library-submit" onSubmit={submitJob}>
+						<label>
+							<span>Submit URL</span>
+							<input
+								type="url"
+								value={submitUrl}
+								onChange={(event) => {
+									setSubmitUrl(event.currentTarget.value);
+									if (submitState.state !== "idle") {
+										setSubmitState({ state: "idle" });
+									}
+								}}
+								placeholder="YouTube URL"
+							/>
+						</label>
+						<button type="submit" className="btn primary" disabled={!canSubmitUrl}>
+							Submit
+						</button>
+						{submitMessage !== null ? (
+							<p className={submitClass}>{submitMessage}</p>
+						) : null}
+					</form>
 				</div>
 			</header>
 
@@ -246,13 +325,6 @@ export function Library({ layout, displayCurrency, route, navigate }: LibraryPro
 					<p className="feed-excerpt">
 						Submitted YouTube URLs will appear here after transcription starts.
 					</p>
-					<button
-						type="button"
-						className="btn primary"
-						onClick={publishCmdkOpen}
-					>
-						Submit URL
-					</button>
 				</div>
 			) : null}
 
@@ -398,6 +470,12 @@ function LibTable({
 	return (
 		<div className="table-wrap">
 			<table className="lib-table">
+				<colgroup>
+					<col className="lib-table-title-col" />
+					<col className="lib-table-tags-col" />
+					<col className="lib-table-meta-col" />
+					<col className="lib-table-created-col" />
+				</colgroup>
 				<thead>
 					<tr>
 						<th>Title</th>
