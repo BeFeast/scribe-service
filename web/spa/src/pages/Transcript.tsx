@@ -319,6 +319,7 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 	const [loading, setLoading] = React.useState(true);
 	const [error, setError] = React.useState<string | null>(null);
 	const [regenerating, setRegenerating] = React.useState(false);
+	const [deleting, setDeleting] = React.useState(false);
 	const [regenerateError, setRegenerateError] = React.useState<string | null>(
 		null,
 	);
@@ -391,6 +392,31 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 		}
 	}, [id, load]);
 
+	const deleteTranscript = React.useCallback(async () => {
+		if (
+			record === null ||
+			deleting ||
+			!window.confirm(`Delete transcript "${record.title}"? This also removes its job record.`)
+		) {
+			return;
+		}
+		setDeleting(true);
+		setError(null);
+		try {
+			const response = await fetch(`/admin/transcripts/${record.id}`, {
+				method: "DELETE",
+			});
+			if (!response.ok) {
+				throw new Error(`Delete failed (HTTP ${response.status})`);
+			}
+			navigate({ page: "library", params: {} });
+		} catch (caught) {
+			setError(caught instanceof Error ? caught.message : String(caught));
+		} finally {
+			setDeleting(false);
+		}
+	}, [deleting, navigate, record]);
+
 	if (loading) {
 		return (
 			<section className="pane transcript-detail">
@@ -444,6 +470,14 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 						) : null}
 					</div>
 				</div>
+				<button
+					type="button"
+					className="btn ghost danger-button"
+					onClick={deleteTranscript}
+					disabled={deleting}
+				>
+					{deleting ? "Deleting" : "Delete"}
+				</button>
 			</header>
 
 			{record.tags && record.tags.length > 0 ? (

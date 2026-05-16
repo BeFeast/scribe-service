@@ -141,6 +141,7 @@ export function Library({ layout, displayCurrency, route, navigate }: LibraryPro
 	const [retryTick, setRetryTick] = React.useState(0);
 	const [isLoading, setIsLoading] = React.useState(true);
 	const [error, setError] = React.useState<string | null>(null);
+	const [deleteBusyId, setDeleteBusyId] = React.useState<number | null>(null);
 
 	React.useEffect(() => {
 		const timer = window.setTimeout(() => setDebouncedQuery(query), 200);
@@ -209,6 +210,32 @@ export function Library({ layout, displayCurrency, route, navigate }: LibraryPro
 		navigate({ page: "library", params: { tag } });
 	const transcriptClick = (id: number) =>
 		navigate({ page: "transcript", params: { id } });
+	const deleteTranscript = async (row: LibraryRow) => {
+		if (
+			deleteBusyId !== null ||
+			!window.confirm(`Delete transcript "${row.title}"? This also removes its job record.`)
+		) {
+			return;
+		}
+		setDeleteBusyId(row.id);
+		setError(null);
+		try {
+			const response = await fetch(`/admin/transcripts/${row.id}`, {
+				method: "DELETE",
+			});
+			if (!response.ok) {
+				throw new Error(`Delete failed: ${response.status}`);
+			}
+			setRows((current) => current.filter((item) => item.id !== row.id));
+			setTotal((current) => Math.max(0, current - 1));
+		} catch (deleteError) {
+			setError(
+				deleteError instanceof Error ? deleteError.message : "Delete failed",
+			);
+		} finally {
+			setDeleteBusyId(null);
+		}
+	};
 	const submitTrimmed = submitUrl.trim();
 	const canSubmitUrl = submitTrimmed.length > 0 && submitState.state !== "submitting";
 	const submitMessage =
@@ -359,6 +386,8 @@ export function Library({ layout, displayCurrency, route, navigate }: LibraryPro
 							displayCurrency={displayCurrency}
 							onTagClick={tagClick}
 							onOpen={transcriptClick}
+							onDelete={deleteTranscript}
+							deleteBusyId={deleteBusyId}
 						/>
 					) : null}
 					{layout === "feed" ? (
@@ -367,6 +396,8 @@ export function Library({ layout, displayCurrency, route, navigate }: LibraryPro
 							displayCurrency={displayCurrency}
 							onTagClick={tagClick}
 							onOpen={transcriptClick}
+							onDelete={deleteTranscript}
+							deleteBusyId={deleteBusyId}
 						/>
 					) : null}
 					{layout === "cards" ? (
@@ -375,6 +406,8 @@ export function Library({ layout, displayCurrency, route, navigate }: LibraryPro
 							displayCurrency={displayCurrency}
 							onTagClick={tagClick}
 							onOpen={transcriptClick}
+							onDelete={deleteTranscript}
+							deleteBusyId={deleteBusyId}
 						/>
 					) : null}
 				</div>
@@ -461,11 +494,15 @@ function LibTable({
 	displayCurrency,
 	onTagClick,
 	onOpen,
+	onDelete,
+	deleteBusyId,
 }: {
 	rows: LibraryRow[];
 	displayCurrency: DisplayCurrency;
 	onTagClick: (tag: string) => void;
 	onOpen: (id: number) => void;
+	onDelete: (row: LibraryRow) => void;
+	deleteBusyId: number | null;
 }) {
 	return (
 		<div className="table-wrap">
@@ -499,6 +536,7 @@ function LibTable({
 								{row.is_partial ? (
 									<span className="chip warn">partial</span>
 								) : null}
+								<RowLinks row={row} onDelete={onDelete} busy={deleteBusyId === row.id} />
 							</td>
 							<td>
 								<TagList row={row} onTagClick={onTagClick} />
@@ -523,11 +561,15 @@ function LibFeed({
 	displayCurrency,
 	onTagClick,
 	onOpen,
+	onDelete,
+	deleteBusyId,
 }: {
 	rows: LibraryRow[];
 	displayCurrency: DisplayCurrency;
 	onTagClick: (tag: string) => void;
 	onOpen: (id: number) => void;
+	onDelete: (row: LibraryRow) => void;
+	deleteBusyId: number | null;
 }) {
 	return (
 		<div className="lib-feed">
@@ -546,7 +588,7 @@ function LibFeed({
 					<p className="feed-excerpt">{row.summary_excerpt}</p>
 					<RowMeta row={row} displayCurrency={displayCurrency} />
 					<TagList row={row} onTagClick={onTagClick} />
-					<RowLinks row={row} />
+					<RowLinks row={row} onDelete={onDelete} busy={deleteBusyId === row.id} />
 				</article>
 			))}
 		</div>
@@ -558,11 +600,15 @@ function LibCards({
 	displayCurrency,
 	onTagClick,
 	onOpen,
+	onDelete,
+	deleteBusyId,
 }: {
 	rows: LibraryRow[];
 	displayCurrency: DisplayCurrency;
 	onTagClick: (tag: string) => void;
 	onOpen: (id: number) => void;
+	onDelete: (row: LibraryRow) => void;
+	deleteBusyId: number | null;
 }) {
 	return (
 		<div className="lib-cards">
@@ -581,7 +627,7 @@ function LibCards({
 					<p className="feed-excerpt">{row.summary_excerpt}</p>
 					<TagList row={row} onTagClick={onTagClick} />
 					<RowMeta row={row} displayCurrency={displayCurrency} />
-					<RowLinks row={row} />
+					<RowLinks row={row} onDelete={onDelete} busy={deleteBusyId === row.id} />
 				</article>
 			))}
 		</div>
@@ -631,7 +677,15 @@ function RowMeta({
 	);
 }
 
-function RowLinks({ row }: { row: LibraryRow }) {
+function RowLinks({
+	row,
+	onDelete,
+	busy,
+}: {
+	row: LibraryRow;
+	onDelete: (row: LibraryRow) => void;
+	busy: boolean;
+}) {
 	return (
 		<div className="row-links">
 			<a href={`https://youtu.be/${row.video_id}`}>YouTube</a>
@@ -641,6 +695,14 @@ function RowLinks({ row }: { row: LibraryRow }) {
 			{row.transcript_shortlink !== null ? (
 				<a href={row.transcript_shortlink}>Transcript</a>
 			) : null}
+			<button
+				type="button"
+				className="link-button danger-link"
+				onClick={() => onDelete(row)}
+				disabled={busy}
+			>
+				{busy ? "Deleting" : "Delete"}
+			</button>
 		</div>
 	);
 }

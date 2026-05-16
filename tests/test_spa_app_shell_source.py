@@ -49,11 +49,13 @@ def test_transcript_page_fetches_json_and_renders_markdown_locally() -> None:
 
     assert 'fetch(`/transcripts/${id}`' in source
     assert 'fetch(`/transcripts/${id}/resummarize`' in source
+    assert "fetch(`/admin/transcripts/${record.id}`" in source
     assert 'headers: { Accept: "application/json" }' in source
     assert "function parseMd" in source
     assert "function inline" in source
     assert "navigator.clipboard.writeText" in source
     assert "Run summarizer" in source
+    assert "Delete transcript" in source
 
 
 def test_library_page_fetches_api_and_supports_layouts() -> None:
@@ -75,6 +77,7 @@ def test_library_page_fetches_api_and_supports_layouts() -> None:
     assert "window.setTimeout(() => setDebouncedQuery(query), 200)" in source
     assert 'fetch("/api/jobs/active"' in source
     assert 'fetch("/jobs"' in source
+    assert "fetch(`/admin/transcripts/${row.id}`" in source
     assert 'source: "manual"' in source
     assert "Queued job #" in source
     assert 'className="library-submit"' in source
@@ -83,11 +86,25 @@ def test_library_page_fetches_api_and_supports_layouts() -> None:
     assert "usePoll(poll, interval)" in source
     assert "chip warn" in source
     assert "partial" in source
+    assert "Delete transcript" in source
     assert "<colgroup>" in source
     assert 'className="lib-table-meta-col"' in source
     assert 'layout === "table"' in source
     assert 'layout === "feed"' in source
     assert 'layout === "cards"' in source
+
+
+def test_queue_and_job_detail_can_clear_failed_jobs() -> None:
+    queue = read("pages/Queue.tsx")
+    detail = read("pages/JobDetail.tsx")
+    failure_row = read("components/FailureRow.tsx")
+
+    assert "fetch(`/admin/jobs/${id}`" in queue
+    assert 'method: "DELETE"' in queue
+    assert "onDismiss={clearFailure}" in queue
+    assert "Clear" in failure_row
+    assert "fetch(`/admin/jobs/${job.job_id}`" in detail
+    assert "Clear failure" in detail
 
 
 def test_live_update_hooks_wrap_poll_and_eventsource_lifecycles() -> None:

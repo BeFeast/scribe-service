@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from scribe.api import routes as routes_module
 from scribe.config import settings
@@ -401,6 +401,69 @@ def test_admin_cancel_rejects_terminal_job(client, db_session):
     db_session.refresh(job)
     assert job.status == JobStatus.done
     assert job.error is None
+
+
+def test_admin_delete_transcript_removes_owning_job(client, db_session):
+    job, transcript = _seed_transcript(
+        db_session,
+        video_id="deleteone1",
+        title="Delete Me",
+        summary_md="done",
+        tags=["cleanup"],
+    )
+
+    resp = client.delete(f"/admin/transcripts/{transcript.id}")
+    assert resp.status_code == 204, resp.text
+
+    assert db_session.get(Transcript, transcript.id) is None
+    assert db_session.get(Job, job.id) is None
+    assert client.get("/api/library").json()["total"] == 0
+
+
+def test_admin_delete_transcript_rejects_active_job(client, db_session):
+    job, transcript = _seed_transcript(
+        db_session,
+        video_id="activekeep1",
+        title="Keep Active",
+        summary_md="done",
+    )
+    job.status = JobStatus.transcribing
+    db_session.commit()
+
+    resp = client.delete(f"/admin/transcripts/{transcript.id}")
+    assert resp.status_code == 409
+    assert "active" in resp.json()["detail"]
+
+    assert db_session.get(Transcript, transcript.id) is not None
+    assert db_session.get(Job, job.id) is not None
+
+
+def test_admin_delete_job_dismisses_failed_job(client, db_session):
+    job = Job(
+        url="https://youtu.be/clearfailed1",
+        video_id="clearfailed1",
+        status=JobStatus.failed,
+        error="test failure",
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    resp = client.delete(f"/admin/jobs/{job.id}")
+    assert resp.status_code == 204, resp.text
+
+    assert db_session.scalar(select(Job).where(Job.id == job.id)) is None
+    assert client.get("/api/jobs/recent-failures").json() == {"jobs": []}
+
+
+def test_admin_delete_job_rejects_non_failed_job(client, db_session):
+    job = Job(url="https://youtu.be/keepdone1", video_id="keepdone1", status=JobStatus.done)
+    db_session.add(job)
+    db_session.commit()
+
+    resp = client.delete(f"/admin/jobs/{job.id}")
+    assert resp.status_code == 409
+    assert "only failed jobs" in resp.json()["detail"]
+    assert db_session.get(Job, job.id) is not None
 
 
 def test_api_jobs_recent_failures(client, db_session):

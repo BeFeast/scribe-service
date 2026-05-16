@@ -20,7 +20,7 @@ export function formatUsdCost(
 	currency: DisplayCurrency,
 ): string {
 	if (value === null || value === undefined) {
-		return "cost n/a";
+		return "not billed";
 	}
 	const converted = value * usdRates[currency];
 	const fractionDigits = converted < 0.01 ? 4 : 2;

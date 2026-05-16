@@ -122,6 +122,26 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 		}
 	}
 
+	async function clearFailedJob() {
+		if (!job || job.status !== "failed") {
+			return;
+		}
+		setBusy("clear");
+		try {
+			const response = await fetch(`/admin/jobs/${job.job_id}`, {
+				method: "DELETE",
+			});
+			if (!response.ok) {
+				throw new Error(`clear returned ${response.status}`);
+			}
+			navigate({ page: "queue", params: {} });
+		} catch (clearError) {
+			setError(clearError instanceof Error ? clearError.message : "clear failed");
+		} finally {
+			setBusy(null);
+		}
+	}
+
 	async function copyJson() {
 		if (!job) {
 			return;
@@ -181,6 +201,14 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 							disabled={!TERMINAL.has(job.status) || busy !== null}
 						>
 							Retry
+						</button>
+						<button
+							type="button"
+							className="btn ghost"
+							onClick={clearFailedJob}
+							disabled={job.status !== "failed" || busy !== null}
+						>
+							{busy === "clear" ? "Clearing" : "Clear failure"}
 						</button>
 						<button type="button" className="btn ghost" onClick={copyJson}>
 							{copied ? "Copied" : "Copy JSON"}

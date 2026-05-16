@@ -1108,7 +1108,6 @@ a {
 .failure-row {
 	width: 100%;
 	text-align: left;
-	cursor: pointer;
 }
 
 .empty-queue,
@@ -1172,6 +1171,10 @@ a {
 .failure-action {
 	display: block;
 	width: 100%;
+	border: 0;
+	padding: 0;
+	background: transparent;
+	color: inherit;
 	cursor: pointer;
 	text-align: left;
 }
@@ -2100,6 +2103,18 @@ a {
 .link-button:hover,
 .tag-button:hover {
 	text-decoration: underline;
+}
+
+.danger-link,
+.danger-button {
+	color: var(--err);
+}
+
+.danger-link:disabled,
+.danger-button:disabled {
+	cursor: not-allowed;
+	opacity: 0.6;
+	text-decoration: none;
 }
 
 .tag-button {
