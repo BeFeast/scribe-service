@@ -13,6 +13,8 @@ export type FailureJob = {
 type FailureRowProps = {
 	job: FailureJob;
 	onOpen: (id: number) => void;
+	onDismiss: (id: number) => void;
+	busy: boolean;
 };
 
 function formatFailedAt(value: string) {
@@ -24,22 +26,32 @@ function formatFailedAt(value: string) {
 	}).format(new Date(value));
 }
 
-export function FailureRow({ job, onOpen }: FailureRowProps) {
+export function FailureRow({ job, onOpen, onDismiss, busy }: FailureRowProps) {
 	return (
-		<button
-			type="button"
-			className="failure-row"
-			onClick={() => onOpen(job.id)}
-		>
-			<div>
-				<p className="err-title">{job.title ?? job.video_id}</p>
-				<p className="err-msg">{job.error ?? "job failed"}</p>
-				<p className="err-meta">
-					job {job.id} &middot; {job.source ?? "direct"} &middot;{" "}
-					{formatFailedAt(job.failed_at)}
-				</p>
-			</div>
+		<div className="failure-row">
+			<button
+				type="button"
+				className="failure-action"
+				onClick={() => onOpen(job.id)}
+			>
+				<div>
+					<p className="err-title">{job.title ?? job.video_id}</p>
+					<p className="err-msg">{job.error ?? "Job failed."}</p>
+					<p className="err-meta">
+						job {job.id} &middot; {job.source ?? "direct"} &middot;{" "}
+						{formatFailedAt(job.failed_at)}
+					</p>
+				</div>
+			</button>
 			<StatusChip status="failed" />
-		</button>
+			<button
+				type="button"
+				className="btn ghost"
+				onClick={() => onDismiss(job.id)}
+				disabled={busy}
+			>
+				{busy ? "Clearing" : "Clear"}
+			</button>
+		</div>
 	);
 }

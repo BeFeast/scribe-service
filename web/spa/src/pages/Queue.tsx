@@ -22,6 +22,7 @@ export function Queue({ navigate }: QueueProps) {
 	const [failures, setFailures] = React.useState<FailureJob[]>([]);
 	const [error, setError] = React.useState<string | null>(null);
 	const [loading, setLoading] = React.useState(true);
+	const [clearingId, setClearingId] = React.useState<number | null>(null);
 
 	const load = React.useCallback(async (signal: AbortSignal) => {
 		try {
@@ -57,6 +58,24 @@ export function Queue({ navigate }: QueueProps) {
 		(id: number) => navigate({ page: "job", params: { id } }),
 		[navigate],
 	);
+	const clearFailure = React.useCallback(async (id: number) => {
+		if (clearingId !== null) {
+			return;
+		}
+		setClearingId(id);
+		setError(null);
+		try {
+			const response = await fetch(`/admin/jobs/${id}`, { method: "DELETE" });
+			if (!response.ok) {
+				throw new Error(`clear failed: ${response.status}`);
+			}
+			setFailures((current) => current.filter((job) => job.id !== id));
+		} catch (clearError) {
+			setError(clearError instanceof Error ? clearError.message : "clear failed");
+		} finally {
+			setClearingId(null);
+		}
+	}, [clearingId]);
 
 	return (
 		<section className="pane queue-page">
@@ -92,7 +111,13 @@ export function Queue({ navigate }: QueueProps) {
 				{failures.length > 0 ? (
 					<div className="failure-list">
 						{failures.map((job) => (
-							<FailureRow key={job.id} job={job} onOpen={openJob} />
+							<FailureRow
+								key={job.id}
+								job={job}
+								onOpen={openJob}
+								onDismiss={clearFailure}
+								busy={clearingId === job.id}
+							/>
 						))}
 					</div>
 				) : (

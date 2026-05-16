@@ -522,6 +522,29 @@ def get_transcript_detail(
     return _full(_require_transcript(transcript_id, session))
 
 
+@router.delete("/admin/transcripts/{transcript_id}", status_code=204)
+def admin_delete_transcript(transcript_id: int, session: Session = Depends(get_session)) -> Response:
+    """Remove a transcript and its owning job from the operator UI.
+
+    Transcripts are created one-to-one from jobs, so deleting only the transcript
+    would leave a confusing done job without its product. Deleting the owning job
+    lets SQLAlchemy cascade transcript + stage-event cleanup together.
+    """
+    transcript = session.scalar(select(Transcript).where(Transcript.id == transcript_id).with_for_update())
+    if transcript is None:
+        raise HTTPException(status_code=404, detail=f"transcript {transcript_id} not found")
+    job = session.get(Job, transcript.job_id)
+    if job is not None and job.status in _ACTIVE:
+        raise HTTPException(
+            status_code=409,
+            detail=f"job {job.id} is {job.status.value}; cannot delete an active transcript.",
+        )
+
+    session.delete(job if job is not None else transcript)
+    session.commit()
+    return Response(status_code=204)
+
+
 @router.get("/api/library", response_model=LibraryResponse)
 def api_library(
     response: Response,
@@ -1036,6 +1059,27 @@ def admin_retry_job(job_id: int, session: Session = Depends(get_session)) -> Job
         job_id=new_job.id, url=new_job.url, video_id=new_job.video_id,
         status=new_job.status.value, callback_url=new_job.callback_url,
     )
+
+
+@router.delete("/admin/jobs/{job_id}", status_code=204)
+def admin_delete_job(job_id: int, session: Session = Depends(get_session)) -> Response:
+    """Dismiss a failed job from operator queues.
+
+    Done jobs with transcripts should be removed via DELETE /admin/transcripts/{id}
+    so the UI cannot accidentally keep or drop only half of the job/transcript pair.
+    """
+    job = session.scalar(select(Job).where(Job.id == job_id).with_for_update())
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    if job.status != JobStatus.failed:
+        raise HTTPException(
+            status_code=409,
+            detail=f"job {job_id} is {job.status.value}; only failed jobs can be dismissed.",
+        )
+
+    session.delete(job)
+    session.commit()
+    return Response(status_code=204)
 
 
 # ----------------------------------------------------------------- ops endpoints
