@@ -23,7 +23,7 @@ export const DEFAULT_TWEAKS: Tweaks = {
 
 type TweakAction =
 	| { type: "theme"; value: ScribeTheme }
-	| { type: "replace"; value: { theme: ScribeTheme } };
+	| { type: "replace"; value: Tweaks };
 
 const themes = new Set<ScribeTheme>(["light", "dark"]);
 
@@ -53,10 +53,7 @@ function reducer(state: Tweaks, action: TweakAction): Tweaks {
 		case "theme":
 			return { ...state, theme: action.value };
 		case "replace":
-			return {
-				...DEFAULT_TWEAKS,
-				theme: action.value.theme,
-			};
+			return action.value;
 	}
 }
 
@@ -79,7 +76,7 @@ export function useTweaks() {
 		[],
 	);
 	const replaceTweaks = React.useCallback(
-		(value: { theme: ScribeTheme }) => dispatch({ type: "replace", value }),
+		(value: Tweaks) => dispatch({ type: "replace", value }),
 		[],
 	);
 
