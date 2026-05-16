@@ -104,8 +104,8 @@ def test_command_palette_covers_submit_search_navigation_and_a11y() -> None:
     assert 'source: "manual"' in source
     assert "Queued as job #" in source
     assert "Watch pipeline →" in source
-    assert "fetch(\"/api/library?limit=100\")" in source
-    assert "fetch(\"/api/jobs/active\")" in source
+    assert 'fetch("/api/library?limit=100"' in source
+    assert 'fetch("/api/jobs/active"' in source
     assert "Library" in source
     assert "Queue" in source
     assert "Ops" in source
@@ -113,6 +113,11 @@ def test_command_palette_covers_submit_search_navigation_and_a11y() -> None:
     assert 'aria-modal="true"' in source
     assert 'event.key === "Escape"' in source
     assert 'event.key === "Enter"' in source
+    assert "new AbortController()" in source
+    assert 'setQuery("")' in source
+    assert "isRecentSubmission" in source
+    assert 'submitState.state === "success"' in source
+    assert "selectedIndex - urlModeOffset" in source
 
 
 def test_tweaks_defaults_persist_and_apply_to_html_dataset() -> None:

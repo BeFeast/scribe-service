@@ -147,16 +147,36 @@ function readRecents(): RecentSubmission[] {
 			return [];
 		}
 		const parsed = JSON.parse(raw);
-		return Array.isArray(parsed) ? parsed.slice(0, MAX_RECENTS) : [];
+		if (!Array.isArray(parsed)) {
+			return [];
+		}
+		return parsed.filter(isRecentSubmission).slice(0, MAX_RECENTS);
 	} catch {
 		return [];
 	}
 }
 
 function writeRecents(recents: RecentSubmission[]): void {
-	localStorage.setItem(
-		RECENTS_KEY,
-		JSON.stringify(recents.slice(0, MAX_RECENTS)),
+	try {
+		localStorage.setItem(
+			RECENTS_KEY,
+			JSON.stringify(recents.slice(0, MAX_RECENTS)),
+		);
+	} catch {
+		// Recents are a convenience cache; job submission success should not depend on storage.
+	}
+}
+
+function isRecentSubmission(value: unknown): value is RecentSubmission {
+	if (typeof value !== "object" || value === null) {
+		return false;
+	}
+	const candidate = value as Partial<RecentSubmission>;
+	return (
+		typeof candidate.jobId === "number" &&
+		typeof candidate.videoId === "string" &&
+		typeof candidate.title === "string" &&
+		typeof candidate.createdAt === "string"
 	);
 }
 
@@ -260,18 +280,20 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 		if (!isOpen) {
 			return;
 		}
+		const controller = new AbortController();
+		setQuery("");
 		setRecents(readRecents());
 		setSubmitState({ state: "idle" });
 		setSelectedIndex(0);
 		window.setTimeout(() => inputRef.current?.focus(), 0);
 		void Promise.all([
-			fetch("/api/library?limit=100").then(
+			fetch("/api/library?limit=100", { signal: controller.signal }).then(
 				(response) => response.json() as Promise<LibraryResponse>,
 			),
-			fetch("/api/jobs/active").then(
+			fetch("/api/jobs/active", { signal: controller.signal }).then(
 				(response) => response.json() as Promise<ActiveJobsResponse>,
 			),
-			fetch("/api/ops").then(
+			fetch("/api/ops", { signal: controller.signal }).then(
 				(response) => response.json() as Promise<OpsResponse>,
 			),
 		])
@@ -280,11 +302,15 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 				setJobs(jobsBody.jobs ?? []);
 				setOps(opsBody);
 			})
-			.catch(() => {
+			.catch((error: unknown) => {
+				if (error instanceof DOMException && error.name === "AbortError") {
+					return;
+				}
 				setLibrary([]);
 				setJobs([]);
 				setOps(null);
 			});
+		return () => controller.abort();
 	}, [isOpen]);
 
 	const items = React.useMemo<PaletteItem[]>(() => {
@@ -333,7 +359,11 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 	}, [jobs, library, query, recents, videoId]);
 
 	const submitUrl = async () => {
-		if (videoId === null || submitState.state === "submitting") {
+		if (
+			videoId === null ||
+			submitState.state === "submitting" ||
+			submitState.state === "success"
+		) {
 			return;
 		}
 		setSubmitState({ state: "submitting" });
@@ -391,6 +421,7 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 		navigate(route("job", jobId));
 		close();
 	};
+	const urlModeOffset = videoId !== null ? 1 : 0;
 
 	const onKeyDown = (event: React.KeyboardEvent<HTMLDialogElement>) => {
 		if (event.key === "Escape") {
@@ -421,7 +452,7 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 		if (event.key === "ArrowDown") {
 			event.preventDefault();
 			setSelectedIndex((value) =>
-				Math.min(value + 1, Math.max(0, items.length - 1)),
+				Math.min(value + 1, Math.max(0, items.length - 1 + urlModeOffset)),
 			);
 			return;
 		}
@@ -432,10 +463,10 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 		}
 		if (event.key === "Enter") {
 			event.preventDefault();
-			if (videoId !== null) {
+			if (videoId !== null && selectedIndex === 0) {
 				void submitUrl();
 			} else {
-				openItem(items[selectedIndex]);
+				openItem(items[selectedIndex - urlModeOffset]);
 			}
 		}
 	};
@@ -470,7 +501,10 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 							type="button"
 							className="primary-button"
 							onClick={() => void submitUrl()}
-							disabled={submitState.state === "submitting"}
+							disabled={
+								submitState.state === "submitting" ||
+								submitState.state === "success"
+							}
 						>
 							{submitState.state === "submitting" ? "Submitting" : "Submit"}
 						</button>
@@ -498,8 +532,8 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 							type="button"
 							className="cmdk-item"
 							key={item.id}
-							aria-selected={index === selectedIndex}
-							onMouseEnter={() => setSelectedIndex(index)}
+							aria-selected={index + urlModeOffset === selectedIndex}
+							onMouseEnter={() => setSelectedIndex(index + urlModeOffset)}
 							onClick={() => openItem(item)}
 						>
 							<span>
