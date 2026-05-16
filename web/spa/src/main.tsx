@@ -4,7 +4,44 @@ import { createRoot } from "react-dom/client";
 import { DesignSystemPlayground } from "./DesignSystemPlayground";
 import "./styles.css";
 
+const locationChangeEvent = "scribe:locationchange";
+
+const notifyLocationChange = () => {
+	window.dispatchEvent(new Event(locationChangeEvent));
+};
+
+for (const method of ["pushState", "replaceState"] as const) {
+	const original = window.history[method];
+	window.history[method] = function updateHistory(
+		...args: Parameters<History[typeof method]>
+	) {
+		const result = original.apply(this, args);
+		notifyLocationChange();
+		return result;
+	};
+}
+
+function subscribePathname(callback: () => void) {
+	window.addEventListener("popstate", callback);
+	window.addEventListener(locationChangeEvent, callback);
+
+	return () => {
+		window.removeEventListener("popstate", callback);
+		window.removeEventListener(locationChangeEvent, callback);
+	};
+}
+
+function getPathname() {
+	return window.location.pathname;
+}
+
 function App() {
+	const pathname = React.useSyncExternalStore(
+		subscribePathname,
+		getPathname,
+		getPathname,
+	);
+
 	React.useEffect(() => {
 		const { dataset } = document.documentElement;
 		dataset.variant ??= "paper";
@@ -12,7 +49,7 @@ function App() {
 		dataset.density ??= "cozy";
 	}, []);
 
-	if (window.location.pathname === "/__spa__/__playground__") {
+	if (pathname === "/__spa__/__playground__") {
 		return <DesignSystemPlayground />;
 	}
 

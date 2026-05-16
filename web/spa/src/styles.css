@@ -272,21 +272,21 @@
 	--fs-base: 15px;
 }
 
-:where(html, .ds-scope)[data-density="compact"] {
+:where(html, .ds-scope)[data-variant][data-theme][data-density="compact"] {
 	--row-y: 0.45rem;
 	--row-gap: 0.4rem;
 	--pane-pad: 0.8rem;
 	--fs-base: 14px;
 }
 
-:where(html, .ds-scope)[data-density="cozy"] {
+:where(html, .ds-scope)[data-variant][data-theme][data-density="cozy"] {
 	--row-y: 0.65rem;
 	--row-gap: 0.55rem;
 	--pane-pad: 1rem;
 	--fs-base: 15px;
 }
 
-:where(html, .ds-scope)[data-density="comfy"] {
+:where(html, .ds-scope)[data-variant][data-theme][data-density="comfy"] {
 	--row-y: 0.9rem;
 	--row-gap: 0.75rem;
 	--pane-pad: 1.25rem;
