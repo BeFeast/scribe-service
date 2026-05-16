@@ -152,6 +152,65 @@ def test_api_library_filters_q_and_tag(client, db_session):
     assert by_tag["rows"][0]["video_id"] == "filter11111"
 
 
+def test_transcript_detail_json_keeps_full_body_for_spa(client, db_session):
+    _, transcript = _seed_transcript(
+        db_session,
+        video_id="detailjson1",
+        title="Detail JSON",
+        summary_md="# Heading\n\n1. **First**\n2. `Second`",
+        tags=["systems"],
+        vast_cost=0.125,
+    )
+
+    resp = client.get(
+        f"/transcripts/{transcript.id}",
+        headers={"Accept": "application/json"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == transcript.id
+    assert body["job_id"] == transcript.job_id
+    assert body["summary_md"].startswith("# Heading")
+    assert body["transcript_md"] == "transcript body"
+    assert body["vast_cost"] == 0.125
+
+
+def test_transcript_detail_json_allows_partial_summary(client, db_session):
+    _, transcript = _seed_transcript(
+        db_session,
+        video_id="detailpart1",
+        title="Detail Partial",
+        summary_md=None,
+    )
+
+    resp = client.get(
+        f"/transcripts/{transcript.id}",
+        headers={"Accept": "application/json"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["summary_md"] is None
+
+
+def test_transcript_detail_html_accept_redirects_to_spa(client, db_session):
+    _, transcript = _seed_transcript(
+        db_session,
+        video_id="detailhtml1",
+        title="Detail HTML",
+        summary_md="done",
+    )
+
+    resp = client.get(
+        f"/transcripts/{transcript.id}",
+        headers={"Accept": "text/html"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 307
+    assert resp.headers["location"] == f"/#/transcript/{transcript.id}"
+
+
 def test_api_jobs_active_empty(client):
     resp = client.get("/api/jobs/active")
     assert resp.status_code == 200

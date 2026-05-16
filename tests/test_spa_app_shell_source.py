@@ -19,6 +19,7 @@ def test_app_shell_files_exist() -> None:
         "hooks/useRoute.ts",
         "hooks/useTweaks.ts",
         "pages/Library.tsx",
+        "pages/Transcript.tsx",
     ):
         assert (SPA_SRC / path).is_file()
 
@@ -33,6 +34,20 @@ def test_app_mounts_shell_and_placeholder_router() -> None:
     assert "Library" in source
     assert "layout={tweaks.libraryLayout}" in source
     assert 'route.page === "library"' in source
+    assert 'route.page === "transcript"' in source
+    assert "<Transcript" in source
+
+
+def test_transcript_page_fetches_json_and_renders_markdown_locally() -> None:
+    source = read("pages/Transcript.tsx")
+
+    assert 'fetch(`/transcripts/${id}`' in source
+    assert 'fetch(`/transcripts/${id}/resummarize`' in source
+    assert 'headers: { Accept: "application/json" }' in source
+    assert "function parseMd" in source
+    assert "function inline" in source
+    assert "navigator.clipboard.writeText" in source
+    assert "Run summarizer" in source
 
 
 def test_library_page_fetches_api_and_supports_layouts() -> None:

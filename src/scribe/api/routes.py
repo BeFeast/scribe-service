@@ -1,10 +1,8 @@
 """HTTP API — submit jobs, poll status, browse transcripts, ops endpoints.
 
-Note: GET /transcripts/{id} is served as HTML by web/views.py (the worker
-mints the summary shortlink against that path). The JSON API here keeps the
-job endpoints, the transcript list, the raw .md endpoints, the admin
-re-summarize + retry endpoints, and the ops endpoints
-(/metrics, /admin/daily-report).
+GET /transcripts/{id} returns JSON for API consumers and redirects browser
+HTML requests to the SPA detail route. The raw .md endpoints, admin
+re-summarize + retry endpoints, and ops endpoints live here too.
 """
 from __future__ import annotations
 
@@ -43,6 +41,7 @@ from scribe.api.schemas import (
     PromptWrite,
     SystemSnapshot,
     TranscriptBrief,
+    TranscriptFull,
     WorkerPoolSnapshot,
 )
 from scribe.config import (
@@ -97,6 +96,24 @@ def _brief(t: Transcript) -> TranscriptBrief:
         duration_seconds=t.duration_seconds, lang=t.lang,
         summary_shortlink=t.summary_shortlink, transcript_shortlink=t.transcript_shortlink,
         created_at=t.created_at,
+    )
+
+
+def _full(t: Transcript) -> TranscriptFull:
+    return TranscriptFull(
+        id=t.id,
+        video_id=t.video_id,
+        title=t.title,
+        tags=t.tags,
+        duration_seconds=t.duration_seconds,
+        lang=t.lang,
+        summary_shortlink=t.summary_shortlink,
+        transcript_shortlink=t.transcript_shortlink,
+        created_at=t.created_at,
+        job_id=t.job_id,
+        transcript_md=t.transcript_md,
+        summary_md=t.summary_md,
+        vast_cost=t.vast_cost,
     )
 
 
@@ -412,6 +429,17 @@ def list_transcripts(
         stmt = stmt.where(Transcript.summary_md.is_not(None))
     rows = session.scalars(stmt.limit(limit).offset(offset)).all()
     return [_brief(t) for t in rows]
+
+
+@router.get("/transcripts/{transcript_id}", response_model=TranscriptFull)
+def get_transcript_detail(
+    transcript_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    if _accepts_html(request):
+        return RedirectResponse(url=f"/#/transcript/{transcript_id}", status_code=307)
+    return _full(_require_transcript(transcript_id, session))
 
 
 @router.get("/api/library", response_model=LibraryResponse)
