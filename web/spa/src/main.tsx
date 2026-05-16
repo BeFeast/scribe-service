@@ -7,6 +7,7 @@ import { TopBar } from "./components/TopBar";
 import { CMDK_OPEN_EVENT } from "./constants";
 import { useRoute } from "./hooks/useRoute";
 import { useTweaks } from "./hooks/useTweaks";
+import { Library } from "./pages/Library";
 import "./styles.css";
 
 function App() {
@@ -44,17 +45,11 @@ function App() {
 				<Sidebar route={route} navigate={navigate} />
 				<main className="content-pane">
 					{route.page === "library" ? (
-						<section className="placeholder-pane">
-							<p className="eyebrow">Library</p>
-							<h1>pages coming online — see issue #27</h1>
-							<p>
-								The persistent app shell is mounted. Route state, tags, pipeline
-								stats, and tweaks are live for the page work that follows.
-							</p>
-							{route.params.tag !== undefined ? (
-								<span className="active-filter">tag: {route.params.tag}</span>
-							) : null}
-						</section>
+						<Library
+							layout={tweaks.libraryLayout}
+							route={route}
+							navigate={navigate}
+						/>
 					) : (
 						<Placeholder page={route.page} id={route.params.id} />
 					)}
