@@ -1,5 +1,6 @@
 import React from "react";
 
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import type { DisplayCurrency } from "../lib/currency";
 import { formatUsdCost } from "../lib/currency";
 
@@ -320,6 +321,7 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 	const [error, setError] = React.useState<string | null>(null);
 	const [regenerating, setRegenerating] = React.useState(false);
 	const [deleting, setDeleting] = React.useState(false);
+	const [confirmDeleteOpen, setConfirmDeleteOpen] = React.useState(false);
 	const [regenerateError, setRegenerateError] = React.useState<string | null>(
 		null,
 	);
@@ -393,11 +395,7 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 	}, [id, load]);
 
 	const deleteTranscript = React.useCallback(async () => {
-		if (
-			record === null ||
-			deleting ||
-			!window.confirm(`Delete transcript "${record.title}"? This also removes its job record.`)
-		) {
+		if (record === null || deleting) {
 			return;
 		}
 		setDeleting(true);
@@ -409,6 +407,7 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 			if (!response.ok) {
 				throw new Error(`Delete failed (HTTP ${response.status})`);
 			}
+			setConfirmDeleteOpen(false);
 			navigate({ page: "library", params: {} });
 		} catch (caught) {
 			setError(caught instanceof Error ? caught.message : String(caught));
@@ -473,7 +472,7 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 				<button
 					type="button"
 					className="btn ghost danger-button"
-					onClick={deleteTranscript}
+					onClick={() => setConfirmDeleteOpen(true)}
 					disabled={deleting}
 				>
 					{deleting ? "Deleting" : "Delete"}
@@ -561,6 +560,18 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 				<span>vast_cost: {formatUsdCost(record.vast_cost, displayCurrency)}</span>
 				<span>created: {created}</span>
 			</footer>
+
+			{confirmDeleteOpen ? (
+				<ConfirmDialog
+					title="Delete transcript"
+					body={`Delete "${record.title}"? This also removes its job record.`}
+					confirmLabel="Delete"
+					busyLabel="Deleting"
+					busy={deleting}
+					onCancel={() => setConfirmDeleteOpen(false)}
+					onConfirm={deleteTranscript}
+				/>
+			) : null}
 		</section>
 	);
 }
