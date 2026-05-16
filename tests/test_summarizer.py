@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import fcntl
 import os
+import subprocess
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
-from scribe.pipeline import summarizer
+from scribe.pipeline import prompts, summarizer
 
 # ---------- _is_token_revoked --------------------------------------------------
 
@@ -126,3 +128,46 @@ def test_acquire_codex_lock_timeout_raises_when_contended(tmp_path):
 )
 def test_slugify(value: str, expected: str) -> None:
     assert summarizer._slugify(value) == expected
+
+
+def test_summarize_reads_active_prompt_version_each_invocation(tmp_path, monkeypatch):
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "transcript-summary.v1.md").write_text(
+        "Prompt V1\n\n## TL;DR\n\nUse v1.\n\n## Details\n\n{date} {transcript_slug}",
+        encoding="utf-8",
+    )
+    (prompts_dir / "transcript-summary.v2.md").write_text(
+        "Prompt V2\n\n## TL;DR\n\nUse v2.\n\n## Details\n\n{date} {transcript_slug}",
+        encoding="utf-8",
+    )
+    (prompts_dir / "transcript-summary.v3.md").write_text(
+        "Prompt V3\n\n## TL;DR\n\nUse v3.\n\n## Details\n\n{date} {transcript_slug}",
+        encoding="utf-8",
+    )
+    active = prompts_dir / "transcript-summary.active"
+    active.write_text("v1\n", encoding="utf-8")
+    monkeypatch.setattr(prompts, "PROMPTS_DIR", prompts_dir)
+    monkeypatch.setattr(summarizer.settings, "codex_lock_path", str(tmp_path / "codex.lock"))
+    monkeypatch.setattr(summarizer.settings, "codex_bin", "codex")
+    monkeypatch.setattr(summarizer.settings, "codex_model", "")
+
+    seen_prompts: list[str] = []
+
+    def _fake_run(cmd, *, input, text, capture_output, timeout):
+        assert text is True
+        assert capture_output is True
+        assert timeout == 600
+        seen_prompts.append(input)
+        out_path = Path(cmd[cmd.index("-o") + 1])
+        out_path.write_text("tags: [test]\n\nsummary", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(summarizer.subprocess, "run", _fake_run)
+
+    summarizer.summarize("Transcript", title="Title")
+    active.write_text("v2\n", encoding="utf-8")
+    summarizer.summarize("Transcript", title="Title")
+
+    assert "Prompt V1" in seen_prompts[0]
+    assert "Prompt V2" in seen_prompts[1]

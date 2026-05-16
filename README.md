@@ -44,7 +44,7 @@ src/scribe/
 ├── pipeline/    downloader, ffmpeg, whisper_client, summarizer, shortlinks
 ├── web/         views.py, templates/      ─ Jinja list + detail
 ├── worker/      loop.py                   ─ Postgres-backed queue worker (FOR UPDATE SKIP LOCKED)
-├── prompts/     transcript-summary.md     ─ default summariser prompt
+├── prompts/     transcript-summary.v*.md  ─ versioned summariser prompts + active selector
 ├── config.py    pydantic-settings
 └── main.py      FastAPI app + lifespan-started worker threads
 
@@ -84,6 +84,8 @@ curl http://localhost:13120/jobs/1
 | `GET` | `/transcripts` | List, paginated |
 | `GET` | `/transcripts/{id}/summary.md` | Raw summary Markdown |
 | `GET` | `/transcripts/{id}/transcript.md` | Raw transcript Markdown |
+| `GET` | `/api/prompts` | List summary prompt templates and active version |
+| `POST` | `/api/prompts/dry-run` | Re-summarise an existing transcript with a chosen prompt version without persisting |
 | `GET` | `/healthz` | Liveness |
 
 Web UI: `GET /` lists transcripts, `GET /transcripts/{id}` renders summary +
