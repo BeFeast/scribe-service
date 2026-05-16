@@ -30,9 +30,6 @@ RUNTIME_CONFIG: dict[str, RuntimeConfigSpec] = {
     "webhook_default": RuntimeConfigSpec("webhook_default", "url_optional"),
     "webhook_embed_transcript": RuntimeConfigSpec("webhook_embed_transcript", "bool"),
     "public_base_url": RuntimeConfigSpec("public_base_url", "url"),
-    "prompt_template_active_version": RuntimeConfigSpec(
-        "prompt_template_active_version", "prompt_version"
-    ),
 }
 
 _URL_ADAPTER = TypeAdapter(AnyHttpUrl)

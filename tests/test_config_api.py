@@ -159,6 +159,27 @@ def test_post_config_returns_restart_required_for_worker_concurrency(db_session)
         _clear_config(db_session)
 
 
+def test_post_config_rejects_invalid_existing_overlay_before_commit(db_session):
+    snapshot = _settings_snapshot()
+    sources = set(settings._runtime_sources)
+    try:
+        _clear_config(db_session)
+        settings.config_api_bearer_token = TEST_TOKEN
+        db_session.add(AppConfig(key="public_base_url", value="not a url"))
+        db_session.commit()
+        client = _client(db_session)
+
+        resp = client.post("/api/config", json={"daily_spend_cap_usd": 2.5})
+
+        assert resp.status_code == 400
+        row = db_session.get(AppConfig, "daily_spend_cap_usd")
+        assert row is None
+    finally:
+        app.dependency_overrides.pop(routes_module.get_session, None)
+        _restore_settings(snapshot, sources)
+        _clear_config(db_session)
+
+
 def test_post_config_rejects_read_only_key(db_session):
     snapshot = _settings_snapshot()
     sources = set(settings._runtime_sources)
@@ -232,3 +253,7 @@ def test_openapi_includes_config_endpoints():
     paths = client.get("/openapi.json").json()["paths"]
     assert "/api/config" in paths
     assert "/api/config/rotate-token" in paths
+
+
+def test_prompt_version_is_not_exposed_as_dead_runtime_config():
+    assert "prompt_template_active_version" not in RUNTIME_CONFIG

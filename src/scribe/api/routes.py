@@ -296,17 +296,24 @@ def update_config(
     if errors:
         raise HTTPException(status_code=400, detail=errors)
 
-    for key, value in parsed.items():
+    existing_rows = dict(session.execute(select(AppConfig.key, AppConfig.value)).all())
+    serialized_values = {
+        key: serialize_runtime_config_value(value)
+        for key, value in parsed.items()
+    }
+    try:
+        settings.runtime_overlay(existing_rows | serialized_values)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    for key, serialized in serialized_values.items():
         row = session.get(AppConfig, key)
-        serialized = serialize_runtime_config_value(value)
         if row is None:
             session.add(AppConfig(key=key, value=serialized))
         else:
             row.value = serialized
     session.commit()
-
-    rows = dict(session.execute(select(AppConfig.key, AppConfig.value)).all())
-    settings.runtime_overlay(rows)
     restart_required = [
         key for key in parsed if RUNTIME_CONFIG[key].restart_required
     ]
