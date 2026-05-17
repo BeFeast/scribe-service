@@ -52,7 +52,7 @@ def test_service_worker_reports_success_dedup_and_errors() -> None:
     source = read("service_worker.js")
 
     assert 'result.deduplicated ? "Already known to Scribe" : "Submitted to Scribe"' in source
-    assert "Scribe responded OK but returned no job ID." in source
+    assert 'throw new Error("Scribe responded OK but returned no job ID.");' in source
     assert 'const jobUrl = `${baseUrl}/__spa__/#/jobs/${result.job_id}`;' in source
     assert "chrome.notifications.onClicked.addListener" in source
     assert 'const NOTIFICATION_ICON = "icons/scribe-128.png";' in source

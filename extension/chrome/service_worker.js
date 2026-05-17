@@ -149,8 +149,7 @@ async function createJob(config, url) {
 
 async function notifySuccess(baseUrl, result) {
   if (!result.job_id) {
-    await notifyFailure("Scribe responded OK but returned no job ID.");
-    return;
+    throw new Error("Scribe responded OK but returned no job ID.");
   }
 
   const jobUrl = `${baseUrl}/__spa__/#/jobs/${result.job_id}`;
