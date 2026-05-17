@@ -12,6 +12,7 @@
   "options_page": "options.html",
   "permissions": [
     "activeTab",
+    "alarms",
     "contextMenus",
     "notifications",
     "storage"
@@ -27,6 +28,8 @@
     "https://*/*"
   ],
   "icons": {
-    "128": "icons/scribe.svg"
+    "16": "icons/scribe-16.png",
+    "48": "icons/scribe-48.png",
+    "128": "icons/scribe-128.png"
   }
 }

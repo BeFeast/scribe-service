@@ -30,6 +30,14 @@ async function saveOptions(event) {
     return;
   }
 
+  const originPattern = `${new URL(baseUrl).origin}/*`;
+  const granted = await chrome.permissions.request({ origins: [originPattern] });
+  if (!granted) {
+    status.textContent = `Chrome did not grant access to ${new URL(baseUrl).origin}.`;
+    status.style.color = "#b3261e";
+    return;
+  }
+
   await chrome.storage.sync.set({
     baseUrl,
     bearerToken: bearerTokenInput.value.trim(),

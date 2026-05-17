@@ -1,9 +1,11 @@
 const DEFAULT_BASE_URL = "https://scribe.oklabs.uk";
 const SOURCE = "chrome-extension";
 const NOTIFICATION_LINKS_KEY = "notificationLinks";
+const NOTIFICATION_ICON = "icons/scribe-128.png";
+const CLEAR_BADGE_ALARM = "clear-scribe-badge";
 
 const YOUTUBE_WATCH_URL = /^https:\/\/www\.youtube\.com\/watch(?:[?#]|$)/;
-const YOUTUBE_URL = /^https:\/\/(?:www\.)?(?:youtube\.com\/|youtu\.be\/)/;
+const YOUTUBE_URL = /^https:\/\/(?:[^/]+\.)?(?:youtube\.com\/|youtu\.be\/)/;
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
@@ -55,6 +57,12 @@ chrome.notifications.onClicked.addListener(async (notificationId) => {
   chrome.notifications.clear(notificationId);
 });
 
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === CLEAR_BADGE_ALARM) {
+    chrome.action.setBadgeText({ text: "" });
+  }
+});
+
 async function submitToScribe(url) {
   setBadge("...", "#5b6472");
 
@@ -98,10 +106,9 @@ async function ensureHostPermission(baseUrl) {
     return;
   }
 
-  const granted = await chrome.permissions.request({ origins: [originPattern] });
-  if (!granted) {
-    throw new Error(`Chrome has not granted access to ${new URL(baseUrl).origin}.`);
-  }
+  throw new Error(
+    `Chrome has not granted access to ${new URL(baseUrl).origin}. Open extension settings and save the Scribe base URL.`,
+  );
 }
 
 async function createJob(config, url) {
@@ -141,6 +148,11 @@ async function createJob(config, url) {
 }
 
 async function notifySuccess(baseUrl, result) {
+  if (!result.job_id) {
+    await notifyFailure("Scribe responded OK but returned no job ID.");
+    return;
+  }
+
   const jobUrl = `${baseUrl}/__spa__/#/jobs/${result.job_id}`;
   const title = result.deduplicated ? "Already known to Scribe" : "Submitted to Scribe";
   const status = result.status ? `Status: ${result.status}. ` : "";
@@ -153,7 +165,7 @@ async function notifySuccess(baseUrl, result) {
 
   chrome.notifications.create(notificationId, {
     type: "basic",
-    iconUrl: "icons/scribe.svg",
+    iconUrl: NOTIFICATION_ICON,
     title,
     message,
     priority: 1,
@@ -163,7 +175,7 @@ async function notifySuccess(baseUrl, result) {
 async function notifyFailure(message) {
   chrome.notifications.create(`scribe-error-${Date.now()}`, {
     type: "basic",
-    iconUrl: "icons/scribe.svg",
+    iconUrl: NOTIFICATION_ICON,
     title: "Scribe submit failed",
     message: truncate(message, 240),
     priority: 2,
@@ -192,7 +204,7 @@ function setBadge(text, color) {
   chrome.action.setBadgeText({ text });
   chrome.action.setBadgeBackgroundColor({ color });
   if (text !== "...") {
-    setTimeout(() => chrome.action.setBadgeText({ text: "" }), 3500);
+    chrome.alarms.create(CLEAR_BADGE_ALARM, { when: Date.now() + 3500 });
   }
 }
 
