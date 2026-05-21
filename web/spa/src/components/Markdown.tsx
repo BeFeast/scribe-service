@@ -10,7 +10,13 @@ type Block =
 type InlinePart =
 	| { type: "text"; text: string }
 	| { type: "code"; text: string }
-	| { type: "strong"; text: string };
+	| { type: "strong"; text: string }
+	| { type: "link"; text: string; href: string };
+
+const inlinePattern =
+	/(`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)\s]+\)|\*\*[^*]+\*\*)/g;
+const plainUrlPattern = /https?:\/\/[^\s<>'"]+/g;
+const trailingUrlPunctuation = ".,;:!?)]}";
 
 export function Markdown({ body }: { body: string }) {
 	const blocks = React.useMemo(() => parseBlocks(body), [body]);
@@ -144,36 +150,41 @@ function renderInline(text: string): React.ReactNode[] {
 	const parts: InlinePart[] = [];
 	let rest = text;
 	while (rest.length > 0) {
-		const codeStart = rest.indexOf("`");
-		const strongStart = rest.indexOf("**");
-		const starts = [codeStart, strongStart].filter((value) => value >= 0);
-		const next = starts.length > 0 ? Math.min(...starts) : -1;
+		const match = inlinePattern.exec(rest);
+		const next = match?.index ?? -1;
 		if (next < 0) {
-			parts.push({ type: "text", text: rest });
+			pushTextParts(parts, rest);
 			break;
 		}
 		if (next > 0) {
-			parts.push({ type: "text", text: rest.slice(0, next) });
+			pushTextParts(parts, rest.slice(0, next));
 			rest = rest.slice(next);
+			inlinePattern.lastIndex = 0;
 			continue;
 		}
 		if (rest.startsWith("`")) {
-			const end = rest.indexOf("`", 1);
-			if (end < 0) {
-				parts.push({ type: "text", text: rest });
-				break;
-			}
-			parts.push({ type: "code", text: rest.slice(1, end) });
-			rest = rest.slice(end + 1);
+			const value = match?.[0] ?? "";
+			parts.push({ type: "code", text: value.slice(1, -1) });
+			rest = rest.slice(value.length);
+			inlinePattern.lastIndex = 0;
 			continue;
 		}
-		const end = rest.indexOf("**", 2);
-		if (end < 0) {
-			parts.push({ type: "text", text: rest });
-			break;
+		if (rest.startsWith("[")) {
+			const value = match?.[0] ?? "";
+			const link = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(value);
+			if (link === null) {
+				pushTextParts(parts, value);
+			} else {
+				parts.push({ type: "link", text: link[1], href: link[2] });
+			}
+			rest = rest.slice(value.length);
+			inlinePattern.lastIndex = 0;
+			continue;
 		}
-		parts.push({ type: "strong", text: rest.slice(2, end) });
-		rest = rest.slice(end + 2);
+		const value = match?.[0] ?? "";
+		parts.push({ type: "strong", text: value.slice(2, -2) });
+		rest = rest.slice(value.length);
+		inlinePattern.lastIndex = 0;
 	}
 
 	let nextKey = 0;
@@ -185,10 +196,59 @@ function renderInline(text: string): React.ReactNode[] {
 				return <code key={key}>{part.text}</code>;
 			case "strong":
 				return <strong key={key}>{part.text}</strong>;
+			case "link":
+				return (
+					<a
+						key={key}
+						href={part.href}
+						target="_blank"
+						rel="noopener noreferrer"
+					>
+						{part.text}
+					</a>
+				);
 			case "text":
 				return <React.Fragment key={key}>{part.text}</React.Fragment>;
 		}
 	});
+}
+
+function pushTextParts(parts: InlinePart[], text: string) {
+	let cursor = 0;
+	for (const match of text.matchAll(plainUrlPattern)) {
+		if (match.index > cursor) {
+			parts.push({ type: "text", text: text.slice(cursor, match.index) });
+		}
+		const [href, trailing] = splitTrailingUrlPunctuation(match[0]);
+		parts.push({ type: "link", text: href, href });
+		if (trailing.length > 0) {
+			parts.push({ type: "text", text: trailing });
+		}
+		cursor = match.index + match[0].length;
+	}
+	if (cursor < text.length) {
+		parts.push({ type: "text", text: text.slice(cursor) });
+	}
+}
+
+function splitTrailingUrlPunctuation(rawUrl: string): [string, string] {
+	let href = rawUrl;
+	let trailing = "";
+	while (
+		href.length > 0 &&
+		trailingUrlPunctuation.includes(href[href.length - 1] ?? "")
+	) {
+		if (href.endsWith(")") && count(href, "(") >= count(href, ")")) {
+			break;
+		}
+		trailing = `${href[href.length - 1]}${trailing}`;
+		href = href.slice(0, -1);
+	}
+	return [href, trailing];
+}
+
+function count(text: string, needle: string): number {
+	return text.split(needle).length - 1;
 }
 
 function blockKey(kind: string, text: string, index: number): string {
