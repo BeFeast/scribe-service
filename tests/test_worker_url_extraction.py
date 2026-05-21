@@ -88,9 +88,10 @@ def test_process_job_records_extraction_failure_message(db_session, monkeypatch)
 def test_process_job_dedups_after_non_youtube_extraction(db_session, monkeypatch, tmp_path):
     from scribe.worker import loop as worker_loop
 
+    video_id = "twitter:2057105488165163200"
     done_job = Job(
-        url="https://twitter.com/user/status/2057105488165163198",
-        video_id="twitter:2057105488165163198",
+        url="https://twitter.com/user/status/2057105488165163200",
+        video_id=video_id,
         status=JobStatus.done,
     )
     db_session.add(done_job)
@@ -98,7 +99,7 @@ def test_process_job_dedups_after_non_youtube_extraction(db_session, monkeypatch
     db_session.add(
         Transcript(
             job_id=done_job.id,
-            video_id="twitter:2057105488165163198",
+            video_id=video_id,
             title="existing",
             transcript_md="hello",
             summary_md="world",
@@ -107,7 +108,7 @@ def test_process_job_dedups_after_non_youtube_extraction(db_session, monkeypatch
     audio = tmp_path / "audio.m4a"
     audio.write_text("audio", encoding="utf-8")
     job = Job(
-        url="https://x.com/i/status/2057105488165163198",
+        url="https://x.com/i/status/2057105488165163200",
         video_id="pending:def",
         status=JobStatus.downloading,
     )
@@ -120,7 +121,7 @@ def test_process_job_dedups_after_non_youtube_extraction(db_session, monkeypatch
         lambda *_a, **_k: DownloadResult(
             audio_path=audio,
             title="duplicate",
-            video_id="twitter:2057105488165163198",
+            video_id=video_id,
             duration_seconds=12,
         ),
     )
@@ -133,7 +134,7 @@ def test_process_job_dedups_after_non_youtube_extraction(db_session, monkeypatch
     worker_loop.process_job(db_session, job)
 
     db_session.refresh(job)
-    transcript_count = db_session.query(Transcript).filter_by(video_id="twitter:2057105488165163198").count()
+    transcript_count = db_session.query(Transcript).filter_by(video_id=video_id).count()
     assert job.status == JobStatus.done
-    assert job.video_id == "twitter:2057105488165163198"
+    assert job.video_id == video_id
     assert transcript_count == 1
