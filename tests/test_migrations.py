@@ -149,6 +149,10 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
             "jobs.title missing after upgrade head — "
             "revision a1b2c3d4e5f6 likely silent-noop'd"
         )
+        assert {"owner_subject", "owner_email", "owner_display_name"} <= jobs_cols, (
+            "jobs owner columns missing after upgrade head — "
+            "revision f6a7b8c9d012 likely silent-noop'd"
+        )
 
         transcripts_cols = _column_names(eng, "transcripts")
         assert "vast_cost" in transcripts_cols, (
@@ -158,6 +162,10 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
         assert "short_description" in transcripts_cols, (
             "transcripts.short_description missing after upgrade head — "
             "revision f3a9b7c2d104 likely silent-noop'd"
+        )
+        assert {"owner_subject", "owner_email", "owner_display_name"} <= transcripts_cols, (
+            "transcripts owner columns missing after upgrade head — "
+            "revision f6a7b8c9d012 likely silent-noop'd"
         )
 
         # Revision a7c1d3e4f201 relaxes transcripts.summary_md to nullable.
@@ -189,5 +197,47 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
         # version; either way no app tables must remain.
         remaining = _table_names(eng) - {"alembic_version"}
         assert remaining == set(), f"downgrade base left tables behind: {remaining}"
+    finally:
+        eng.dispose()
+
+
+def test_owner_migration_backfills_existing_rows_from_app_config(fresh_db_url):
+    from alembic import command
+
+    cfg = _alembic_config(fresh_db_url)
+    eng = create_engine(fresh_db_url, future=True)
+    try:
+        command.upgrade(cfg, "a1b2c3d4e5f6")
+        with eng.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO jobs (id, url, video_id, status) "
+                    "VALUES (1, 'https://youtu.be/backfillmig1', 'backfillmig1', 'done')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO transcripts "
+                    "(id, job_id, video_id, title, transcript_md, summary_md) "
+                    "VALUES (1, 1, 'backfillmig1', 'Backfill', 'body', 'summary')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO app_config (key, value) VALUES "
+                    "('default_owner_subject', 'default-owner'), "
+                    "('default_owner_email', 'default@example.test')"
+                )
+            )
+
+        command.upgrade(cfg, "head")
+
+        with eng.connect() as conn:
+            job_owner = conn.execute(text("SELECT owner_subject, owner_email FROM jobs WHERE id = 1")).one()
+            transcript_owner = conn.execute(
+                text("SELECT owner_subject, owner_email FROM transcripts WHERE id = 1")
+            ).one()
+        assert tuple(job_owner) == ("default-owner", "default@example.test")
+        assert tuple(transcript_owner) == ("default-owner", "default@example.test")
     finally:
         eng.dispose()

@@ -49,6 +49,8 @@ def test_get_config_uses_env_fallback(db_session):
         assert resp.status_code == 200
         item = resp.json()["config"]["daily_spend_cap_usd"]
         assert item == {"value": 12.5, "source": "env", "mutable": True}
+        owner = resp.json()["config"]["default_owner_email"]
+        assert owner == {"value": settings.default_owner_email, "source": "env", "mutable": True}
     finally:
         app.dependency_overrides.pop(routes_module.get_session, None)
         _restore_settings(snapshot, sources)
@@ -97,6 +99,18 @@ def test_post_config_sparse_update_preserves_other_rows(db_session):
         assert body["config"]["daily_spend_cap_usd"]["source"] == "db"
         assert body["config"]["public_base_url"]["value"] == "https://old.example.test/"
         assert body["config"]["public_base_url"]["source"] == "db"
+
+        owner_resp = client.post(
+            "/api/config",
+            json={
+                "default_owner_email": " default@example.test ",
+                "default_owner_subject": " user_default ",
+            },
+        )
+        assert owner_resp.status_code == 200
+        owner_body = owner_resp.json()["config"]
+        assert owner_body["default_owner_email"]["value"] == "default@example.test"
+        assert owner_body["default_owner_subject"]["value"] == "user_default"
     finally:
         app.dependency_overrides.pop(routes_module.get_session, None)
         _restore_settings(snapshot, sources)

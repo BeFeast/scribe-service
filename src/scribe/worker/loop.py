@@ -198,23 +198,21 @@ def recover_interrupted_jobs(session) -> int:
     return len(jobs)
 
 
-def _find_partial_transcript(session, video_id: str) -> Transcript | None:
+def _find_partial_transcript(session, video_id: str, owner_subject: str | None = None) -> Transcript | None:
     """Return the most recent partial transcript (whisper done, summary missing)
     for this video_id, or None."""
-    return session.scalar(
-        select(Transcript)
-        .where(Transcript.video_id == video_id, Transcript.summary_md.is_(None))
-        .order_by(Transcript.id.desc())
-    )
+    stmt = select(Transcript).where(Transcript.video_id == video_id, Transcript.summary_md.is_(None))
+    if owner_subject:
+        stmt = stmt.where(Transcript.owner_subject == owner_subject)
+    return session.scalar(stmt.order_by(Transcript.id.desc()))
 
 
-def _find_done_transcript(session, video_id: str) -> Transcript | None:
+def _find_done_transcript(session, video_id: str, owner_subject: str | None = None) -> Transcript | None:
     """Return the most recent completed transcript for this resolved video key."""
-    return session.scalar(
-        select(Transcript)
-        .where(Transcript.video_id == video_id, Transcript.summary_md.is_not(None))
-        .order_by(Transcript.id.desc())
-    )
+    stmt = select(Transcript).where(Transcript.video_id == video_id, Transcript.summary_md.is_not(None))
+    if owner_subject:
+        stmt = stmt.where(Transcript.owner_subject == owner_subject)
+    return session.scalar(stmt.order_by(Transcript.id.desc()))
 
 
 def _mint_shortlinks(transcript: Transcript) -> None:
@@ -260,10 +258,13 @@ def process_job(session, job: Job) -> None:
         try:
             # Resume path: a prior job already produced the transcript but its
             # summary step failed. Skip download+ffmpeg+whisper and just re-summarize.
-            partial = _find_partial_transcript(session, job.video_id)
+            partial = _find_partial_transcript(session, job.video_id, job.owner_subject)
             if partial is not None:
                 job_log.info("resuming partial transcript", extra={"transcript_id": partial.id, "stage": "resume"})
                 partial.job_id = job.id
+                partial.owner_subject = job.owner_subject
+                partial.owner_email = job.owner_email
+                partial.owner_display_name = job.owner_display_name
                 _summarize_and_finalize(session, job, partial, partial.title, promoted=True)
                 job_log.info("job done (resumed)", extra={"transcript_id": partial.id, "stage": "done"})
                 return
@@ -282,7 +283,7 @@ def process_job(session, job: Job) -> None:
                 job_log.info("download done", extra={"title": dl.title, "stage": "download"})
 
                 if was_pending_key:
-                    done = _find_done_transcript(session, dl.video_id)
+                    done = _find_done_transcript(session, dl.video_id, job.owner_subject)
                     if done is not None:
                         job_log.info(
                             "deduplicated after extraction",
@@ -292,10 +293,13 @@ def process_job(session, job: Job) -> None:
                         _deliver_webhook(session, job)
                         return
 
-                partial = _find_partial_transcript(session, dl.video_id)
+                partial = _find_partial_transcript(session, dl.video_id, job.owner_subject)
                 if partial is not None:
                     job_log.info("resuming partial transcript", extra={"transcript_id": partial.id, "stage": "resume"})
                     partial.job_id = job.id
+                    partial.owner_subject = job.owner_subject
+                    partial.owner_email = job.owner_email
+                    partial.owner_display_name = job.owner_display_name
                     _summarize_and_finalize(session, job, partial, partial.title, promoted=True)
                     job_log.info("job done (resumed)", extra={"transcript_id": partial.id, "stage": "done"})
                     return
@@ -332,6 +336,9 @@ def process_job(session, job: Job) -> None:
                     duration_seconds=int(duration) if duration else None,
                     lang=tr.detected_language,
                     vast_cost=tr.vast_cost if tr.vast_cost is not None else None,
+                    owner_subject=job.owner_subject,
+                    owner_email=job.owner_email,
+                    owner_display_name=job.owner_display_name,
                 )
                 session.add(transcript)
                 session.commit()

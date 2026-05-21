@@ -54,6 +54,9 @@ class Job(Base):
     # Optional webhook target — scribe POSTs the final JobView JSON to
     # this URL on terminal status (done|failed). NULL = poll-only client.
     callback_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    owner_subject: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    owner_email: Mapped[str | None] = mapped_column(Text, nullable=True)
+    owner_display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -97,6 +100,9 @@ class Transcript(Base):
     # whisper_client.TranscribeResult.vast_cost; NULL when whisper ran
     # outside the metered path (warm pool, mock, etc).
     vast_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
+    owner_subject: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    owner_email: Mapped[str | None] = mapped_column(Text, nullable=True)
+    owner_display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary_shortlink: Mapped[str | None] = mapped_column(Text, nullable=True)
     transcript_shortlink: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

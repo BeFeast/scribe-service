@@ -44,8 +44,17 @@ def _seed_transcript(
     created_at: dt.datetime | None = None,
     vast_cost: float | None = None,
     url: str | None = None,
+    owner_subject: str | None = None,
+    owner_email: str | None = None,
 ):
-    job = Job(url=url or f"https://youtu.be/{video_id}", video_id=video_id, status=JobStatus.done)
+    job = Job(
+        url=url or f"https://youtu.be/{video_id}",
+        video_id=video_id,
+        status=JobStatus.done,
+        title=title,
+        owner_subject=owner_subject,
+        owner_email=owner_email,
+    )
     session.add(job)
     session.flush()
     transcript = Transcript(
@@ -59,6 +68,8 @@ def _seed_transcript(
         duration_seconds=123,
         lang="en",
         vast_cost=vast_cost,
+        owner_subject=owner_subject,
+        owner_email=owner_email,
         summary_shortlink="https://go.example/s",
         transcript_shortlink="https://go.example/t",
     )
@@ -292,6 +303,63 @@ def test_transcript_detail_html_accept_redirects_to_spa(client, db_session):
 
     assert resp.status_code == 307
     assert resp.headers["location"] == f"/#/transcript/{transcript.id}"
+
+
+def test_api_library_filters_to_current_owner(client, db_session):
+    _seed_transcript(
+        db_session,
+        video_id="ownerlib111",
+        title="Mine",
+        summary_md="mine",
+        owner_subject="owner-current",
+        owner_email="current@example.test",
+    )
+    _seed_transcript(
+        db_session,
+        video_id="ownerlib222",
+        title="Other",
+        summary_md="other",
+        owner_subject="owner-other",
+        owner_email="other@example.test",
+    )
+
+    resp = client.get(
+        "/api/library",
+        headers={"Authorization": "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJvd25lci1jdXJyZW50In0."},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["rows"][0]["video_id"] == "ownerlib111"
+
+
+def test_api_library_shows_default_owner_backfilled_rows(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "default_owner_subject", "default-owner")
+    monkeypatch.setattr(settings, "default_owner_email", "default@example.test")
+    monkeypatch.setattr(settings, "machine_bearer_token", "machine-token")
+    _seed_transcript(
+        db_session,
+        video_id="backfill111",
+        title="Backfilled",
+        summary_md="visible",
+        owner_subject="default-owner",
+        owner_email="default@example.test",
+    )
+    _seed_transcript(
+        db_session,
+        video_id="backfill222",
+        title="Other",
+        summary_md="hidden",
+        owner_subject="other-owner",
+    )
+
+    resp = client.get("/api/library", headers={"Authorization": "Bearer machine-token"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["rows"][0]["video_id"] == "backfill111"
 
 
 def test_api_jobs_active_empty(client):

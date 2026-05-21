@@ -24,6 +24,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from scribe.api.auth import current_owner
 from scribe.api.routes import get_session
 from scribe.config import settings
 from scribe.db.models import Transcript
@@ -107,6 +108,9 @@ def classic_index(
     tag: str | None = Query(None, description="Exact tag match"),
 ) -> HTMLResponse:
     stmt = _build_filter(select(Transcript), q=q, tag=tag).order_by(Transcript.id.desc()).limit(_LIST_LIMIT)
+    owner = current_owner(request)
+    if owner is not None:
+        stmt = stmt.where(Transcript.owner_subject == owner.subject)
     rows = session.scalars(stmt).all()
     return _TEMPLATES.TemplateResponse(
         request,
@@ -141,6 +145,9 @@ def feed(
     tag: str | None = Query(None, description="Optional tag filter"),
 ) -> Response:
     stmt = _build_filter(select(Transcript), q=None, tag=tag).order_by(Transcript.id.desc()).limit(_FEED_LIMIT)
+    owner = current_owner(request)
+    if owner is not None:
+        stmt = stmt.where(Transcript.owner_subject == owner.subject)
     rows = session.scalars(stmt).all()
     base = html.escape(settings.public_base_url.rstrip("/"))
     title_suffix = f" — tag:{tag}" if tag else ""
