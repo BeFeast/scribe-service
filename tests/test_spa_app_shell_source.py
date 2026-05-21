@@ -69,6 +69,9 @@ def test_transcript_page_fetches_json_and_renders_markdown_locally() -> None:
     assert "navigator.clipboard.writeText" in source
     assert "Run summarizer" in source
     assert "Delete transcript" in source
+    assert "record.source_url" in source
+    assert "record.source_label" in source
+    assert "youtu.be" not in source
 
 
 def test_library_page_fetches_api_and_supports_layouts() -> None:
@@ -105,6 +108,8 @@ def test_library_page_fetches_api_and_supports_layouts() -> None:
     assert 'layout === "table"' in source
     assert 'layout === "feed"' in source
     assert 'layout === "cards"' in source
+    assert "row.source_url" in source
+    assert "row.source_label" in source
 
 
 def test_queue_and_job_detail_can_clear_failed_jobs() -> None:
@@ -118,6 +123,9 @@ def test_queue_and_job_detail_can_clear_failed_jobs() -> None:
     assert "Clear" in failure_row
     assert "fetch(`/admin/jobs/${job.job_id}`" in detail
     assert "Clear failure" in detail
+    assert "job.source_url" in detail
+    assert "job.source_label" in detail
+    assert "YouTube" not in detail
 
 
 def test_live_update_hooks_wrap_poll_and_eventsource_lifecycles() -> None:

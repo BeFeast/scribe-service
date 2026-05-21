@@ -25,6 +25,8 @@ class TranscriptBrief(BaseModel):
     lang: str | None = None
     summary_shortlink: str | None = None
     transcript_shortlink: str | None = None
+    source_url: str | None = None
+    source_label: str | None = None
     created_at: dt.datetime
 
 
@@ -48,6 +50,8 @@ class JobView(BaseModel):
     job_id: int
     url: str
     video_id: str
+    source_url: str | None = None
+    source_label: str | None = None
     status: str
     error: str | None = None
     deduplicated: bool = False
@@ -103,6 +107,8 @@ class LibraryRow(BaseModel):
     created_at: dt.datetime
     summary_shortlink: str | None = None
     transcript_shortlink: str | None = None
+    source_url: str | None = None
+    source_label: str | None = None
     summary_excerpt: str
     is_partial: bool
 
@@ -118,6 +124,8 @@ class ActiveJobView(BaseModel):
     id: int
     video_id: str
     url: str
+    source_url: str | None = None
+    source_label: str | None = None
     title: str | None = None
     status: str
     source: str | None = None

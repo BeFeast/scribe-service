@@ -43,8 +43,9 @@ def _seed_transcript(
     tags: list[str] | None = None,
     created_at: dt.datetime | None = None,
     vast_cost: float | None = None,
+    url: str | None = None,
 ):
-    job = Job(url=f"https://youtu.be/{video_id}", video_id=video_id, status=JobStatus.done)
+    job = Job(url=url or f"https://youtu.be/{video_id}", video_id=video_id, status=JobStatus.done)
     session.add(job)
     session.flush()
     transcript = Transcript(
@@ -136,6 +137,21 @@ def test_api_library_happy_path_excerpts_and_paginates(client, db_session):
     assert second["title"] == "Library One"
     assert second["summary_excerpt"] == "Intentional fluent card description."
     assert second["vast_cost"] == 0.0184
+
+
+def test_api_library_includes_provider_aware_source_link_for_x(client, db_session):
+    _seed_transcript(
+        db_session,
+        video_id="xlib123",
+        title="X Library",
+        summary_md="done",
+        url="https://x.com/example/status/123",
+    )
+
+    row = client.get("/api/library").json()["rows"][0]
+
+    assert row["source_label"] == "Twitter/X"
+    assert row["source_url"] == "https://x.com/example/status/123"
 
 
 def test_api_library_fallback_excerpt_uses_sentence_boundary(client, db_session):
