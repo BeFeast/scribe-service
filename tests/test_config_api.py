@@ -1,11 +1,20 @@
 """Tests for DB-backed runtime config overlay endpoints."""
+
 from __future__ import annotations
 
+import datetime as dt
+import json
+
+import jwt
+import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
+from jwt.algorithms import RSAAlgorithm
 from pydantic import ValidationError
 from sqlalchemy import delete
 
 from scribe.api import routes as routes_module
+from scribe.api.auth import clear_jwks_cache
 from scribe.config import RUNTIME_CONFIG, RuntimeConfigSpec, Settings, parse_runtime_config_value, settings
 from scribe.db.models import AppConfig
 from scribe.main import app
@@ -29,6 +38,10 @@ def _settings_snapshot() -> dict[str, object]:
     snapshot["config_api_bearer_token"] = settings.config_api_bearer_token
     snapshot["trusted_cidrs"] = settings.trusted_cidrs
     snapshot["machine_bearer_token"] = settings.machine_bearer_token
+    snapshot["auth_allowed_emails"] = settings.auth_allowed_emails
+    snapshot["auth_clerk_issuer"] = settings.auth_clerk_issuer
+    snapshot["auth_clerk_jwks_url"] = settings.auth_clerk_jwks_url
+    snapshot["auth_clerk_jwks_json"] = settings.auth_clerk_jwks_json
     return snapshot
 
 
@@ -281,9 +294,7 @@ def test_post_config_rejects_read_only_key(db_session):
     try:
         _clear_config(db_session)
         settings.config_api_bearer_token = TEST_TOKEN
-        RUNTIME_CONFIG["bot_wall_retry"] = RuntimeConfigSpec(
-            "bot_wall_retry", "bool", mutable=False
-        )
+        RUNTIME_CONFIG["bot_wall_retry"] = RuntimeConfigSpec("bot_wall_retry", "bool", mutable=False)
         client = _client(db_session)
 
         resp = client.post("/api/config", json={"bot_wall_retry": True})
@@ -333,6 +344,107 @@ def test_config_allows_access_when_bearer_token_unset(db_session):
         app.dependency_overrides.pop(routes_module.get_session, None)
         _restore_settings(snapshot, sources)
         _clear_config(db_session)
+
+
+CLERK_ISSUER = "https://clerk.example.test"
+
+
+@pytest.fixture()
+def clerk_keys():
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    wrong_private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
+    public_jwk.update({"kid": "local-test-key", "alg": "RS256", "use": "sig"})
+    return private_key, wrong_private_key, {"keys": [public_jwk]}
+
+
+@pytest.fixture()
+def clerk_auth(clerk_keys):
+    snapshot = _settings_snapshot()
+    sources = set(settings._runtime_sources)
+    _, _, jwks = clerk_keys
+    settings.config_api_bearer_token = ""
+    settings.trusted_cidrs = "10.10.0.0/16"
+    settings.auth_allowed_emails = "allowed@example.test"
+    settings.auth_clerk_issuer = CLERK_ISSUER
+    settings.auth_clerk_jwks_url = ""
+    settings.auth_clerk_jwks_json = json.dumps(jwks)
+    clear_jwks_cache()
+    try:
+        yield
+    finally:
+        clear_jwks_cache()
+        _restore_settings(snapshot, sources)
+
+
+def _clerk_token(
+    private_key,
+    *,
+    email: str | None = "allowed@example.test",
+    issuer: str = CLERK_ISSUER,
+    expires_delta: dt.timedelta = dt.timedelta(minutes=5),
+) -> str:
+    now = dt.datetime.now(dt.UTC)
+    claims: dict[str, object] = {
+        "iss": issuer,
+        "sub": "user_local_fixture",
+        "iat": now,
+        "exp": now + expires_delta,
+    }
+    if email is not None:
+        claims["email"] = email
+    return jwt.encode(claims, private_key, algorithm="RS256", headers={"kid": "local-test-key"})
+
+
+def _post_config_with_clerk(db_session, token: str):
+    _clear_config(db_session)
+    app.dependency_overrides[routes_module.get_session] = lambda: db_session
+    try:
+        return TestClient(app, client=("203.0.113.10", 50000)).post(
+            "/api/config",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"daily_spend_cap_usd": 1.0},
+        )
+    finally:
+        app.dependency_overrides.pop(routes_module.get_session, None)
+        _clear_config(db_session)
+
+
+def test_config_accepts_allowed_clerk_user(db_session, clerk_auth, clerk_keys):
+    private_key, _, _ = clerk_keys
+    token = _clerk_token(private_key)
+    resp = _post_config_with_clerk(db_session, token)
+    assert resp.status_code == 200, resp.text
+
+
+def test_config_rejects_clerk_user_outside_email_allowlist(db_session, clerk_auth, clerk_keys):
+    private_key, _, _ = clerk_keys
+    token = _clerk_token(private_key, email="other@example.test")
+    resp = _post_config_with_clerk(db_session, token)
+    assert resp.status_code == 403
+
+
+def test_config_rejects_clerk_jwt_without_email(db_session, clerk_auth, clerk_keys):
+    private_key, _, _ = clerk_keys
+    token = _clerk_token(private_key, email=None)
+    resp = _post_config_with_clerk(db_session, token)
+    assert resp.status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("token_factory", "expected_status"),
+    [
+        (lambda private_key, _wrong_key: _clerk_token(private_key, expires_delta=dt.timedelta(minutes=-5)), 401),
+        (lambda private_key, _wrong_key: _clerk_token(private_key, issuer="https://wrong.example.test"), 401),
+        (lambda _private_key, wrong_key: _clerk_token(wrong_key), 401),
+        (lambda _private_key, _wrong_key: "not-a-jwt", 401),
+    ],
+)
+def test_config_rejects_invalid_clerk_jwts(db_session, clerk_auth, clerk_keys, token_factory, expected_status):
+    private_key, wrong_key, _ = clerk_keys
+    token = token_factory(private_key, wrong_key)
+    resp = _post_config_with_clerk(db_session, token)
+    assert resp.status_code == expected_status
 
 
 def test_parse_runtime_config_rejects_non_finite_float():
