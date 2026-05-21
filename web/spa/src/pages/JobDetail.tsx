@@ -16,6 +16,8 @@ type JobDetailPayload = {
 	job_id: number;
 	url: string;
 	video_id: string;
+	source_url?: string | null;
+	source_label?: string | null;
 	status: string;
 	error?: string | null;
 	callback_url?: string | null;
@@ -172,8 +174,12 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 						<p className="detail-meta">
 							<span>{job.video_id}</span>
 							<span>{formatElapsed(job.elapsed_s)}</span>
-							<a href={job.url} target="_blank" rel="noreferrer">
-								YouTube
+							<a
+								href={job.source_url ?? job.url}
+								target="_blank"
+								rel="noreferrer"
+							>
+								{job.source_label ?? "Source"}
 							</a>
 						</p>
 					) : null}

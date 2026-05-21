@@ -62,6 +62,7 @@ from scribe.obs import ops as ops_helpers
 from scribe.obs.live_logs import job_log_buffer
 from scribe.pipeline import prompts, shortlinks, summarizer
 from scribe.pipeline.downloader import initial_video_key
+from scribe.source_links import source_link_for_url
 
 router = APIRouter()
 log = logging.getLogger("scribe.api")
@@ -97,15 +98,27 @@ def get_session() -> Iterator[Session]:
 
 
 def _brief(t: Transcript) -> TranscriptBrief:
+    source_link = source_link_for_url(t.job.url if t.job else None)
     return TranscriptBrief(
         id=t.id, video_id=t.video_id, title=t.title, tags=t.tags,
         duration_seconds=t.duration_seconds, lang=t.lang,
         summary_shortlink=t.summary_shortlink, transcript_shortlink=t.transcript_shortlink,
+        source_url=source_link.url if source_link else None,
+        source_label=source_link.label if source_link else None,
         created_at=t.created_at,
     )
 
 
+def _source_fields(url: str) -> dict[str, str | None]:
+    source_link = source_link_for_url(url)
+    return {
+        "source_url": source_link.url if source_link else None,
+        "source_label": source_link.label if source_link else None,
+    }
+
+
 def _full(t: Transcript) -> TranscriptFull:
+    source_link = source_link_for_url(t.job.url if t.job else None)
     return TranscriptFull(
         id=t.id,
         video_id=t.video_id,
@@ -115,6 +128,8 @@ def _full(t: Transcript) -> TranscriptFull:
         lang=t.lang,
         summary_shortlink=t.summary_shortlink,
         transcript_shortlink=t.transcript_shortlink,
+        source_url=source_link.url if source_link else None,
+        source_label=source_link.label if source_link else None,
         created_at=t.created_at,
         job_id=t.job_id,
         transcript_md=t.transcript_md,
@@ -176,6 +191,7 @@ def _library_row(t: Transcript) -> LibraryRow:
         created_at=t.created_at,
         summary_shortlink=t.summary_shortlink,
         transcript_shortlink=t.transcript_shortlink,
+        **_source_fields(t.job.url if t.job else ""),
         summary_excerpt=_summary_excerpt(t),
         is_partial=t.summary_md is None,
     )
@@ -200,6 +216,7 @@ def render_job_view(session: Session, job: Job) -> JobView:
     now = dt.datetime.now(dt.UTC)
     return JobView(
         job_id=job.id, url=job.url, video_id=job.video_id, status=job.status.value,
+        **_source_fields(job.url),
         error=job.error, callback_url=job.callback_url,
         transcript=_brief(transcript) if transcript else None,
         started_at=events.get(JobStatus.queued.value, None).started_at
@@ -408,6 +425,7 @@ def create_job(body: JobCreate, session: Session = Depends(get_session)) -> JobV
     if done is not None:
         # dedup-done bypasses the cost cap: no new GPU work happens
         return JobView(job_id=done.job_id, url=body.url, video_id=video_id,
+                       **_source_fields(body.url),
                        status=JobStatus.done.value, deduplicated=True, transcript=_brief(done))
 
     active = session.scalar(
@@ -416,6 +434,7 @@ def create_job(body: JobCreate, session: Session = Depends(get_session)) -> JobV
     if active is not None:
         # dedup-active also bypasses: the in-flight job is already spending its budget
         return JobView(job_id=active.id, url=active.url, video_id=video_id,
+                       **_source_fields(active.url),
                        status=active.status.value, deduplicated=True)
 
     # Resume-path bypass: a partial transcript exists for this video_id
@@ -456,6 +475,7 @@ def create_job(body: JobCreate, session: Session = Depends(get_session)) -> JobV
     metrics.job_status_transitions.labels(status=JobStatus.queued.value).inc()
     return JobView(
         job_id=job.id, url=job.url, video_id=video_id, status=job.status.value,
+        **_source_fields(job.url),
         callback_url=job.callback_url,
     )
 
@@ -669,6 +689,7 @@ def api_jobs_active(response: Response, session: Session = Depends(get_session))
                 id=job.id,
                 video_id=job.video_id,
                 url=job.url,
+                **_source_fields(job.url),
                 title=job.title or title_by_video.get(job.video_id),
                 status=job.status.value,
                 source=job.source,
@@ -1067,6 +1088,7 @@ def admin_retry_job(job_id: int, session: Session = Depends(get_session)) -> Job
     metrics.job_status_transitions.labels(status=JobStatus.queued.value).inc()
     return JobView(
         job_id=new_job.id, url=new_job.url, video_id=new_job.video_id,
+        **_source_fields(new_job.url),
         status=new_job.status.value, callback_url=new_job.callback_url,
     )
 

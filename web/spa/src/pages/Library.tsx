@@ -18,6 +18,8 @@ type LibraryRow = {
 	created_at: string;
 	summary_shortlink: string | null;
 	transcript_shortlink: string | null;
+	source_url: string | null;
+	source_label: string | null;
 	summary_excerpt: string;
 	is_partial: boolean;
 };
@@ -42,6 +44,8 @@ type ActiveJob = {
 	id: number;
 	video_id: string;
 	url: string;
+	source_url?: string | null;
+	source_label?: string | null;
 	title?: string | null;
 	status: string;
 	source?: string | null;
@@ -71,7 +75,6 @@ type LibraryProps = {
 const terminalStatuses = new Set(["done", "failed", "cancelled", "canceled"]);
 const stageLabels = ["queued", "downloading", "transcribing", "summarizing"];
 const libraryPageSize = 50;
-const youtubeVideoIdPattern = /^[0-9A-Za-z_-]{11}$/;
 
 function formatDate(value: string): string {
 	const date = new Date(value);
@@ -730,8 +733,8 @@ function RowLinks({
 }) {
 	return (
 		<div className="row-links">
-			{youtubeVideoIdPattern.test(row.video_id) ? (
-				<a href={`https://youtu.be/${row.video_id}`}>YouTube</a>
+			{row.source_url !== null ? (
+				<a href={row.source_url}>{row.source_label ?? "Source"}</a>
 			) : null}
 			{row.summary_shortlink !== null ? (
 				<a href={row.summary_shortlink}>Summary</a>

@@ -26,8 +26,14 @@ def client(db_session):
     app.dependency_overrides.pop(routes_module.get_session, None)
 
 
-def _seed_done_transcript(session, *, video_id: str, title: str = "test"):
-    job = Job(url=f"https://youtu.be/{video_id}", video_id=video_id, status=JobStatus.done)
+def _seed_done_transcript(
+    session,
+    *,
+    video_id: str,
+    title: str = "test",
+    url: str | None = None,
+):
+    job = Job(url=url or f"https://youtu.be/{video_id}", video_id=video_id, status=JobStatus.done)
     session.add(job)
     session.flush()
     transcript = Transcript(
@@ -103,6 +109,24 @@ def test_get_job_returns_transcript_by_video_id(client, db_session):
     resp = client.get(f"/jobs/{new_job.id}")
     assert resp.status_code == 200
     body = resp.json()
+    assert body["transcript"]["id"] == transcript.id
+
+
+def test_get_job_uses_provider_aware_source_label_for_x(client, db_session):
+    job, transcript = _seed_done_transcript(
+        db_session,
+        video_id="xstatus123",
+        url="https://x.com/example/status/123",
+    )
+
+    resp = client.get(f"/jobs/{job.id}")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source_label"] == "Twitter/X"
+    assert body["source_url"] == "https://x.com/example/status/123"
+    assert body["transcript"]["source_label"] == "Twitter/X"
+    assert body["transcript"]["source_url"] == "https://x.com/example/status/123"
     assert body["transcript"]["id"] == transcript.id
 
 
@@ -300,3 +324,33 @@ def test_transcript_detail_default_returns_json(client, db_session):
     assert body["job_id"] == transcript.job_id
     assert body["summary_md"] == "world"
     assert body["transcript_md"] == "hello"
+
+
+def test_transcript_detail_json_uses_provider_aware_source_label_for_x(client, db_session):
+    _, transcript = _seed_done_transcript(
+        db_session,
+        video_id="xdetail123",
+        url="https://twitter.com/example/status/123",
+    )
+
+    resp = client.get(f"/transcripts/{transcript.id}")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source_label"] == "Twitter/X"
+    assert body["source_url"] == "https://twitter.com/example/status/123"
+
+
+def test_transcript_detail_json_keeps_youtube_source_link(client, db_session):
+    _, transcript = _seed_done_transcript(
+        db_session,
+        video_id="ytlinked12x",
+        url="https://www.youtube.com/watch?v=ytlinked12x",
+    )
+
+    resp = client.get(f"/transcripts/{transcript.id}")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source_label"] == "YouTube"
+    assert body["source_url"] == "https://www.youtube.com/watch?v=ytlinked12x"

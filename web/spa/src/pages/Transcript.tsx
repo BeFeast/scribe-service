@@ -13,6 +13,8 @@ type TranscriptRecord = {
 	lang?: string | null;
 	summary_shortlink?: string | null;
 	transcript_shortlink?: string | null;
+	source_url?: string | null;
+	source_label?: string | null;
 	created_at: string;
 	job_id: number;
 	transcript_md: string;
@@ -43,7 +45,6 @@ type InlineToken =
 	| { type: "em"; text: string };
 
 const COPY_RESET_MS = 1400;
-const youtubeVideoIdPattern = /^[0-9A-Za-z_-]{11}$/;
 
 function stripFrontmatter(text: string): string {
 	if (!text.startsWith("---")) {
@@ -460,8 +461,10 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 						<span>{record.lang ?? "lang unknown"}</span>
 						<span>{formatDuration(record.duration_seconds)}</span>
 						<span>{created}</span>
-						{youtubeVideoIdPattern.test(record.video_id) ? (
-							<a href={`https://youtu.be/${record.video_id}`}>youtube</a>
+						{record.source_url ? (
+							<a href={record.source_url} target="_blank" rel="noreferrer">
+								{record.source_label ?? "Source"}
+							</a>
 						) : null}
 						<a href={`/transcripts/${record.id}/summary.md`}>summary.md</a>
 						<a href={`/transcripts/${record.id}/transcript.md`}>
