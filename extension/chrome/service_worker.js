@@ -142,7 +142,7 @@ async function createJob(config, url) {
   }
 
   if (!response.ok) {
-    throw new Error(`Scribe rejected the URL (${response.status}): ${formatDetail(body)}`);
+    throw new Error(formatHttpError(response.status, body, Boolean(config.bearerToken)));
   }
 
   return body || {};
@@ -198,6 +198,24 @@ function formatDetail(body) {
     return body.detail.map((item) => item.msg || JSON.stringify(item)).join("; ");
   }
   return JSON.stringify(body);
+}
+
+function formatHttpError(status, body, tokenConfigured) {
+  if (status === 401) {
+    const guidance = tokenConfigured
+      ? "The saved bearer token was rejected. Check the token in extension settings."
+      : "This Scribe URL requires authentication. Add a bearer token in extension settings.";
+    return `Scribe authentication required (401): ${guidance}`;
+  }
+
+  if (status === 403) {
+    const guidance = tokenConfigured
+      ? "The saved bearer token is invalid or does not allow this request. Check the token in extension settings."
+      : "This Scribe URL is protected. Add a bearer token in extension settings.";
+    return `Scribe authorization failed (403): ${guidance}`;
+  }
+
+  return `Scribe rejected the URL (${status}): ${formatDetail(body)}`;
 }
 
 function setBadge(text, color) {

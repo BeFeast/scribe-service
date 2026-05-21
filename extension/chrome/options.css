@@ -25,6 +25,12 @@ label {
   gap: 6px;
 }
 
+.help {
+  color: #5b6472;
+  font-size: 13px;
+  font-weight: 400;
+}
+
 input {
   border: 1px solid #aeb7c6;
   border-radius: 6px;
