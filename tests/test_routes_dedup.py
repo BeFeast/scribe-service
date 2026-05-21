@@ -5,12 +5,15 @@ uses ARRAY[Text] which SQLite cannot represent). Skipped by default; CI
 provides a postgres service container."""
 from __future__ import annotations
 
+import base64
+import json
 from urllib.parse import unquote
 
 import pytest
 from fastapi.testclient import TestClient
 
 from scribe.api import routes as routes_module
+from scribe.config import settings
 from scribe.db.models import Job, JobStatus, Transcript
 from scribe.main import app
 from scribe.pipeline import summarizer as summarizer_module
@@ -26,19 +29,40 @@ def client(db_session):
     app.dependency_overrides.pop(routes_module.get_session, None)
 
 
+def _unsigned_jwt(claims: dict[str, object]) -> str:
+    header = {"alg": "none", "typ": "JWT"}
+
+    def _part(payload: dict[str, object]) -> str:
+        raw = json.dumps(payload, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    return f"{_part(header)}.{_part(claims)}."
+
+
 def _seed_done_transcript(
     session,
     *,
     video_id: str,
     title: str = "test",
     url: str | None = None,
+    owner_subject: str | None = None,
+    owner_email: str | None = None,
 ):
-    job = Job(url=url or f"https://youtu.be/{video_id}", video_id=video_id, status=JobStatus.done)
+    job = Job(
+        url=url or f"https://youtu.be/{video_id}",
+        video_id=video_id,
+        status=JobStatus.done,
+        title=title,
+        owner_subject=owner_subject,
+        owner_email=owner_email,
+    )
     session.add(job)
     session.flush()
     transcript = Transcript(
         job_id=job.id, video_id=video_id, title=title,
         transcript_md="hello", summary_md="world", tags=["tag1"],
+        owner_subject=owner_subject,
+        owner_email=owner_email,
     )
     session.add(transcript)
     session.commit()
@@ -94,6 +118,77 @@ def test_post_jobs_does_not_dedup_partial(client, db_session):
     body = resp.json()
     assert body["deduplicated"] is False
     assert body["status"] == "queued"
+
+
+def test_post_jobs_clerk_owner_is_stored(client, db_session):
+    token = _unsigned_jwt({"sub": "user_clerk_123", "email": "clerk@example.test", "name": "Clerk User"})
+
+    resp = client.post(
+        "/jobs",
+        json={"url": "https://youtu.be/clerkown123"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert resp.status_code == 201, resp.text
+    job = db_session.get(Job, resp.json()["job_id"])
+    assert job.owner_subject == "user_clerk_123"
+    assert job.owner_email == "clerk@example.test"
+    assert job.owner_display_name == "Clerk User"
+
+
+def test_post_jobs_trusted_lan_uses_default_owner(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "default_owner_subject", "default-subject")
+    monkeypatch.setattr(settings, "default_owner_email", "default@example.test")
+    monkeypatch.setattr(settings, "trusted_cidrs", "10.10.0.0/16")
+
+    resp = client.post(
+        "/jobs",
+        json={"url": "https://youtu.be/lanowner12"},
+        headers={"X-Forwarded-For": "10.10.0.42"},
+    )
+
+    assert resp.status_code == 201, resp.text
+    job = db_session.get(Job, resp.json()["job_id"])
+    assert job.owner_subject == "default-subject"
+    assert job.owner_email == "default@example.test"
+
+
+def test_post_jobs_machine_bearer_uses_default_owner(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "default_owner_subject", "default-subject")
+    monkeypatch.setattr(settings, "default_owner_email", "default@example.test")
+    monkeypatch.setattr(settings, "machine_bearer_token", "machine-token")
+
+    resp = client.post(
+        "/jobs",
+        json={"url": "https://youtu.be/machown123"},
+        headers={"Authorization": "Bearer machine-token"},
+    )
+
+    assert resp.status_code == 201, resp.text
+    job = db_session.get(Job, resp.json()["job_id"])
+    assert job.owner_subject == "default-subject"
+    assert job.owner_email == "default@example.test"
+
+
+def test_post_jobs_dedup_scoped_to_current_owner(client, db_session):
+    _seed_done_transcript(
+        db_session,
+        video_id="ownerdedup1",
+        owner_subject="other-owner",
+        owner_email="other@example.test",
+    )
+    token = _unsigned_jwt({"sub": "current-owner", "email": "current@example.test"})
+
+    resp = client.post(
+        "/jobs",
+        json={"url": "https://youtu.be/ownerdedup1"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["deduplicated"] is False
+    job = db_session.get(Job, resp.json()["job_id"])
+    assert job.owner_subject == "current-owner"
 
 
 def test_get_job_returns_transcript_by_video_id(client, db_session):

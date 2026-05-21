@@ -22,6 +22,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
+from scribe.api.auth import OwnerIdentity, current_owner
 from scribe.api.schemas import (
     ActiveJobsResponse,
     ActiveJobView,
@@ -197,13 +198,20 @@ def _library_row(t: Transcript) -> LibraryRow:
     )
 
 
-def _latest_done_transcript(session: Session, video_id: str) -> Transcript | None:
+def _owner_filter(stmt, model, owner: OwnerIdentity | None):
+    if owner is None:
+        return stmt
+    return stmt.where(model.owner_subject == owner.subject)
+
+
+def _latest_done_transcript(session: Session, video_id: str, owner: OwnerIdentity | None = None) -> Transcript | None:
     """A transcript counts as 'done' only when summary_md is non-NULL.
     Partial transcripts (whisper succeeded, summary failed) are intentionally
     excluded from dedup so the next /jobs submission triggers a re-summarize."""
     return session.scalar(
         select(Transcript)
         .where(Transcript.video_id == video_id, Transcript.summary_md.is_not(None))
+        .where(Transcript.owner_subject == owner.subject if owner else True)
         .order_by(Transcript.id.desc())
     )
 
@@ -211,7 +219,7 @@ def _latest_done_transcript(session: Session, video_id: str) -> Transcript | Non
 def render_job_view(session: Session, job: Job) -> JobView:
     """Build the same JSON GET /jobs/<id> returns. Shared with the worker
     so webhook payloads stay in lockstep with what consumers see."""
-    transcript = _latest_transcript_for_video(session, job.video_id)
+    transcript = _latest_transcript_for_video(session, job.video_id, job.owner_subject)
     events = _job_stage_events(session, [job.id]).get(job.id, {})
     now = dt.datetime.now(dt.UTC)
     return JobView(
@@ -227,11 +235,12 @@ def render_job_view(session: Session, job: Job) -> JobView:
     )
 
 
-def _latest_transcript_for_video(session: Session, video_id: str) -> Transcript | None:
+def _latest_transcript_for_video(session: Session, video_id: str, owner_subject: str | None = None) -> Transcript | None:
+    stmt = select(Transcript).where(Transcript.video_id == video_id)
+    if owner_subject:
+        stmt = stmt.where(Transcript.owner_subject == owner_subject)
     return session.scalar(
-        select(Transcript)
-        .where(Transcript.video_id == video_id)
-        .order_by(Transcript.id.desc())
+        stmt.order_by(Transcript.id.desc())
     )
 
 
@@ -415,13 +424,18 @@ def rotate_token(_auth: None = Depends(require_config_auth)) -> None:
 
 
 @router.post("/jobs", response_model=JobView, status_code=201)
-def create_job(body: JobCreate, session: Session = Depends(get_session)) -> JobView:
+def create_job(
+    body: JobCreate,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> JobView:
     """Submit a video URL. Deduplicates by video_id against **done** transcripts
     and in-flight jobs. Partial transcripts (whisper succeeded but summary
     failed) do NOT dedup — the new job's worker will resume them."""
     video_id = initial_video_key(body.url)
 
-    done = _latest_done_transcript(session, video_id)
+    owner = current_owner(request)
+    done = _latest_done_transcript(session, video_id, owner)
     if done is not None:
         # dedup-done bypasses the cost cap: no new GPU work happens
         return JobView(job_id=done.job_id, url=body.url, video_id=video_id,
@@ -429,7 +443,11 @@ def create_job(body: JobCreate, session: Session = Depends(get_session)) -> JobV
                        status=JobStatus.done.value, deduplicated=True, transcript=_brief(done))
 
     active = session.scalar(
-        select(Job).where(Job.video_id == video_id, Job.status.in_(_ACTIVE)).order_by(Job.id.desc())
+        _owner_filter(
+            select(Job).where(Job.video_id == video_id, Job.status.in_(_ACTIVE)),
+            Job,
+            owner,
+        ).order_by(Job.id.desc())
     )
     if active is not None:
         # dedup-active also bypasses: the in-flight job is already spending its budget
@@ -444,6 +462,7 @@ def create_job(body: JobCreate, session: Session = Depends(get_session)) -> JobV
     partial_exists = session.scalar(
         select(Transcript.id)
         .where(Transcript.video_id == video_id, Transcript.summary_md.is_(None))
+        .where(Transcript.owner_subject == owner.subject if owner else True)
         .limit(1)
     ) is not None
 
@@ -467,6 +486,9 @@ def create_job(body: JobCreate, session: Session = Depends(get_session)) -> JobV
         url=body.url, video_id=video_id, status=JobStatus.queued,
         source=body.source,
         callback_url=str(body.callback_url) if body.callback_url else None,
+        owner_subject=owner.subject if owner else None,
+        owner_email=owner.email if owner else None,
+        owner_display_name=owner.display_name if owner else None,
     )
     session.add(job)
     session.flush()
@@ -529,12 +551,15 @@ def stream_job_log(job_id: int, session: Session = Depends(get_session)) -> Stre
 
 @router.get("/transcripts", response_model=list[TranscriptBrief])
 def list_transcripts(
+    request: Request,
     session: Session = Depends(get_session),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     include_partial: bool = Query(False, description="Also return partial transcripts (summary pending)."),
 ) -> list[TranscriptBrief]:
     stmt = select(Transcript).order_by(Transcript.id.desc())
+    owner = current_owner(request)
+    stmt = _owner_filter(stmt, Transcript, owner)
     if not include_partial:
         stmt = stmt.where(Transcript.summary_md.is_not(None))
     rows = session.scalars(stmt.limit(limit).offset(offset)).all()
@@ -578,6 +603,7 @@ def admin_delete_transcript(transcript_id: int, session: Session = Depends(get_s
 @router.get("/api/library", response_model=LibraryResponse)
 def api_library(
     response: Response,
+    request: Request,
     session: Session = Depends(get_session),
     q: str | None = Query(None, description="Fuzzy match against title and summary markdown."),
     tag: str | None = Query(None, description="Exact tag match."),
@@ -587,6 +613,8 @@ def api_library(
     """List transcript rows for the SPA Library view without full summary bodies."""
     _no_store(response)
     stmt = select(Transcript)
+    owner = current_owner(request)
+    stmt = _owner_filter(stmt, Transcript, owner)
     if q and q.strip():
         like = f"%{escape_like(q.strip())}%"
         stmt = stmt.where(or_(Transcript.title.ilike(like), Transcript.summary_md.ilike(like)))
@@ -662,10 +690,16 @@ def _stage_views(job: Job, events: dict[str, JobStageEvent]) -> dict[str, JobSta
 
 
 @router.get("/api/jobs/active", response_model=ActiveJobsResponse, response_model_exclude_none=True)
-def api_jobs_active(response: Response, session: Session = Depends(get_session)) -> ActiveJobsResponse:
+def api_jobs_active(
+    response: Response,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> ActiveJobsResponse:
     """Return all queued/in-flight jobs with derived pipeline stage state."""
     _no_store(response)
-    jobs = session.scalars(select(Job).where(Job.status.in_(_ACTIVE)).order_by(Job.id)).all()
+    owner = current_owner(request)
+    stmt = _owner_filter(select(Job).where(Job.status.in_(_ACTIVE)), Job, owner)
+    jobs = session.scalars(stmt.order_by(Job.id)).all()
     if not jobs:
         return ActiveJobsResponse(jobs=[])
 
@@ -674,9 +708,11 @@ def api_jobs_active(response: Response, session: Session = Depends(get_session))
 
     video_ids = {job.video_id for job in jobs}
     transcripts = session.scalars(
-        select(Transcript)
-        .where(Transcript.video_id.in_(video_ids))
-        .order_by(Transcript.id.desc())
+        _owner_filter(
+            select(Transcript).where(Transcript.video_id.in_(video_ids)),
+            Transcript,
+            owner,
+        ).order_by(Transcript.id.desc())
     ).all()
     title_by_video: dict[str, str] = {}
     for transcript in transcripts:
@@ -707,14 +743,15 @@ def api_jobs_active(response: Response, session: Session = Depends(get_session))
 @router.get("/api/jobs/recent-failures", response_model=RecentFailuresResponse, response_model_exclude_none=True)
 def api_jobs_recent_failures(
     response: Response,
+    request: Request,
     session: Session = Depends(get_session),
     limit: int = Query(10, ge=1, le=50),
 ) -> RecentFailuresResponse:
     """Return the newest failed jobs for the Queue failure rail."""
     _no_store(response)
+    owner = current_owner(request)
     jobs = session.scalars(
-        select(Job)
-        .where(Job.status == JobStatus.failed)
+        _owner_filter(select(Job).where(Job.status == JobStatus.failed), Job, owner)
         .order_by(Job.updated_at.desc(), Job.id.desc())
         .limit(limit)
     ).all()
@@ -724,9 +761,11 @@ def api_jobs_recent_failures(
     events_by_job = _job_stage_events(session, [job.id for job in jobs])
     video_ids = {job.video_id for job in jobs}
     transcripts = session.scalars(
-        select(Transcript)
-        .where(Transcript.video_id.in_(video_ids))
-        .order_by(Transcript.id.desc())
+        _owner_filter(
+            select(Transcript).where(Transcript.video_id.in_(video_ids)),
+            Transcript,
+            owner,
+        ).order_by(Transcript.id.desc())
     ).all()
     title_by_video: dict[str, str] = {}
     for transcript in transcripts:
@@ -1072,6 +1111,8 @@ def admin_retry_job(job_id: int, session: Session = Depends(get_session)) -> Job
     new_job = Job(
         url=job.url, video_id=job.video_id, status=JobStatus.queued,
         source=job.source, title=job.title, callback_url=job.callback_url,
+        owner_subject=job.owner_subject, owner_email=job.owner_email,
+        owner_display_name=job.owner_display_name,
     )
     session.add(new_job)
     session.flush()

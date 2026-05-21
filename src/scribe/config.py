@@ -19,6 +19,7 @@ ConfigKind = Literal[
     "display_currency",
     "prompt_version",
     "short_description_language",
+    "text_optional",
     "url",
     "url_optional",
 ]
@@ -43,6 +44,8 @@ RUNTIME_CONFIG: dict[str, RuntimeConfigSpec] = {
     "public_base_url": RuntimeConfigSpec("public_base_url", "url"),
     "display_currency": RuntimeConfigSpec("display_currency", "display_currency"),
     "short_description_language": RuntimeConfigSpec("short_description_language", "short_description_language"),
+    "default_owner_email": RuntimeConfigSpec("default_owner_email", "text_optional"),
+    "default_owner_subject": RuntimeConfigSpec("default_owner_subject", "text_optional"),
 }
 
 _URL_ADAPTER = TypeAdapter(AnyHttpUrl)
@@ -101,6 +104,12 @@ def parse_runtime_config_value(key: str, value: Any) -> bool | float | int | str
         if not isinstance(value, str) or value.strip().lower() not in {"ru", "en"}:
             raise ValueError(f"{key} must be one of: ru, en")
         return value.strip().lower()
+    if spec.kind == "text_optional":
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValueError(f"{key} must be a string")
+        return value.strip()
     if spec.kind == "url_optional":
         if value is None:
             return ""
@@ -191,6 +200,14 @@ class Settings(BaseSettings):
     prompt_template_active_version: str = "v1"
     display_currency: str = "USD"
     short_description_language: str = "ru"
+    default_owner_email: str = ""
+    default_owner_subject: str = ""
+
+    # These belong to the auth layer from #104/#105. They are env-only here:
+    # the owner attribution code consumes them without exposing bearer secrets
+    # through the mutable config API.
+    machine_bearer_token: str = ""
+    trusted_cidrs: str = "127.0.0.0/8,::1/128"
 
     # Path the scribe-backups sidecar writes after each successful run; surfaced
     # by GET /admin/backup-status for healthcheck curl-polling (PRD §4.12).
