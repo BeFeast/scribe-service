@@ -20,6 +20,7 @@ def test_app_shell_files_exist() -> None:
         "constants.ts",
         "hooks/useEventSource.ts",
         "hooks/usePoll.ts",
+        "hooks/useAuth.tsx",
         "hooks/useRoute.ts",
         "hooks/useTweaks.ts",
         "pages/Library.tsx",
@@ -39,7 +40,7 @@ def test_app_mounts_shell_and_placeholder_router() -> None:
     assert "Library" in source
     assert "layout={tweaks.libraryLayout}" in source
     assert "displayCurrency={displayCurrency}" in source
-    assert 'fetch("/api/config")' in source
+    assert 'auth.protectedFetch("/api/config")' in source
     assert 'route.page === "library"' in source
     assert 'route.page === "transcript"' in source
     assert "<Transcript" in source
@@ -61,8 +62,9 @@ def test_transcript_page_fetches_json_and_renders_markdown_locally() -> None:
     source = read("pages/Transcript.tsx")
 
     assert 'fetch(`/transcripts/${id}`' in source
-    assert 'fetch(`/transcripts/${id}/resummarize`' in source
-    assert "fetch(`/admin/transcripts/${record.id}`" in source
+    assert "auth.protectedFetch" in source
+    assert "`/transcripts/${id}/resummarize`" in source
+    assert "`/admin/transcripts/${record.id}`" in source
     assert 'headers: { Accept: "application/json" }' in source
     assert "function parseMd" in source
     assert "function inline" in source
@@ -106,8 +108,8 @@ def test_library_page_fetches_api_and_supports_layouts() -> None:
     assert "Next" in source
     assert "window.setTimeout(() => setDebouncedQuery(query), 200)" in source
     assert 'fetch("/api/jobs/active"' in source
-    assert 'fetch("/jobs"' in source
-    assert "fetch(`/admin/transcripts/${row.id}`" in source
+    assert 'auth.protectedFetch("/jobs"' in source
+    assert "`/admin/transcripts/${row.id}`" in source
     assert 'source: "manual"' in source
     assert "Queued job #" in source
     assert 'className="library-submit"' in source
@@ -131,11 +133,11 @@ def test_queue_and_job_detail_can_clear_failed_jobs() -> None:
     detail = read("pages/JobDetail.tsx")
     failure_row = read("components/FailureRow.tsx")
 
-    assert "fetch(`/admin/jobs/${id}`" in queue
+    assert "auth.protectedFetch(`/admin/jobs/${id}`" in queue
     assert 'method: "DELETE"' in queue
     assert "onDismiss={clearFailure}" in queue
     assert "Clear" in failure_row
-    assert "fetch(`/admin/jobs/${job.job_id}`" in detail
+    assert "auth.protectedFetch(`/admin/jobs/${job.job_id}`" in detail
     assert "Clear failure" in detail
     assert "job.source_url" in detail
     assert "job.source_label" in detail
@@ -153,6 +155,47 @@ def test_live_update_hooks_wrap_poll_and_eventsource_lifecycles() -> None:
     assert "controller?.abort()" in use_poll
     assert "new EventSource(url)" in use_event_source
     assert "source.close()" in use_event_source
+
+
+def test_spa_auth_config_and_protected_fetch_are_wired() -> None:
+    source = read("hooks/useAuth.tsx")
+    main = read("main.tsx")
+    settings = read("pages/Settings.tsx")
+    library = read("pages/Library.tsx")
+    transcript = read("pages/Transcript.tsx")
+
+    assert 'fetch("/api/auth/config"' in source
+    assert "clerk_publishable_key" in source
+    assert "clerk_frontend_api" in source
+    assert "trusted_network" in source
+    assert 'headers.set("Authorization", `Bearer ${token}`)' in source
+    assert "protectedFetch" in source
+    assert "AuthProvider" in main
+    assert 'auth.protectedFetch("/api/config"' in settings
+    assert 'auth.protectedFetch("/jobs"' in library
+    assert "`/transcripts/${id}/resummarize`" in transcript
+
+
+def test_settings_shows_access_status_and_operator_auth_only_there() -> None:
+    settings_source = read("pages/Settings.tsx")
+    main = read("main.tsx")
+
+    for label in ("Trusted network", "Signed in", "Read-only"):
+        assert label in read("hooks/useAuth.tsx")
+    assert "auth.accessStatus" in settings_source
+    assert "auth.signIn" in settings_source
+    assert "auth.signOut" in settings_source
+    assert 'route.page === "settings"' in main
+
+
+def test_public_read_routes_do_not_render_auth_gate() -> None:
+    library = read("pages/Library.tsx")
+    transcript = read("pages/Transcript.tsx")
+
+    assert "Sign in" not in library
+    assert "Sign in" not in transcript
+    assert "auth.accessStatus" not in library
+    assert "auth.accessStatus" not in transcript
 
 
 def test_cmdk_custom_event_is_wired_without_window_globals() -> None:
@@ -176,7 +219,7 @@ def test_command_palette_covers_submit_search_navigation_and_a11y() -> None:
 
     assert "parseVideoUrl" in source
     assert "url.protocol === \"http:\"" in source
-    assert 'fetch("/jobs"' in source
+    assert 'auth.protectedFetch("/jobs"' in source
     assert 'source: "manual"' in source
     assert "Queued as job #" in source
     assert "Watch pipeline →" in source

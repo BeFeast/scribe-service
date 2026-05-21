@@ -1,6 +1,7 @@
 import React from "react";
 
 import { CMDK_OPEN_EVENT } from "../constants";
+import { useAuth } from "../hooks/useAuth";
 import type { Route, RoutePage } from "../hooks/useRoute";
 
 type Navigate = (route: Route) => void;
@@ -248,6 +249,7 @@ export function useCommandPalette() {
 }
 
 export function CommandPalette({ navigate }: CommandPaletteProps) {
+	const auth = useAuth();
 	const { isOpen, close } = useCommandPalette();
 	const [query, setQuery] = React.useState("");
 	const [library, setLibrary] = React.useState<LibraryRow[]>([]);
@@ -354,7 +356,7 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 		}
 		setSubmitState({ state: "submitting" });
 		try {
-			const response = await fetch("/jobs", {
+			const response = await auth.protectedFetch("/jobs", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ url: videoUrl, source: "manual" }),

@@ -206,3 +206,9 @@ class ConfigEntry(BaseModel):
 class ConfigResponse(BaseModel):
     config: dict[str, ConfigEntry]
     restart_required: list[str] = []
+
+
+class AuthConfigResponse(BaseModel):
+    clerk_publishable_key: str
+    clerk_frontend_api: str
+    trusted_network: bool

@@ -1,6 +1,7 @@
 import React from "react";
 
 import { Markdown } from "../components/Markdown";
+import { useAuth } from "../hooks/useAuth";
 import type {
 	LibraryLayout,
 	ScribeDensity,
@@ -76,6 +77,7 @@ const configKeys: ConfigKey[] = [
 const promptVersions: PromptVersionId[] = ["v1", "v2", "v3"];
 
 export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
+	const auth = useAuth();
 	const [config, setConfig] = React.useState<Record<string, ConfigEntry>>({});
 	const [draft, setDraft] = React.useState<Record<ConfigKey, ConfigValue>>(
 		{} as Record<ConfigKey, ConfigValue>,
@@ -116,7 +118,7 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 		setError(null);
 		try {
 			const [configResponse, promptsResponse] = await Promise.all([
-				fetch("/api/config", { headers }),
+				auth.protectedFetch("/api/config", { headers }),
 				fetch("/api/prompts"),
 			]);
 			if (!configResponse.ok) {
@@ -150,7 +152,7 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 		} finally {
 			setLoading(false);
 		}
-	}, [headers]);
+	}, [auth, headers]);
 
 	React.useEffect(() => {
 		void loadSettings();
@@ -203,7 +205,7 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 				for (const key of dirtyKeys) {
 					payload[key] = draft[key];
 				}
-				const response = await fetch("/api/config", {
+				const response = await auth.protectedFetch("/api/config", {
 					method: "POST",
 					headers: { ...headers, "Content-Type": "application/json" },
 					body: JSON.stringify(payload),
@@ -215,17 +217,20 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 				setRestartKeys(body.restart_required);
 			}
 			if (promptBody !== savedPromptBody) {
-				const response = await fetch(`/api/prompts/${promptVersion}`, {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ body: promptBody }),
-				});
+				const response = await auth.protectedFetch(
+					`/api/prompts/${promptVersion}`,
+					{
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ body: promptBody }),
+					},
+				);
 				if (!response.ok) {
 					throw new Error(await responseMessage(response));
 				}
 			}
 			if (promptVersion !== savedPromptVersion) {
-				const response = await fetch("/api/prompts/active", {
+				const response = await auth.protectedFetch("/api/prompts/active", {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ version: promptVersion }),
@@ -255,7 +260,7 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 		setDryRunning(true);
 		setError(null);
 		try {
-			const response = await fetch("/api/prompts/dry-run", {
+			const response = await auth.protectedFetch("/api/prompts/dry-run", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
@@ -298,7 +303,7 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 	async function rotateToken() {
 		setError(null);
 		try {
-			const response = await fetch("/api/config/rotate-token", {
+			const response = await auth.protectedFetch("/api/config/rotate-token", {
 				method: "POST",
 				headers,
 			});
@@ -324,10 +329,27 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 					<p className="eyebrow">Settings</p>
 					<h1 className="pane-h1">Pipeline, summaries, appearance, access</h1>
 					<p className="pane-sub">
-						Runtime controls are saved in the service database and refreshed from the API.
+						Runtime controls are saved in the service database and refreshed
+						from the API.
 					</p>
 				</div>
 				<div className="settings-actions">
+					<span className="access-status">{auth.accessStatus}</span>
+					{!auth.canWrite && auth.clerkConfigured ? (
+						<button
+							className="btn"
+							type="button"
+							onClick={auth.signIn}
+							disabled={!auth.clerkReady}
+						>
+							Sign in
+						</button>
+					) : null}
+					{auth.accessStatus === "Signed in" ? (
+						<button className="btn ghost" type="button" onClick={auth.signOut}>
+							Sign out
+						</button>
+					) : null}
 					<button className="btn ghost" type="button" onClick={loadSettings}>
 						Refresh
 					</button>
@@ -721,7 +743,9 @@ export function CurrencyRow({
 				className="settings-input"
 				value={value || "USD"}
 				disabled={disabled}
-				onChange={(event) => onChange(event.currentTarget.value as DisplayCurrency)}
+				onChange={(event) =>
+					onChange(event.currentTarget.value as DisplayCurrency)
+				}
 			>
 				{displayCurrencies.map((currency) => (
 					<option value={currency} key={currency}>

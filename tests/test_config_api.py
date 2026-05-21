@@ -42,6 +42,8 @@ def _settings_snapshot() -> dict[str, object]:
     snapshot["auth_clerk_issuer"] = settings.auth_clerk_issuer
     snapshot["auth_clerk_jwks_url"] = settings.auth_clerk_jwks_url
     snapshot["auth_clerk_jwks_json"] = settings.auth_clerk_jwks_json
+    snapshot["clerk_publishable_key"] = settings.clerk_publishable_key
+    snapshot["clerk_frontend_api"] = settings.clerk_frontend_api
     return snapshot
 
 
@@ -445,6 +447,52 @@ def test_config_rejects_invalid_clerk_jwts(db_session, clerk_auth, clerk_keys, t
     token = token_factory(private_key, wrong_key)
     resp = _post_config_with_clerk(db_session, token)
     assert resp.status_code == expected_status
+
+
+def test_auth_config_is_public_and_reports_trusted_lan(db_session):
+    snapshot = _settings_snapshot()
+    sources = set(settings._runtime_sources)
+    try:
+        settings.clerk_publishable_key = "pk_test_public"
+        settings.clerk_frontend_api = "clerk.example.test"
+        settings.trusted_cidrs = "10.10.0.0/16"
+        app.dependency_overrides[routes_module.get_session] = lambda: db_session
+        client = TestClient(app, client=("10.10.0.18", 50000))
+
+        resp = client.get("/api/auth/config")
+
+        assert resp.status_code == 200
+        assert resp.headers["cache-control"] == "no-store"
+        assert resp.json() == {
+            "clerk_publishable_key": "pk_test_public",
+            "clerk_frontend_api": "clerk.example.test",
+            "trusted_network": True,
+        }
+    finally:
+        app.dependency_overrides.pop(routes_module.get_session, None)
+        _restore_settings(snapshot, sources)
+
+
+def test_trusted_lan_can_save_config_without_bearer(db_session):
+    snapshot = _settings_snapshot()
+    sources = set(settings._runtime_sources)
+    try:
+        _clear_config(db_session)
+        settings.config_api_bearer_token = TEST_TOKEN
+        settings.trusted_cidrs = "10.10.0.0/16"
+        settings.daily_spend_cap_usd = 7.0
+        app.dependency_overrides[routes_module.get_session] = lambda: db_session
+        client = TestClient(app, client=("10.10.0.42", 50000))
+
+        resp = client.post("/api/config", json={"daily_spend_cap_usd": 7.0})
+
+        assert resp.status_code == 200
+        assert resp.json()["config"]["daily_spend_cap_usd"]["value"] == 7.0
+        assert db_session.get(AppConfig, "daily_spend_cap_usd").value == "7.0"
+    finally:
+        app.dependency_overrides.pop(routes_module.get_session, None)
+        _restore_settings(snapshot, sources)
+        _clear_config(db_session)
 
 
 def test_parse_runtime_config_rejects_non_finite_float():

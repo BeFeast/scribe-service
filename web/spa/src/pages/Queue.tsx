@@ -2,8 +2,9 @@ import React from "react";
 
 import { type FailureJob, FailureRow } from "../components/FailureRow";
 import { JobCard, type JobCardJob } from "../components/JobCard";
-import type { Route } from "../hooks/useRoute";
+import { useAuth } from "../hooks/useAuth";
 import { usePoll } from "../hooks/usePoll";
+import type { Route } from "../hooks/useRoute";
 
 type ActiveJobsResponse = {
 	jobs: JobCardJob[];
@@ -18,6 +19,7 @@ type QueueProps = {
 };
 
 export function Queue({ navigate }: QueueProps) {
+	const auth = useAuth();
 	const [active, setActive] = React.useState<JobCardJob[]>([]);
 	const [failures, setFailures] = React.useState<FailureJob[]>([]);
 	const [error, setError] = React.useState<string | null>(null);
@@ -58,24 +60,31 @@ export function Queue({ navigate }: QueueProps) {
 		(id: number) => navigate({ page: "job", params: { id } }),
 		[navigate],
 	);
-	const clearFailure = React.useCallback(async (id: number) => {
-		if (clearingId !== null) {
-			return;
-		}
-		setClearingId(id);
-		setError(null);
-		try {
-			const response = await fetch(`/admin/jobs/${id}`, { method: "DELETE" });
-			if (!response.ok) {
-				throw new Error(`clear failed: ${response.status}`);
+	const clearFailure = React.useCallback(
+		async (id: number) => {
+			if (clearingId !== null) {
+				return;
 			}
-			setFailures((current) => current.filter((job) => job.id !== id));
-		} catch (clearError) {
-			setError(clearError instanceof Error ? clearError.message : "clear failed");
-		} finally {
-			setClearingId(null);
-		}
-	}, [clearingId]);
+			setClearingId(id);
+			setError(null);
+			try {
+				const response = await auth.protectedFetch(`/admin/jobs/${id}`, {
+					method: "DELETE",
+				});
+				if (!response.ok) {
+					throw new Error(`clear failed: ${response.status}`);
+				}
+				setFailures((current) => current.filter((job) => job.id !== id));
+			} catch (clearError) {
+				setError(
+					clearError instanceof Error ? clearError.message : "clear failed",
+				);
+			} finally {
+				setClearingId(null);
+			}
+		},
+		[auth, clearingId],
+	);
 
 	return (
 		<section className="pane queue-page">

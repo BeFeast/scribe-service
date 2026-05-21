@@ -3,8 +3,9 @@ import React from "react";
 import { LogTail } from "../components/LogTail";
 import { PipelineDiagram, type StageMap } from "../components/PipelineDiagram";
 import { StatusChip } from "../components/StatusChip";
-import type { Route } from "../hooks/useRoute";
+import { useAuth } from "../hooks/useAuth";
 import { usePoll } from "../hooks/usePoll";
+import type { Route } from "../hooks/useRoute";
 
 type TranscriptBrief = {
 	id: number;
@@ -44,6 +45,7 @@ function formatElapsed(seconds?: number | null) {
 }
 
 export function JobDetail({ id, navigate }: JobDetailProps) {
+	const auth = useAuth();
 	const [job, setJob] = React.useState<JobDetailPayload | null>(null);
 	const [error, setError] = React.useState<string | null>(null);
 	const [busy, setBusy] = React.useState<string | null>(null);
@@ -55,26 +57,29 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 		setError(null);
 	}, [id]);
 
-	const load = React.useCallback(async (signal: AbortSignal) => {
-		if (id === undefined) {
-			return;
-		}
-		try {
-			const response = await fetch(`/jobs/${id}`, { signal });
-			if (!response.ok) {
-				throw new Error(`job ${id} returned ${response.status}`);
+	const load = React.useCallback(
+		async (signal: AbortSignal) => {
+			if (id === undefined) {
+				return;
 			}
-			const body = (await response.json()) as JobDetailPayload;
-			setJob(body);
-			setError(null);
-		} catch (jobError) {
-			if (!signal.aborted) {
-				setError(
-					jobError instanceof Error ? jobError.message : "job load failed",
-				);
+			try {
+				const response = await fetch(`/jobs/${id}`, { signal });
+				if (!response.ok) {
+					throw new Error(`job ${id} returned ${response.status}`);
+				}
+				const body = (await response.json()) as JobDetailPayload;
+				setJob(body);
+				setError(null);
+			} catch (jobError) {
+				if (!signal.aborted) {
+					setError(
+						jobError instanceof Error ? jobError.message : "job load failed",
+					);
+				}
 			}
-		}
-	}, [id]);
+		},
+		[id],
+	);
 
 	usePoll(load, 2000, { enabled: id !== undefined && !isTerminal });
 
@@ -84,9 +89,12 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 		}
 		setBusy("cancel");
 		try {
-			const response = await fetch(`/admin/jobs/${job.job_id}/cancel`, {
-				method: "POST",
-			});
+			const response = await auth.protectedFetch(
+				`/admin/jobs/${job.job_id}/cancel`,
+				{
+					method: "POST",
+				},
+			);
 			if (!response.ok) {
 				throw new Error(`cancel returned ${response.status}`);
 			}
@@ -107,9 +115,12 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 		}
 		setBusy("retry");
 		try {
-			const response = await fetch(`/admin/jobs/${job.job_id}/retry`, {
-				method: "POST",
-			});
+			const response = await auth.protectedFetch(
+				`/admin/jobs/${job.job_id}/retry`,
+				{
+					method: "POST",
+				},
+			);
 			if (!response.ok) {
 				throw new Error(`retry returned ${response.status}`);
 			}
@@ -130,7 +141,7 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 		}
 		setBusy("clear");
 		try {
-			const response = await fetch(`/admin/jobs/${job.job_id}`, {
+			const response = await auth.protectedFetch(`/admin/jobs/${job.job_id}`, {
 				method: "DELETE",
 			});
 			if (!response.ok) {
@@ -138,7 +149,9 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 			}
 			navigate({ page: "queue", params: {} });
 		} catch (clearError) {
-			setError(clearError instanceof Error ? clearError.message : "clear failed");
+			setError(
+				clearError instanceof Error ? clearError.message : "clear failed",
+			);
 		} finally {
 			setBusy(null);
 		}
@@ -237,11 +250,7 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 						{job.error ? <p className="error-banner">{job.error}</p> : null}
 					</section>
 
-					<LogTail
-						jobId={job.job_id}
-						status={job.status}
-						error={job.error}
-					/>
+					<LogTail jobId={job.job_id} status={job.status} error={job.error} />
 				</>
 			) : (
 				<p className="muted">Loading job...</p>

@@ -1,6 +1,7 @@
 import React from "react";
 
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { useAuth } from "../hooks/useAuth";
 import type { DisplayCurrency } from "../lib/currency";
 import { formatUsdCost } from "../lib/currency";
 
@@ -379,6 +380,7 @@ export function PartialNotice({
 }
 
 export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
+	const auth = useAuth();
 	const [record, setRecord] = React.useState<TranscriptRecord | null>(null);
 	const [loading, setLoading] = React.useState(true);
 	const [error, setError] = React.useState<string | null>(null);
@@ -431,10 +433,13 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 		setRegenerating(true);
 		setRegenerateError(null);
 		try {
-			const response = await fetch(`/transcripts/${id}/resummarize`, {
-				method: "POST",
-				headers: { Accept: "application/json" },
-			});
+			const response = await auth.protectedFetch(
+				`/transcripts/${id}/resummarize`,
+				{
+					method: "POST",
+					headers: { Accept: "application/json" },
+				},
+			);
 			if (!response.ok) {
 				let detail = `Regenerate failed (HTTP ${response.status})`;
 				try {
@@ -455,7 +460,7 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 		} finally {
 			setRegenerating(false);
 		}
-	}, [id, load]);
+	}, [auth, id, load]);
 
 	const deleteTranscript = React.useCallback(async () => {
 		if (record === null || deleting) {
@@ -464,9 +469,12 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 		setDeleting(true);
 		setError(null);
 		try {
-			const response = await fetch(`/admin/transcripts/${record.id}`, {
-				method: "DELETE",
-			});
+			const response = await auth.protectedFetch(
+				`/admin/transcripts/${record.id}`,
+				{
+					method: "DELETE",
+				},
+			);
 			if (!response.ok) {
 				throw new Error(`Delete failed (HTTP ${response.status})`);
 			}
@@ -477,7 +485,7 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 		} finally {
 			setDeleting(false);
 		}
-	}, [deleting, navigate, record]);
+	}, [auth, deleting, navigate, record]);
 
 	if (loading) {
 		return (

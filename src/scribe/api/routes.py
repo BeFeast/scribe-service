@@ -21,10 +21,11 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
-from scribe.api.auth import AuthState, OwnerIdentity, current_owner, require_operator_auth
+from scribe.api.auth import AuthState, OwnerIdentity, current_owner, is_trusted_lan_request, require_operator_auth
 from scribe.api.schemas import (
     ActiveJobsResponse,
     ActiveJobView,
+    AuthConfigResponse,
     BackupSnapshot,
     ConfigEntry,
     ConfigResponse,
@@ -345,6 +346,16 @@ def _config_response(*, restart_required: list[str] | None = None) -> ConfigResp
             for key, spec in RUNTIME_CONFIG.items()
         },
         restart_required=restart_required or [],
+    )
+
+
+@router.get("/api/auth/config", response_model=AuthConfigResponse)
+def get_auth_config(request: Request, response: Response) -> AuthConfigResponse:
+    _no_store(response)
+    return AuthConfigResponse(
+        clerk_publishable_key=settings.clerk_publishable_key.strip(),
+        clerk_frontend_api=settings.clerk_frontend_api.strip(),
+        trusted_network=is_trusted_lan_request(request),
     )
 
 

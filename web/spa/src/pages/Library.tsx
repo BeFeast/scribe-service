@@ -1,6 +1,7 @@
 import React from "react";
 
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { useAuth } from "../hooks/useAuth";
 import { usePoll } from "../hooks/usePoll";
 import type { Route } from "../hooks/useRoute";
 import type { LibraryLayout } from "../hooks/useTweaks";
@@ -135,6 +136,7 @@ export function Library({
 	route,
 	navigate,
 }: LibraryProps) {
+	const auth = useAuth();
 	const selectedTag = route.params.tag;
 	const [query, setQuery] = React.useState("");
 	const [submitUrl, setSubmitUrl] = React.useState("");
@@ -235,9 +237,12 @@ export function Library({
 		setDeleteBusyId(row.id);
 		setError(null);
 		try {
-			const response = await fetch(`/admin/transcripts/${row.id}`, {
-				method: "DELETE",
-			});
+			const response = await auth.protectedFetch(
+				`/admin/transcripts/${row.id}`,
+				{
+					method: "DELETE",
+				},
+			);
 			if (!response.ok) {
 				throw new Error(`Delete failed: ${response.status}`);
 			}
@@ -272,7 +277,7 @@ export function Library({
 		}
 		setSubmitState({ state: "submitting" });
 		try {
-			const response = await fetch("/jobs", {
+			const response = await auth.protectedFetch("/jobs", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ url: submitTrimmed, source: "manual" }),
