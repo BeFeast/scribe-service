@@ -176,8 +176,9 @@ def test_spa_auth_config_and_protected_fetch_are_wired() -> None:
     assert "`/transcripts/${id}/resummarize`" in transcript
 
 
-def test_settings_shows_access_status_and_operator_auth_only_there() -> None:
+def test_global_shell_shows_access_status_and_operator_auth() -> None:
     settings_source = read("pages/Settings.tsx")
+    topbar = read("components/TopBar.tsx")
     main = read("main.tsx")
 
     for label in ("Trusted network", "Signed in", "Read-only"):
@@ -185,6 +186,9 @@ def test_settings_shows_access_status_and_operator_auth_only_there() -> None:
     assert "auth.accessStatus" in settings_source
     assert "auth.signIn" in settings_source
     assert "auth.signOut" in settings_source
+    assert "auth.accessStatus" in topbar
+    assert "auth.signIn" in topbar
+    assert "auth.signOut" in topbar
     assert 'route.page === "settings"' in main
 
 

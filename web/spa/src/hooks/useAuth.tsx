@@ -76,6 +76,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 	const [config, setConfig] = React.useState<AuthConfig | null>(null);
 	const [clerkReady, setClerkReady] = React.useState(false);
 	const [signedIn, setSignedIn] = React.useState(false);
+	const syncSignedIn = React.useCallback(() => {
+		setSignedIn(window.Clerk?.session !== null);
+	}, []);
 
 	React.useEffect(() => {
 		const abort = new AbortController();
@@ -94,7 +97,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			}
 			await loadClerk(body);
 			setClerkReady(true);
-			setSignedIn(window.Clerk?.session !== null);
+			syncSignedIn();
 		}
 
 		loadAuth().catch((error) => {
@@ -108,7 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			}
 		});
 		return () => abort.abort();
-	}, []);
+	}, [syncSignedIn]);
 
 	const trustedNetwork = config?.trusted_network === true;
 	const clerkConfigured = Boolean(config?.clerk_publishable_key);
@@ -121,7 +124,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 	const signIn = React.useCallback(() => {
 		window.Clerk?.openSignIn();
-	}, []);
+		for (const delayMs of [500, 1500, 3000, 6000]) {
+			window.setTimeout(syncSignedIn, delayMs);
+		}
+	}, [syncSignedIn]);
 
 	const signOut = React.useCallback(async () => {
 		await window.Clerk?.signOut();
