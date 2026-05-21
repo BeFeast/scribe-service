@@ -10,8 +10,14 @@ type ClerkSession = {
 	getToken: () => Promise<string | null>;
 };
 
+type ClerkLoadOptions = {
+	ui?: {
+		ClerkUI?: unknown;
+	};
+};
+
 type ClerkRuntime = {
-	load: () => Promise<void>;
+	load: (options?: ClerkLoadOptions) => Promise<void>;
 	openSignIn: () => void;
 	signOut: () => Promise<void>;
 	session: ClerkSession | null;
@@ -20,6 +26,7 @@ type ClerkRuntime = {
 declare global {
 	interface Window {
 		Clerk?: ClerkRuntime;
+		__internal_ClerkUICtor?: unknown;
 	}
 }
 
@@ -41,28 +48,57 @@ type AuthContextValue = {
 
 const AuthContext = React.createContext<AuthContextValue | null>(null);
 
-function loadClerk(config: AuthConfig): Promise<void> {
-	if (window.Clerk !== undefined) {
-		return window.Clerk.load();
+function clerkFrontendHost(config: AuthConfig): string {
+	if (config.clerk_frontend_api.trim()) {
+		const endpoint = config.clerk_frontend_api.includes("://")
+			? config.clerk_frontend_api
+			: `https://${config.clerk_frontend_api}`;
+		return new URL(endpoint).host;
 	}
 
+	const encodedHost = config.clerk_publishable_key.split("_")[2];
+	if (!encodedHost) {
+		throw new Error("Clerk publishable key is malformed");
+	}
+	return window.atob(encodedHost).replace(/\$$/, "");
+}
+
+function appendScript(
+	src: string,
+	configure?: (script: HTMLScriptElement) => void,
+): Promise<void> {
+	const existing = document.querySelector(`script[src="${src}"]`);
+	if (existing) {
+		return Promise.resolve();
+	}
 	return new Promise((resolve, reject) => {
 		const script = document.createElement("script");
 		script.async = true;
 		script.crossOrigin = "anonymous";
-		script.src =
-			"https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js";
-		script.dataset.clerkPublishableKey = config.clerk_publishable_key;
-		if (config.clerk_frontend_api) {
-			script.dataset.clerkFrontendApi = config.clerk_frontend_api;
-		}
-		script.addEventListener("load", () => {
-			window.Clerk?.load().then(resolve).catch(reject);
-		});
-		script.addEventListener("error", () =>
-			reject(new Error("Clerk browser runtime failed to load")),
-		);
+		script.src = src;
+		configure?.(script);
+		script.addEventListener("load", () => resolve());
+		script.addEventListener("error", () => reject(new Error(`${src} failed`)));
 		document.head.append(script);
+	});
+}
+
+async function loadClerk(config: AuthConfig): Promise<void> {
+	const host = clerkFrontendHost(config);
+	await appendScript(`https://${host}/npm/@clerk/ui@1/dist/ui.browser.js`);
+	if (window.Clerk === undefined) {
+		await appendScript(
+			`https://${host}/npm/@clerk/clerk-js@6/dist/clerk.browser.js`,
+			(script) => {
+				script.dataset.clerkPublishableKey = config.clerk_publishable_key;
+			},
+		);
+	}
+	if (window.Clerk === undefined) {
+		throw new Error("Clerk browser runtime failed to load");
+	}
+	await window.Clerk.load({
+		ui: { ClerkUI: window.__internal_ClerkUICtor },
 	});
 }
 
