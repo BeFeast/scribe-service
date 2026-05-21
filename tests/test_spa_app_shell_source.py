@@ -168,6 +168,9 @@ def test_spa_auth_config_and_protected_fetch_are_wired() -> None:
     assert "clerk_publishable_key" in source
     assert "clerk_frontend_api" in source
     assert "trusted_network" in source
+    assert "@clerk/ui@1/dist/ui.browser.js" in source
+    assert "@clerk/clerk-js@6/dist/clerk.browser.js" in source
+    assert "__internal_ClerkUICtor" in source
     assert 'headers.set("Authorization", `Bearer ${token}`)' in source
     assert "protectedFetch" in source
     assert "AuthProvider" in main
