@@ -74,6 +74,20 @@ def test_transcript_page_fetches_json_and_renders_markdown_locally() -> None:
     assert "youtu.be" not in source
 
 
+def test_transcript_markdown_autolinks_plain_urls_safely() -> None:
+    transcript = read("pages/Transcript.tsx")
+    shared = read("components/Markdown.tsx")
+    source = transcript + shared
+
+    assert "plainUrlPattern = /https?:\\/\\/" in source
+    assert "pushTextTokens(tokens, text.slice(cursor, match.index))" in transcript
+    assert "pushTextParts(parts, rest)" in shared
+    assert '| { type: "link"; text: string; href: string }' in source
+    assert 'target="_blank"' in source
+    assert 'rel="noopener noreferrer"' in source
+    assert "dangerouslySetInnerHTML" not in source
+
+
 def test_library_page_fetches_api_and_supports_layouts() -> None:
     source = read("pages/Library.tsx")
 

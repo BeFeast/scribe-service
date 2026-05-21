@@ -42,9 +42,14 @@ type InlineToken =
 	| { type: "text"; text: string }
 	| { type: "code"; text: string }
 	| { type: "strong"; text: string }
-	| { type: "em"; text: string };
+	| { type: "em"; text: string }
+	| { type: "link"; text: string; href: string };
 
 const COPY_RESET_MS = 1400;
+const inlinePattern =
+	/(`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)\s]+\)|\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_)/g;
+const plainUrlPattern = /https?:\/\/[^\s<>'"]+/g;
+const trailingUrlPunctuation = ".,;:!?)]}";
 
 function stripFrontmatter(text: string): string {
 	if (!text.startsWith("---")) {
@@ -143,15 +148,21 @@ function parseMd(markdown: string): MarkdownBlock[] {
 
 function inline(text: string): InlineToken[] {
 	const tokens: InlineToken[] = [];
-	const pattern = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_)/g;
 	let cursor = 0;
-	for (const match of text.matchAll(pattern)) {
+	for (const match of text.matchAll(inlinePattern)) {
 		const value = match[0];
 		if (match.index > cursor) {
-			tokens.push({ type: "text", text: text.slice(cursor, match.index) });
+			pushTextTokens(tokens, text.slice(cursor, match.index));
 		}
 		if (value.startsWith("`")) {
 			tokens.push({ type: "code", text: value.slice(1, -1) });
+		} else if (value.startsWith("[")) {
+			const link = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(value);
+			if (link === null) {
+				pushTextTokens(tokens, value);
+			} else {
+				tokens.push({ type: "link", text: link[1], href: link[2] });
+			}
 		} else if (value.startsWith("**") || value.startsWith("__")) {
 			tokens.push({ type: "strong", text: value.slice(2, -2) });
 		} else {
@@ -160,9 +171,47 @@ function inline(text: string): InlineToken[] {
 		cursor = match.index + value.length;
 	}
 	if (cursor < text.length) {
-		tokens.push({ type: "text", text: text.slice(cursor) });
+		pushTextTokens(tokens, text.slice(cursor));
 	}
 	return tokens;
+}
+
+function pushTextTokens(tokens: InlineToken[], text: string) {
+	let cursor = 0;
+	for (const match of text.matchAll(plainUrlPattern)) {
+		if (match.index > cursor) {
+			tokens.push({ type: "text", text: text.slice(cursor, match.index) });
+		}
+		const [href, trailing] = splitTrailingUrlPunctuation(match[0]);
+		tokens.push({ type: "link", text: href, href });
+		if (trailing.length > 0) {
+			tokens.push({ type: "text", text: trailing });
+		}
+		cursor = match.index + match[0].length;
+	}
+	if (cursor < text.length) {
+		tokens.push({ type: "text", text: text.slice(cursor) });
+	}
+}
+
+function splitTrailingUrlPunctuation(rawUrl: string): [string, string] {
+	let href = rawUrl;
+	let trailing = "";
+	while (
+		href.length > 0 &&
+		trailingUrlPunctuation.includes(href[href.length - 1] ?? "")
+	) {
+		if (href.endsWith(")") && count(href, "(") >= count(href, ")")) {
+			break;
+		}
+		trailing = `${href[href.length - 1]}${trailing}`;
+		href = href.slice(0, -1);
+	}
+	return [href, trailing];
+}
+
+function count(text: string, needle: string): number {
+	return text.split(needle).length - 1;
 }
 
 function Inline({ text }: { text: string }) {
@@ -176,6 +225,18 @@ function Inline({ text }: { text: string }) {
 		}
 		if (token.type === "em") {
 			return <em key={key}>{token.text}</em>;
+		}
+		if (token.type === "link") {
+			return (
+				<a
+					key={key}
+					href={token.href}
+					target="_blank"
+					rel="noopener noreferrer"
+				>
+					{token.text}
+				</a>
+			);
 		}
 		return <React.Fragment key={key}>{token.text}</React.Fragment>;
 	});
