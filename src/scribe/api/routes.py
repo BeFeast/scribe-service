@@ -495,14 +495,19 @@ def upsert_user(
     email = body.email.strip().lower()
     if body.role not in {UserRole.admin.value, UserRole.user.value}:
         raise HTTPException(status_code=422, detail="role must be admin or user")
+    clerk_subject = body.clerk_subject.strip() if body.clerk_subject else None
     user = session.scalar(select(User).where(User.primary_email == email))
+    if clerk_subject is not None:
+        subject_owner = session.scalar(select(User).where(User.clerk_subject == clerk_subject))
+        if subject_owner is not None and (user is None or subject_owner.id != user.id):
+            raise HTTPException(status_code=409, detail="clerk_subject is already assigned to another user")
     if user is None:
         owner = Owner(display_name=body.display_name or email)
         session.add(owner)
         session.flush()
         user = User(
             owner_id=owner.id,
-            clerk_subject=body.clerk_subject.strip() if body.clerk_subject else None,
+            clerk_subject=clerk_subject,
             primary_email=email,
             display_name=body.display_name,
             role=UserRole(body.role),
@@ -513,8 +518,8 @@ def upsert_user(
         user.role = UserRole(body.role)
         user.display_name = body.display_name
         user.is_active = body.is_active
-        if body.clerk_subject:
-            user.clerk_subject = body.clerk_subject.strip()
+        if clerk_subject:
+            user.clerk_subject = clerk_subject
     session.commit()
     session.refresh(user)
     return _auth_user_view(user)

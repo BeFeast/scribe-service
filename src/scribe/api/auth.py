@@ -17,6 +17,7 @@ import jwt
 from fastapi import HTTPException, Request
 from jwt import InvalidTokenError, PyJWK
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from scribe.config import settings
 
@@ -203,8 +204,14 @@ def _authorized_clerk_owner(owner: OwnerIdentity) -> OwnerIdentity:
         if user is None and int(session.scalar(select(func.count()).select_from(User)) or 0) == 0:
             bootstrap = _normalize_email(settings.auth_bootstrap_admin_email)
             if bootstrap and email == bootstrap:
-                user = _create_local_user(session, owner, role=UserRole.admin)
-                session.commit()
+                try:
+                    user = _create_local_user(session, owner, role=UserRole.admin)
+                    session.commit()
+                except IntegrityError:
+                    session.rollback()
+                    user = session.scalar(select(User).where(User.clerk_subject == owner.subject))
+                    if user is None:
+                        user = session.scalar(select(User).where(User.primary_email == email))
         if user is None:
             raise HTTPException(status_code=403, detail="signed-in Clerk user is not authorized in Scribe")
         if not user.is_active:

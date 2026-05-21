@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
+from scribe.api import auth as auth_module
 from scribe.api import routes as routes_module
 from scribe.config import settings
 from scribe.db.models import Job, JobStatus, Owner, Transcript, User, UserRole
@@ -124,6 +125,30 @@ def test_bootstrap_admin_clerk_user_can_post_jobs(db_session, monkeypatch):
     assert job.owner_id == user.owner_id
 
 
+def test_bootstrap_admin_race_loads_existing_user(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "auth_bootstrap_admin_email", "admin@example.com")
+    original_create = auth_module._create_local_user
+
+    def create_competing_user(session, owner, role):
+        from scribe.db.session import SessionLocal
+
+        with SessionLocal() as competing_session:
+            original_create(competing_session, owner, role)
+            competing_session.commit()
+        return original_create(session, owner, role)
+
+    monkeypatch.setattr(auth_module, "_create_local_user", create_competing_user)
+    with _client(db_session) as client:
+        resp = client.post(
+            "/jobs",
+            json={"url": "https://youtu.be/jNQXAC9IVRw"},
+            headers=_clerk("admin@example.com", "clerk_admin"),
+        )
+    assert resp.status_code == 201, resp.text
+    user = db_session.query(User).filter_by(primary_email="admin@example.com").one()
+    assert user.clerk_subject == "clerk_admin"
+
+
 def test_unauthorized_clerk_user_is_forbidden(db_session):
     _seed_user(db_session, email="allowed@example.com", subject="clerk_allowed")
     with _client(db_session) as client:
@@ -163,6 +188,27 @@ def test_extension_token_can_submit_outside_lan(db_session):
     job = db_session.get(Job, submit.json()["job_id"])
     assert job is not None
     assert job.owner_id == user.owner_id
+
+
+def test_admin_user_upsert_rejects_duplicate_clerk_subject_on_create(db_session):
+    _seed_user(db_session, email="alice@example.com", subject="clerk_alice")
+    with _client(db_session) as client:
+        resp = client.post(
+            "/api/admin/users",
+            json={"email": "bob@example.com", "role": "user", "clerk_subject": "clerk_alice"},
+        )
+    assert resp.status_code == 409
+
+
+def test_admin_user_upsert_rejects_duplicate_clerk_subject_on_update(db_session):
+    _seed_user(db_session, email="alice@example.com", subject="clerk_alice")
+    _seed_user(db_session, email="bob@example.com", subject="clerk_bob")
+    with _client(db_session) as client:
+        resp = client.post(
+            "/api/admin/users",
+            json={"email": "bob@example.com", "role": "user", "clerk_subject": "clerk_alice"},
+        )
+    assert resp.status_code == 409
 
 
 def test_extension_token_cannot_mint_another_extension_token(db_session):
