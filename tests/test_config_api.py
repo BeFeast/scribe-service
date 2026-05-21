@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlalchemy import delete
 
 from scribe.api import routes as routes_module
-from scribe.config import RUNTIME_CONFIG, RuntimeConfigSpec, parse_runtime_config_value, settings
+from scribe.config import RUNTIME_CONFIG, RuntimeConfigSpec, Settings, parse_runtime_config_value, settings
 from scribe.db.models import AppConfig
 from scribe.main import app
 
 TEST_TOKEN = "test-config-token"
+MACHINE_TOKEN = "test-machine-token"
 
 
 def _client(db_session) -> TestClient:
@@ -25,6 +27,8 @@ def _clear_config(session) -> None:
 def _settings_snapshot() -> dict[str, object]:
     snapshot = {key: getattr(settings, key) for key in RUNTIME_CONFIG}
     snapshot["config_api_bearer_token"] = settings.config_api_bearer_token
+    snapshot["trusted_cidrs"] = settings.trusted_cidrs
+    snapshot["machine_bearer_token"] = settings.machine_bearer_token
     return snapshot
 
 
@@ -293,16 +297,17 @@ def test_post_config_rejects_read_only_key(db_session):
         _clear_config(db_session)
 
 
-def test_config_requires_bearer_token(db_session):
+def test_post_config_requires_operator_auth_from_external_ip(db_session):
     snapshot = _settings_snapshot()
     sources = set(settings._runtime_sources)
     try:
         _clear_config(db_session)
-        settings.config_api_bearer_token = TEST_TOKEN
         app.dependency_overrides[routes_module.get_session] = lambda: db_session
-        client = TestClient(app)
+        settings.trusted_cidrs = "10.10.0.0/16"
+        settings.machine_bearer_token = MACHINE_TOKEN
+        client = TestClient(app, client=("203.0.113.10", 50000))
 
-        resp = client.get("/api/config")
+        resp = client.post("/api/config", json={"daily_spend_cap_usd": 1.0})
 
         assert resp.status_code == 401
     finally:
@@ -350,8 +355,17 @@ def test_parse_runtime_config_rejects_fractional_int():
             raise AssertionError(f"accepted fractional integer {value!r}")
 
 
+def test_settings_rejects_invalid_trusted_cidr():
+    try:
+        Settings(trusted_cidrs="10.10.0.0/16,not-a-cidr")
+    except ValidationError as exc:
+        assert "SCRIBE_TRUSTED_CIDRS contains invalid CIDR" in str(exc)
+    else:
+        raise AssertionError("accepted malformed trusted CIDR config")
+
+
 def test_rotate_token_stub_returns_501():
-    settings.config_api_bearer_token = TEST_TOKEN
+    settings.trusted_cidrs = "127.0.0.0/8"
     client = TestClient(app, headers={"Authorization": f"Bearer {TEST_TOKEN}"})
     resp = client.post("/api/config/rotate-token")
     assert resp.status_code == 501

@@ -5,9 +5,10 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+from ipaddress import ip_network
 from typing import Any, Literal
 
-from pydantic import AnyHttpUrl, PrivateAttr, TypeAdapter, ValidationError
+from pydantic import AnyHttpUrl, PrivateAttr, TypeAdapter, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from scribe.runtime_config import RuntimeConfigError, load_infisical_settings, redact_values
@@ -218,6 +219,19 @@ class Settings(BaseSettings):
     # Backups run nightly; flag as stale once the heartbeat is >25h old (one
     # missed cron tick). 0 disables the staleness check.
     backup_stale_after_seconds: int = 90_000
+
+    @field_validator("trusted_cidrs")
+    @classmethod
+    def _validate_trusted_cidrs(cls, value: str) -> str:
+        for raw in value.split(","):
+            cidr = raw.strip()
+            if not cidr:
+                continue
+            try:
+                ip_network(cidr, strict=False)
+            except ValueError as exc:
+                raise ValueError(f"SCRIBE_TRUSTED_CIDRS contains invalid CIDR {cidr!r}") from exc
+        return value
 
     def runtime_overlay(self, rows: Mapping[str, str] | None = None) -> set[str]:
         """Overlay mutable runtime config from app_config and return DB-backed keys."""

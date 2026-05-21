@@ -12,6 +12,14 @@ import os
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def auth_policy_defaults(monkeypatch):
+    from scribe.config import settings
+
+    monkeypatch.setattr(settings, "trusted_cidrs", "127.0.0.0/8,::1/128")
+    monkeypatch.setattr(settings, "machine_bearer_token", "")
+
+
 @pytest.fixture(scope="session")
 def test_database_url() -> str:
     url = os.environ.get("SCRIBE_TEST_DATABASE_URL", "").strip()
