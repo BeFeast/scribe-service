@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import hashlib
 import importlib.metadata
 import json
 import logging
@@ -26,9 +27,13 @@ from scribe.api.schemas import (
     ActiveJobsResponse,
     ActiveJobView,
     AuthConfigResponse,
+    AuthMeResponse,
+    AuthUserView,
     BackupSnapshot,
     ConfigEntry,
     ConfigResponse,
+    ExtensionTokenCreate,
+    ExtensionTokenCreateResponse,
     FailedJobView,
     JobCreate,
     JobStageView,
@@ -47,6 +52,8 @@ from scribe.api.schemas import (
     SystemSnapshot,
     TranscriptBrief,
     TranscriptFull,
+    UserListResponse,
+    UserUpsert,
     WorkerPoolSnapshot,
 )
 from scribe.config import (
@@ -55,7 +62,7 @@ from scribe.config import (
     serialize_runtime_config_value,
     settings,
 )
-from scribe.db.models import AppConfig, Job, JobStageEvent, JobStatus, Transcript
+from scribe.db.models import AppConfig, ExtensionToken, Job, JobStageEvent, JobStatus, Owner, Transcript, User, UserRole
 from scribe.db.query import escape_like
 from scribe.db.session import SessionLocal
 from scribe.obs import metrics
@@ -200,6 +207,8 @@ def _library_row(t: Transcript) -> LibraryRow:
 def _owner_filter(stmt, model, owner: OwnerIdentity | None):
     if owner is None:
         return stmt
+    if owner.owner_id is not None and hasattr(model, "owner_id"):
+        return stmt.where(model.owner_id == owner.owner_id)
     return stmt.where(model.owner_subject == owner.subject)
 
 
@@ -359,6 +368,37 @@ def get_auth_config(request: Request, response: Response) -> AuthConfigResponse:
     )
 
 
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _auth_user_view(user: User) -> AuthUserView:
+    return AuthUserView(
+        id=user.id,
+        owner_id=user.owner_id,
+        clerk_subject=user.clerk_subject,
+        primary_email=user.primary_email,
+        display_name=user.display_name,
+        role=user.role.value,
+        is_active=user.is_active,
+        created_at=user.created_at,
+    )
+
+
+def _user_for_owner(session: Session, owner: OwnerIdentity | None) -> User | None:
+    if owner is None or owner.owner_id is None:
+        return None
+    return session.scalar(select(User).where(User.owner_id == owner.owner_id, User.is_active.is_(True)))
+
+
+def _require_admin_user(request: Request, session: Session) -> None:
+    if is_trusted_lan_request(request):
+        return
+    user = _user_for_owner(session, current_owner(request))
+    if user is None or user.role != UserRole.admin:
+        raise HTTPException(status_code=403, detail="admin role required")
+
+
 @router.get("/api/config", response_model=ConfigResponse)
 def get_config(_auth: AuthState = Depends(require_operator_auth)) -> ConfigResponse:
     return _config_response()
@@ -416,6 +456,90 @@ def update_config(
 def rotate_token(_auth: AuthState = Depends(require_operator_auth)) -> None:
     # TODO(PRD §4.6): implement once the auth surface owns bearer-token rotation.
     raise HTTPException(status_code=501, detail="bearer-token rotation is not implemented yet")
+
+
+@router.get("/api/auth/me", response_model=AuthMeResponse)
+def auth_me(
+    request: Request,
+    session: Session = Depends(get_session),
+    auth: AuthState = Depends(require_operator_auth),
+) -> AuthMeResponse:
+    owner = current_owner(request)
+    user = _user_for_owner(session, owner)
+    return AuthMeResponse(
+        authenticated=True,
+        source=auth.value,
+        user=_auth_user_view(user) if user is not None else None,
+    )
+
+
+@router.get("/api/admin/users", response_model=UserListResponse)
+def list_users(
+    request: Request,
+    session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
+) -> UserListResponse:
+    _require_admin_user(request, session)
+    users = session.scalars(select(User).order_by(User.primary_email)).all()
+    return UserListResponse(users=[_auth_user_view(user) for user in users])
+
+
+@router.post("/api/admin/users", response_model=AuthUserView, status_code=201)
+def upsert_user(
+    body: UserUpsert,
+    request: Request,
+    session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
+) -> AuthUserView:
+    _require_admin_user(request, session)
+    email = body.email.strip().lower()
+    if body.role not in {UserRole.admin.value, UserRole.user.value}:
+        raise HTTPException(status_code=422, detail="role must be admin or user")
+    user = session.scalar(select(User).where(User.primary_email == email))
+    if user is None:
+        owner = Owner(display_name=body.display_name or email)
+        session.add(owner)
+        session.flush()
+        user = User(
+            owner_id=owner.id,
+            clerk_subject=body.clerk_subject.strip() if body.clerk_subject else None,
+            primary_email=email,
+            display_name=body.display_name,
+            role=UserRole(body.role),
+            is_active=body.is_active,
+        )
+        session.add(user)
+    else:
+        user.role = UserRole(body.role)
+        user.display_name = body.display_name
+        user.is_active = body.is_active
+        if body.clerk_subject:
+            user.clerk_subject = body.clerk_subject.strip()
+    session.commit()
+    session.refresh(user)
+    return _auth_user_view(user)
+
+
+@router.post("/api/auth/extension-token", response_model=ExtensionTokenCreateResponse, status_code=201)
+def create_extension_token(
+    body: ExtensionTokenCreate,
+    request: Request,
+    session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
+) -> ExtensionTokenCreateResponse:
+    user = _user_for_owner(session, current_owner(request))
+    if user is None:
+        raise HTTPException(status_code=403, detail="extension tokens require a Scribe user")
+    raw = "scribe_ext_" + secrets.token_urlsafe(32)
+    token = ExtensionToken(
+        user_id=user.id,
+        token_hash=_hash_token(raw),
+        token_prefix=raw[:18],
+        label=body.label or "Chrome extension",
+    )
+    session.add(token)
+    session.commit()
+    return ExtensionTokenCreateResponse(token=raw, token_prefix=token.token_prefix, label=token.label)
 
 
 @router.post("/jobs", response_model=JobView, status_code=201)
@@ -482,6 +606,7 @@ def create_job(
         url=body.url, video_id=video_id, status=JobStatus.queued,
         source=body.source,
         callback_url=str(body.callback_url) if body.callback_url else None,
+        owner_id=owner.owner_id if owner else None,
         owner_subject=owner.subject if owner else None,
         owner_email=owner.email if owner else None,
         owner_display_name=owner.display_name if owner else None,
@@ -1139,6 +1264,7 @@ def admin_retry_job(
     new_job = Job(
         url=job.url, video_id=job.video_id, status=JobStatus.queued,
         source=job.source, title=job.title, callback_url=job.callback_url,
+        owner_id=job.owner_id,
         owner_subject=job.owner_subject, owner_email=job.owner_email,
         owner_display_name=job.owner_display_name,
     )

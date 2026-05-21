@@ -147,6 +147,14 @@ def _time_stage(stage: str):
         metrics.stage_duration_seconds.labels(stage=stage).observe(time.monotonic() - start)
 
 
+def _job_tmpdir() -> Path:
+    try:
+        Path(settings.temp_dir).mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix="scribe-job-", dir=settings.temp_dir))
+    except PermissionError:
+        return Path(tempfile.mkdtemp(prefix="scribe-job-"))
+
+
 def _set_job_status(session, job: Job, status: JobStatus) -> None:
     """Update Job.status, count the transition, commit."""
     transition_job_status(session, job, status)
@@ -265,12 +273,12 @@ def process_job(session, job: Job) -> None:
                 partial.owner_subject = job.owner_subject
                 partial.owner_email = job.owner_email
                 partial.owner_display_name = job.owner_display_name
+                partial.owner_id = job.owner_id
                 _summarize_and_finalize(session, job, partial, partial.title, promoted=True)
                 job_log.info("job done (resumed)", extra={"transcript_id": partial.id, "stage": "done"})
                 return
 
-            Path(settings.temp_dir).mkdir(parents=True, exist_ok=True)
-            tmpdir = Path(tempfile.mkdtemp(prefix="scribe-job-", dir=settings.temp_dir))
+            tmpdir = _job_tmpdir()
             try:
                 with _time_stage("download"):
                     dl = downloader.download_audio(job.url, tmpdir)
@@ -300,6 +308,7 @@ def process_job(session, job: Job) -> None:
                     partial.owner_subject = job.owner_subject
                     partial.owner_email = job.owner_email
                     partial.owner_display_name = job.owner_display_name
+                    partial.owner_id = job.owner_id
                     _summarize_and_finalize(session, job, partial, partial.title, promoted=True)
                     job_log.info("job done (resumed)", extra={"transcript_id": partial.id, "stage": "done"})
                     return
@@ -328,6 +337,7 @@ def process_job(session, job: Job) -> None:
                 )
                 transcript = Transcript(
                     job_id=job.id,
+                    owner_id=job.owner_id,
                     video_id=dl.video_id,
                     title=dl.title,
                     transcript_md=tr.transcript_md,

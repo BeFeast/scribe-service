@@ -42,6 +42,7 @@ def _settings_snapshot() -> dict[str, object]:
     snapshot["auth_clerk_issuer"] = settings.auth_clerk_issuer
     snapshot["auth_clerk_jwks_url"] = settings.auth_clerk_jwks_url
     snapshot["auth_clerk_jwks_json"] = settings.auth_clerk_jwks_json
+    snapshot["auth_bootstrap_admin_email"] = settings.auth_bootstrap_admin_email
     snapshot["clerk_publishable_key"] = settings.clerk_publishable_key
     snapshot["clerk_frontend_api"] = settings.clerk_frontend_api
     return snapshot
@@ -368,6 +369,7 @@ def clerk_auth(clerk_keys):
     settings.config_api_bearer_token = ""
     settings.trusted_cidrs = "10.10.0.0/16"
     settings.auth_allowed_emails = "allowed@example.test"
+    settings.auth_bootstrap_admin_email = "allowed@example.test"
     settings.auth_clerk_issuer = CLERK_ISSUER
     settings.auth_clerk_jwks_url = ""
     settings.auth_clerk_jwks_json = json.dumps(jwks)
@@ -382,6 +384,7 @@ def clerk_auth(clerk_keys):
 def _clerk_token(
     private_key,
     *,
+    subject: str = "user_local_fixture",
     email: str | None = "allowed@example.test",
     issuer: str = CLERK_ISSUER,
     expires_delta: dt.timedelta = dt.timedelta(minutes=5),
@@ -389,7 +392,7 @@ def _clerk_token(
     now = dt.datetime.now(dt.UTC)
     claims: dict[str, object] = {
         "iss": issuer,
-        "sub": "user_local_fixture",
+        "sub": subject,
         "iat": now,
         "exp": now + expires_delta,
     }
@@ -421,7 +424,7 @@ def test_config_accepts_allowed_clerk_user(db_session, clerk_auth, clerk_keys):
 
 def test_config_rejects_clerk_user_outside_email_allowlist(db_session, clerk_auth, clerk_keys):
     private_key, _, _ = clerk_keys
-    token = _clerk_token(private_key, email="other@example.test")
+    token = _clerk_token(private_key, subject="user_other_fixture", email="other@example.test")
     resp = _post_config_with_clerk(db_session, token)
     assert resp.status_code == 403
 

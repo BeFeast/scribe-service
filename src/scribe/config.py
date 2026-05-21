@@ -200,6 +200,8 @@ class Settings(BaseSettings):
     auth_clerk_issuer: str = ""
     auth_clerk_jwks_url: str = ""
     auth_clerk_jwks_json: str = ""
+    auth_bootstrap_admin_email: str = ""
+    clerk_header_secret: str = ""
     clerk_publishable_key: str = ""
     clerk_frontend_api: str = ""
     bot_wall_retry: bool = False

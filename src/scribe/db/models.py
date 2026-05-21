@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -22,6 +22,11 @@ class JobStatus(StrEnum):
     failed = "failed"
 
 
+class UserRole(StrEnum):
+    admin = "admin"
+    user = "user"
+
+
 class AppConfig(Base):
     """Runtime config overlay. Values are stored as text and parsed by Settings."""
 
@@ -32,6 +37,73 @@ class AppConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class Owner(Base):
+    """Product ownership boundary. Users and their submitted work attach here."""
+
+    __tablename__ = "owners"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    users: Mapped[list[User]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    jobs: Mapped[list[Job]] = relationship(back_populates="owner")
+    transcripts: Mapped[list[Transcript]] = relationship(back_populates="owner")
+
+
+class User(Base):
+    """Local authorization row mapped from a Clerk user."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("owners.id", ondelete="CASCADE"), nullable=False, index=True)
+    clerk_subject: Mapped[str | None] = mapped_column(Text, nullable=True, unique=True)
+    primary_email: Mapped[str] = mapped_column(Text, nullable=False, unique=True, index=True)
+    display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    role: Mapped[UserRole] = mapped_column(
+        Enum(UserRole, name="user_role"),
+        nullable=False,
+        default=UserRole.user,
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    owner: Mapped[Owner] = relationship(back_populates="users")
+    extension_tokens: Mapped[list[ExtensionToken]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class ExtensionToken(Base):
+    """Revocable scoped token for clients that cannot use Clerk directly."""
+
+    __tablename__ = "extension_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    token_prefix: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped[User] = relationship(back_populates="extension_tokens")
 
 
 class Job(Base):
@@ -50,6 +122,7 @@ class Job(Base):
     )
     source: Mapped[str | None] = mapped_column(Text, nullable=True)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("owners.id", ondelete="SET NULL"), nullable=True, index=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Optional webhook target — scribe POSTs the final JobView JSON to
     # this URL on terminal status (done|failed). NULL = poll-only client.
@@ -67,6 +140,7 @@ class Job(Base):
     transcript: Mapped[Transcript | None] = relationship(
         back_populates="job", uselist=False, cascade="all, delete-orphan"
     )
+    owner: Mapped[Owner | None] = relationship(back_populates="jobs")
     stage_events: Mapped[list[JobStageEvent]] = relationship(
         back_populates="job", cascade="all, delete-orphan", order_by="JobStageEvent.started_at"
     )
@@ -87,6 +161,7 @@ class Transcript(Base):
     job_id: Mapped[int] = mapped_column(
         ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, unique=True
     )
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("owners.id", ondelete="SET NULL"), nullable=True, index=True)
     video_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     transcript_md: Mapped[str] = mapped_column(Text, nullable=False)
@@ -110,6 +185,7 @@ class Transcript(Base):
     )
 
     job: Mapped[Job] = relationship(back_populates="transcript")
+    owner: Mapped[Owner | None] = relationship(back_populates="transcripts")
 
 
 class JobStageEvent(Base):

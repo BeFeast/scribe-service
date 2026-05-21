@@ -94,6 +94,26 @@ curl http://localhost:13120/jobs/1
 Web UI: `GET /` lists transcripts, `GET /transcripts/{id}` renders summary +
 transcript as HTML.
 
+## Auth v2
+
+Scribe keeps product authorization in Postgres. Clerk handles human sign-in and
+the reverse proxy forwards `X-Clerk-User-Id`, `X-Clerk-User-Email`, and
+`X-Clerk-User-Name` to Scribe. If `SCRIBE_CLERK_HEADER_SECRET` is set, the proxy
+must also send `X-Scribe-Clerk-Secret`.
+
+Set `SCRIBE_AUTH_BOOTSTRAP_ADMIN_EMAIL` for the first admin only. When the first
+matching Clerk user signs in, Scribe creates the local `owner` + `user` rows;
+after that, admins manage access with `GET/POST /api/admin/users`. Trusted LAN
+CIDRs remain passwordless for local operator access. Set
+`SCRIBE_MACHINE_BEARER_TOKEN` only for automation clients.
+
+Chrome extension setup: sign in to the Scribe web UI as an enabled user, open
+Settings, create an extension token, paste the returned `scribe_ext_...` token
+into the extension bearer token field, and send
+it as `Authorization: Bearer <token>` with `POST /jobs`. The token is scoped to
+that Scribe user and can be disabled from the DB/admin tooling without rotating
+machine secrets.
+
 ## Vast.ai worker image
 
 See `docker/vast/`. Build + push from any host with Docker and a GitHub

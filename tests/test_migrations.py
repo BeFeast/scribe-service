@@ -153,6 +153,7 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
             "jobs owner columns missing after upgrade head — "
             "revision f6a7b8c9d012 likely silent-noop'd"
         )
+        assert "owner_id" in jobs_cols, "jobs.owner_id missing after auth DB migration"
 
         transcripts_cols = _column_names(eng, "transcripts")
         assert "vast_cost" in transcripts_cols, (
@@ -167,6 +168,13 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
             "transcripts owner columns missing after upgrade head — "
             "revision f6a7b8c9d012 likely silent-noop'd"
         )
+        assert "owner_id" in transcripts_cols, "transcripts.owner_id missing after auth DB migration"
+
+        assert "owners" in tables, f"upgrade head did not create owners (got {tables})"
+        assert "users" in tables, f"upgrade head did not create users (got {tables})"
+        assert "extension_tokens" in tables, f"upgrade head did not create extension_tokens (got {tables})"
+        users_cols = _column_names(eng, "users")
+        assert {"owner_id", "clerk_subject", "primary_email", "display_name", "role", "is_active"} <= users_cols
 
         # Revision a7c1d3e4f201 relaxes transcripts.summary_md to nullable.
         # Asserting column presence alone would miss a silent-noop of that

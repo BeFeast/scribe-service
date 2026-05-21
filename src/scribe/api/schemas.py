@@ -62,6 +62,45 @@ class JobView(BaseModel):
     stages: dict[str, JobStageView] | None = None
 
 
+class AuthUserView(BaseModel):
+    id: int
+    owner_id: int
+    clerk_subject: str | None = None
+    primary_email: str
+    display_name: str | None = None
+    role: str
+    is_active: bool
+    created_at: dt.datetime
+
+
+class AuthMeResponse(BaseModel):
+    authenticated: bool
+    source: str
+    user: AuthUserView | None = None
+
+
+class UserUpsert(BaseModel):
+    email: str
+    display_name: str | None = None
+    role: str = "user"
+    clerk_subject: str | None = None
+    is_active: bool = True
+
+
+class UserListResponse(BaseModel):
+    users: list[AuthUserView]
+
+
+class ExtensionTokenCreate(BaseModel):
+    label: str | None = None
+
+
+class ExtensionTokenCreateResponse(BaseModel):
+    token: str
+    token_prefix: str
+    label: str | None = None
+
+
 class PromptVersionView(BaseModel):
     id: str
     len_chars: int

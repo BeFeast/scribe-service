@@ -38,6 +38,12 @@ type PromptListResponse = {
 	versions: PromptVersion[];
 };
 
+type ExtensionTokenResponse = {
+	token: string;
+	token_prefix: string;
+	label?: string | null;
+};
+
 type PromptVersionId = "v1" | "v2" | "v3";
 type ConfigKey =
 	| "daily_spend_cap_usd"
@@ -99,12 +105,15 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 	const [dryRunMarkdown, setDryRunMarkdown] = React.useState<string | null>(
 		null,
 	);
+	const [extensionToken, setExtensionToken] = React.useState<string | null>(null);
 	const [showRotate, setShowRotate] = React.useState(false);
 	const [status, setStatus] = React.useState<string | null>(null);
 	const [error, setError] = React.useState<string | null>(null);
 	const [loading, setLoading] = React.useState(true);
 	const [saving, setSaving] = React.useState(false);
 	const [dryRunning, setDryRunning] = React.useState(false);
+	const [creatingExtensionToken, setCreatingExtensionToken] =
+		React.useState(false);
 
 	const headers = React.useMemo(() => authHeaders(token), [token]);
 	const promptDirty =
@@ -327,6 +336,32 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 		}
 	}
 
+	async function createExtensionToken() {
+		setCreatingExtensionToken(true);
+		setError(null);
+		try {
+			const response = await auth.protectedFetch("/api/auth/extension-token", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ label: "Chrome extension" }),
+			});
+			if (!response.ok) {
+				throw new Error(await responseMessage(response));
+			}
+			const body = (await response.json()) as ExtensionTokenResponse;
+			setExtensionToken(body.token);
+			setStatus("Extension token created");
+		} catch (tokenError) {
+			setError(
+				tokenError instanceof Error
+					? tokenError.message
+					: "extension token creation failed",
+			);
+		} finally {
+			setCreatingExtensionToken(false);
+		}
+	}
+
 	return (
 		<section className="settings-page pane">
 			<header className="pane-header">
@@ -395,6 +430,24 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 						onCopy={copyToken}
 						onRotate={() => setShowRotate(true)}
 					/>
+					<SettingsRow
+						label="Chrome extension"
+						hint="Create a scoped bearer token for extension submits outside the trusted LAN."
+					>
+						<div className="token-stack">
+							<button
+								className="btn"
+								type="button"
+								onClick={createExtensionToken}
+								disabled={creatingExtensionToken || !auth.canWrite}
+							>
+								{creatingExtensionToken ? "Creating" : "Create token"}
+							</button>
+							{extensionToken !== null ? (
+								<code className="token-output">{extensionToken}</code>
+							) : null}
+						</div>
+					</SettingsRow>
 				</section>
 
 				<section className="settings-group">

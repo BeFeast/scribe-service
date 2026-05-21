@@ -1411,6 +1411,23 @@ a {
 	gap: 0.45rem;
 }
 
+.token-stack {
+	display: grid;
+	justify-items: end;
+	max-width: 100%;
+	gap: 0.45rem;
+}
+
+.token-output {
+	max-width: min(34rem, 100%);
+	padding: 0.55rem;
+	border: var(--rule);
+	border-radius: var(--radius);
+	background: var(--bg);
+	overflow-wrap: anywhere;
+	font-size: 0.78rem;
+}
+
 .source-chip {
 	display: inline-flex;
 	align-items: center;
