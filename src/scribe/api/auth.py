@@ -10,15 +10,21 @@ import secrets
 from dataclasses import dataclass
 from enum import StrEnum
 
+import httpx
+import jwt
 from fastapi import HTTPException, Request
+from jwt import InvalidTokenError, PyJWK
 
 from scribe.config import settings
+
+_JWKS_CACHE: dict[tuple[str, str], dict] = {}
 
 
 class AuthState(StrEnum):
     public = "public"
     trusted_lan = "trusted_lan"
     machine_bearer = "machine_bearer"
+    clerk_user = "clerk_user"
 
 
 @dataclass(frozen=True)
@@ -60,6 +66,9 @@ def classify_auth(request: Request) -> AuthState:
         machine_token = settings.machine_bearer_token.strip()
         if machine_token and secrets.compare_digest(bearer, machine_token):
             return AuthState.machine_bearer
+        if _clerk_configured():
+            _validate_clerk_user(bearer)
+            return AuthState.clerk_user
     if _is_trusted_lan_request(request):
         return AuthState.trusted_lan
     return AuthState.public
@@ -141,3 +150,89 @@ def _request_host(request: Request) -> ipaddress.IPv4Address | ipaddress.IPv6Add
         return ipaddress.ip_address(raw_host)
     except ValueError:
         return None
+
+
+def _clerk_configured() -> bool:
+    return bool(settings.auth_clerk_issuer.strip()) and (
+        bool(settings.auth_clerk_jwks_url.strip()) or bool(settings.auth_clerk_jwks_json.strip())
+    )
+
+
+def _allowed_emails() -> frozenset[str]:
+    return frozenset(
+        email.strip().lower() for email in settings.auth_allowed_emails.replace("\n", ",").split(",") if email.strip()
+    )
+
+
+def _load_jwks() -> dict:
+    inline = settings.auth_clerk_jwks_json.strip()
+    if inline:
+        cache_key = ("inline", inline)
+        if cache_key not in _JWKS_CACHE:
+            try:
+                _JWKS_CACHE[cache_key] = json.loads(inline)
+            except json.JSONDecodeError as exc:
+                raise HTTPException(status_code=503, detail="Clerk JWKS JSON is invalid") from exc
+        return _JWKS_CACHE[cache_key]
+
+    url = settings.auth_clerk_jwks_url.strip()
+    if not url:
+        raise HTTPException(status_code=503, detail="Clerk JWKS is not configured")
+    cache_key = ("url", url)
+    if cache_key not in _JWKS_CACHE:
+        try:
+            response = httpx.get(url, timeout=5.0)
+            response.raise_for_status()
+            _JWKS_CACHE[cache_key] = response.json()
+        except (httpx.HTTPError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=503, detail="Clerk JWKS fetch failed") from exc
+    return _JWKS_CACHE[cache_key]
+
+
+def _jwk_for_token(token: str) -> PyJWK:
+    try:
+        header = jwt.get_unverified_header(token)
+    except InvalidTokenError as exc:
+        raise HTTPException(status_code=401, detail="invalid Clerk JWT") from exc
+
+    kid = header.get("kid")
+    keys = _load_jwks().get("keys", [])
+    if not isinstance(keys, list):
+        raise HTTPException(status_code=503, detail="Clerk JWKS is invalid")
+
+    key = next((item for item in keys if isinstance(item, dict) and item.get("kid") == kid), None)
+    if key is None and kid is None and len(keys) == 1 and isinstance(keys[0], dict):
+        key = keys[0]
+    if key is None:
+        raise HTTPException(status_code=401, detail="invalid Clerk JWT")
+
+    try:
+        return PyJWK.from_dict(key)
+    except InvalidTokenError as exc:
+        raise HTTPException(status_code=503, detail="Clerk JWKS is invalid") from exc
+
+
+def _validate_clerk_user(token: str) -> None:
+    issuer = settings.auth_clerk_issuer.strip()
+    if not issuer:
+        raise HTTPException(status_code=503, detail="Clerk issuer is not configured")
+
+    jwk = _jwk_for_token(token)
+    try:
+        claims = jwt.decode(
+            token,
+            key=jwk.key,
+            algorithms=["RS256"],
+            issuer=issuer,
+            options={"require": ["exp"], "verify_aud": False},
+        )
+    except InvalidTokenError as exc:
+        raise HTTPException(status_code=401, detail="invalid Clerk JWT") from exc
+
+    email = _claim_string(claims, "email", "primary_email_address", "email_address")
+    if email is None or email.lower() not in _allowed_emails():
+        raise HTTPException(status_code=403, detail="email is not allowed")
+
+
+def clear_jwks_cache() -> None:
+    _JWKS_CACHE.clear()

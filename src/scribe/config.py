@@ -195,6 +195,10 @@ class Settings(BaseSettings):
     # Runtime-tunable Settings page knobs. These default from env/.env and may
     # be overlaid from app_config at startup or after POST /api/config.
     config_api_bearer_token: str = ""
+    auth_allowed_emails: str = ""
+    auth_clerk_issuer: str = ""
+    auth_clerk_jwks_url: str = ""
+    auth_clerk_jwks_json: str = ""
     bot_wall_retry: bool = False
     webhook_default: str = ""
     webhook_embed_transcript: bool = False
