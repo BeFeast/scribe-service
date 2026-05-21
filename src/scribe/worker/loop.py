@@ -208,6 +208,15 @@ def _find_partial_transcript(session, video_id: str) -> Transcript | None:
     )
 
 
+def _find_done_transcript(session, video_id: str) -> Transcript | None:
+    """Return the most recent completed transcript for this resolved video key."""
+    return session.scalar(
+        select(Transcript)
+        .where(Transcript.video_id == video_id, Transcript.summary_md.is_not(None))
+        .order_by(Transcript.id.desc())
+    )
+
+
 def _mint_shortlinks(transcript: Transcript) -> None:
     """Idempotently mint scribe-web-UI shortlinks. Skips fields that are
     already set so re-runs (resume path) don't churn Chhoto."""
@@ -264,9 +273,32 @@ def process_job(session, job: Job) -> None:
             try:
                 with _time_stage("download"):
                     dl = downloader.download_audio(job.url, tmpdir)
+                was_pending_key = job.video_id.startswith("pending:")
                 job.title = dl.title
+                if job.video_id != dl.video_id:
+                    job.video_id = dl.video_id
+                    job_log = logging.LoggerAdapter(log, {"job_id": job_id, "video_id": job.video_id})
                 session.commit()
                 job_log.info("download done", extra={"title": dl.title, "stage": "download"})
+
+                if was_pending_key:
+                    done = _find_done_transcript(session, dl.video_id)
+                    if done is not None:
+                        job_log.info(
+                            "deduplicated after extraction",
+                            extra={"transcript_id": done.id, "stage": "dedup"},
+                        )
+                        _set_job_status(session, job, JobStatus.done)
+                        _deliver_webhook(session, job)
+                        return
+
+                partial = _find_partial_transcript(session, dl.video_id)
+                if partial is not None:
+                    job_log.info("resuming partial transcript", extra={"transcript_id": partial.id, "stage": "resume"})
+                    partial.job_id = job.id
+                    _summarize_and_finalize(session, job, partial, partial.title, promoted=True)
+                    job_log.info("job done (resumed)", extra={"transcript_id": partial.id, "stage": "done"})
+                    return
 
                 with _time_stage("ffmpeg"):
                     wav = ffmpeg.to_wav_16k_mono(dl.audio_path, tmpdir / "input-16k.wav")

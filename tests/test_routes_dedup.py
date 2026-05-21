@@ -64,6 +64,20 @@ def test_post_jobs_dedup_returns_done_transcript(client, db_session):
     assert body["transcript"]["id"] == transcript.id
 
 
+def test_post_jobs_accepts_x_url_into_queue(client, db_session):
+    resp = client.post("/jobs", json={"url": "https://x.com/i/status/2057105488165163198"})
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["deduplicated"] is False
+    assert body["status"] == "queued"
+    assert body["video_id"].startswith("pending:")
+
+    job = db_session.get(Job, body["job_id"])
+    assert job is not None
+    assert job.url == "https://x.com/i/status/2057105488165163198"
+    assert job.video_id == body["video_id"]
+
+
 def test_post_jobs_does_not_dedup_partial(client, db_session):
     """Partial transcripts must NOT dedup — re-submission triggers the resume
     path on a fresh Job. Without this, /resummarize would never be called

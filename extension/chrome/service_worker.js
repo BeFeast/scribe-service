@@ -4,30 +4,27 @@ const NOTIFICATION_LINKS_KEY = "notificationLinks";
 const NOTIFICATION_ICON = "icons/scribe-128.png";
 const CLEAR_BADGE_ALARM = "clear-scribe-badge";
 
-const YOUTUBE_WATCH_URL = /^https:\/\/www\.youtube\.com\/watch(?:[?#]|$)/;
-const YOUTUBE_URL = /^https:\/\/(?:[^/]+\.)?(?:youtube\.com\/|youtu\.be\/)/;
+const HTTP_URL = /^https?:\/\//i;
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: "submit-page",
-      title: "Submit this YouTube page to Scribe",
+      title: "Submit this video page to Scribe",
       contexts: ["page"],
-      documentUrlPatterns: ["*://*.youtube.com/*", "*://youtu.be/*"],
     });
 
     chrome.contextMenus.create({
       id: "submit-link",
-      title: "Submit YouTube link to Scribe",
+      title: "Submit video link to Scribe",
       contexts: ["link"],
-      targetUrlPatterns: ["*://*.youtube.com/*", "*://youtu.be/*"],
     });
   });
 });
 
 chrome.action.onClicked.addListener(async (tab) => {
-  if (!tab.url || !YOUTUBE_WATCH_URL.test(tab.url)) {
-    await notifyFailure("Open a YouTube watch page before using the toolbar action.");
+  if (!isSubmittableUrl(tab.url || "")) {
+    await notifyFailure("Open an http(s) video page before using the toolbar action.");
     return;
   }
 
@@ -36,8 +33,8 @@ chrome.action.onClicked.addListener(async (tab) => {
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const url = info.linkUrl || info.pageUrl || tab?.url || "";
-  if (!YOUTUBE_URL.test(url)) {
-    await notifyFailure("Use this menu on a YouTube page or YouTube link.");
+  if (!isSubmittableUrl(url)) {
+    await notifyFailure("Use this menu on an http(s) video page or link.");
     return;
   }
 
@@ -76,6 +73,10 @@ async function submitToScribe(url) {
     await notifyFailure(error.message || String(error));
     setBadge("ERR", "#b3261e");
   }
+}
+
+function isSubmittableUrl(url) {
+  return HTTP_URL.test(String(url || ""));
 }
 
 async function getConfig() {

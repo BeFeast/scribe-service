@@ -43,6 +43,7 @@ type InlineToken =
 	| { type: "em"; text: string };
 
 const COPY_RESET_MS = 1400;
+const youtubeVideoIdPattern = /^[0-9A-Za-z_-]{11}$/;
 
 function stripFrontmatter(text: string): string {
 	if (!text.startsWith("---")) {
@@ -459,7 +460,9 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 						<span>{record.lang ?? "lang unknown"}</span>
 						<span>{formatDuration(record.duration_seconds)}</span>
 						<span>{created}</span>
-						<a href={`https://youtu.be/${record.video_id}`}>youtube</a>
+						{youtubeVideoIdPattern.test(record.video_id) ? (
+							<a href={`https://youtu.be/${record.video_id}`}>youtube</a>
+						) : null}
 						<a href={`/transcripts/${record.id}/summary.md`}>summary.md</a>
 						<a href={`/transcripts/${record.id}/transcript.md`}>
 							transcript.md
@@ -557,7 +560,9 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 			<footer className="detail-footer">
 				<span>job_id: {record.job_id}</span>
 				<span>video_id: {record.video_id}</span>
-				<span>vast_cost: {formatUsdCost(record.vast_cost, displayCurrency)}</span>
+				<span>
+					vast_cost: {formatUsdCost(record.vast_cost, displayCurrency)}
+				</span>
 				<span>created: {created}</span>
 			</footer>
 

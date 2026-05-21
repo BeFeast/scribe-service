@@ -11,6 +11,8 @@ Resampling to 16 kHz mono wav is a separate single ffmpeg pass (see ffmpeg.py).
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import subprocess
 import time
@@ -24,6 +26,7 @@ BOTWALL_RE = re.compile(r"Sign in to confirm|LOGIN_REQUIRED|not a bot", re.IGNOR
 MAX_TRIES = 3
 BACKOFF_SECONDS = 45
 _VIDEO_ID_RE = re.compile(r"(?:v=|youtu\.be/|/shorts/|/embed/)([0-9A-Za-z_-]{11})")
+_NON_KEY_CHARS_RE = re.compile(r"[^a-z0-9_.-]+")
 
 
 class DownloadError(RuntimeError):
@@ -38,11 +41,35 @@ class DownloadResult:
     duration_seconds: int | None
 
 
-def extract_video_id(url: str) -> str:
+def parse_youtube_video_id(url: str) -> str | None:
     match = _VIDEO_ID_RE.search(url)
+    return match.group(1) if match else None
+
+
+def extract_video_id(url: str) -> str:
+    match = parse_youtube_video_id(url)
     if not match:
         raise DownloadError(f"could not parse a YouTube video id from: {url}")
-    return match.group(1)
+    return match
+
+
+def initial_video_key(url: str) -> str:
+    youtube_id = parse_youtube_video_id(url)
+    if youtube_id is not None:
+        return youtube_id
+    digest = hashlib.sha256(url.strip().encode("utf-8")).hexdigest()[:24]
+    return f"pending:{digest}"
+
+
+def normalized_video_key(extractor: str | None, media_id: str | None) -> str | None:
+    if not media_id:
+        return None
+    provider = _NON_KEY_CHARS_RE.sub("-", (extractor or "").strip().lower()).strip("-")
+    if provider in {"youtube", "youtube-tab", "youtube-playlist"}:
+        return media_id
+    if not provider:
+        return media_id
+    return f"{provider}:{media_id}"
 
 
 def _base_args(deno_path: str) -> list[str]:
@@ -70,17 +97,22 @@ def _run_ytdlp(args: list[str]) -> subprocess.CompletedProcess:
             continue
         break
     detail = (last.stderr or last.stdout or "")[-2000:]
-    raise DownloadError(f"yt-dlp failed (rc={last.returncode}):\n{detail}")
+    raise DownloadError(f"video extraction failed (yt-dlp rc={last.returncode}):\n{detail}")
 
 
 def download_audio(url: str, dest_dir: Path, *, deno_path: str = "deno") -> DownloadResult:
     """Download the audio stream of `url` into `dest_dir`, return metadata + path."""
     dest_dir.mkdir(parents=True, exist_ok=True)
-    fallback_id = extract_video_id(url)
     base = _base_args(deno_path)
 
-    meta = _run_ytdlp([*base, "--skip-download", "--print", "%(id)s\t%(title)s\t%(duration)s", url])
-    vid, title, duration = (meta.stdout.strip().splitlines()[-1].split("\t") + ["", "", ""])[:3]
+    meta = _run_ytdlp([*base, "--skip-download", "--dump-single-json", url])
+    try:
+        info = json.loads(meta.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as exc:
+        raise DownloadError("video extraction failed: yt-dlp returned invalid metadata") from exc
+    video_id = normalized_video_key(info.get("extractor_key"), info.get("id")) or initial_video_key(url)
+    title = info.get("title") or url
+    duration = info.get("duration")
     try:
         duration_seconds: int | None = int(float(duration))
     except (ValueError, TypeError):
@@ -98,7 +130,7 @@ def download_audio(url: str, dest_dir: Path, *, deno_path: str = "deno") -> Down
 
     return DownloadResult(
         audio_path=audio_path,
-        title=title or url,
-        video_id=vid or fallback_id,
+        title=title,
+        video_id=video_id,
         duration_seconds=duration_seconds,
     )

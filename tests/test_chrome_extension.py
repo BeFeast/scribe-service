@@ -17,12 +17,12 @@ def test_manifest_v3_extension_contract() -> None:
     assert manifest["manifest_version"] == 3
     assert manifest["background"]["service_worker"] == "service_worker.js"
     assert manifest["options_page"] == "options.html"
-    assert manifest["action"]["default_title"] == "Submit YouTube video to Scribe"
+    assert manifest["action"]["default_title"] == "Submit video to Scribe"
     assert {"activeTab", "alarms", "contextMenus", "notifications", "storage"} <= set(
         manifest["permissions"],
     )
     assert "https://scribe.oklabs.uk/*" in manifest["host_permissions"]
-    assert "https://www.youtube.com/*" in manifest["host_permissions"]
+    assert "https://www.youtube.com/*" not in manifest["host_permissions"]
     assert "https://*/*" in manifest["optional_host_permissions"]
     assert manifest["icons"]["16"] == "icons/scribe-16.png"
     assert manifest["icons"]["48"] == "icons/scribe-48.png"
@@ -32,7 +32,7 @@ def test_manifest_v3_extension_contract() -> None:
     assert (EXTENSION / "icons" / "scribe-128.png").is_file()
 
 
-def test_service_worker_uses_existing_jobs_api_and_youtube_flows() -> None:
+def test_service_worker_uses_existing_jobs_api_and_video_flows() -> None:
     source = read("service_worker.js")
 
     assert 'const DEFAULT_BASE_URL = "https://scribe.oklabs.uk";' in source
@@ -40,8 +40,9 @@ def test_service_worker_uses_existing_jobs_api_and_youtube_flows() -> None:
     assert 'fetch(`${config.baseUrl}/jobs`' in source
     assert "JSON.stringify({ url, source: SOURCE })" in source
     assert "chrome.action.onClicked.addListener" in source
-    assert "YOUTUBE_WATCH_URL.test(tab.url)" in source
-    assert "(?:[^/]+\\.)?(?:youtube\\.com\\/|youtu\\.be\\/)" in source
+    assert "isSubmittableUrl(tab.url || \"\")" in source
+    assert "HTTP_URL.test" in source
+    assert "youtube.com" not in source
     assert "chrome.contextMenus.onClicked.addListener" in source
     assert 'id: "submit-page"' in source
     assert 'id: "submit-link"' in source
@@ -87,6 +88,6 @@ def test_extension_docs_include_install_and_manual_verification_checklist() -> N
     assert "Load unpacked" in docs
     assert "Manual Verification" in docs
     assert "toolbar action" in docs
-    assert "Right-click a YouTube link" in docs
+    assert "Right-click a video link" in docs
     assert "unreachable host" in docs
     assert "POST /jobs" in docs

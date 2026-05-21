@@ -1,8 +1,8 @@
 import React from "react";
 
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import type { Route } from "../hooks/useRoute";
 import { usePoll } from "../hooks/usePoll";
+import type { Route } from "../hooks/useRoute";
 import type { LibraryLayout } from "../hooks/useTweaks";
 import type { DisplayCurrency } from "../lib/currency";
 import { formatUsdCost } from "../lib/currency";
@@ -71,6 +71,7 @@ type LibraryProps = {
 const terminalStatuses = new Set(["done", "failed", "cancelled", "canceled"]);
 const stageLabels = ["queued", "downloading", "transcribing", "summarizing"];
 const libraryPageSize = 50;
+const youtubeVideoIdPattern = /^[0-9A-Za-z_-]{11}$/;
 
 function formatDate(value: string): string {
 	const date = new Date(value);
@@ -125,7 +126,12 @@ function errorMessage(status: number, body: unknown): string {
 	return `Submit failed: ${status}`;
 }
 
-export function Library({ layout, displayCurrency, route, navigate }: LibraryProps) {
+export function Library({
+	layout,
+	displayCurrency,
+	route,
+	navigate,
+}: LibraryProps) {
 	const selectedTag = route.params.tag;
 	const [query, setQuery] = React.useState("");
 	const [submitUrl, setSubmitUrl] = React.useState("");
@@ -244,7 +250,8 @@ export function Library({ layout, displayCurrency, route, navigate }: LibraryPro
 		}
 	};
 	const submitTrimmed = submitUrl.trim();
-	const canSubmitUrl = submitTrimmed.length > 0 && submitState.state !== "submitting";
+	const canSubmitUrl =
+		submitTrimmed.length > 0 && submitState.state !== "submitting";
 	const submitMessage =
 		submitState.state === "success"
 			? `Queued job #${submitState.job.job_id}`
@@ -328,10 +335,14 @@ export function Library({ layout, displayCurrency, route, navigate }: LibraryPro
 										setSubmitState({ state: "idle" });
 									}
 								}}
-								placeholder="YouTube URL"
+								placeholder="Video URL"
 							/>
 						</label>
-						<button type="submit" className="btn primary" disabled={!canSubmitUrl}>
+						<button
+							type="submit"
+							className="btn primary"
+							disabled={!canSubmitUrl}
+						>
 							Submit
 						</button>
 						{submitMessage !== null ? (
@@ -357,7 +368,7 @@ export function Library({ layout, displayCurrency, route, navigate }: LibraryPro
 					<span className="chip info">0 transcripts</span>
 					<p className="feed-title">Nothing in the library yet</p>
 					<p className="feed-excerpt">
-						Submitted YouTube URLs will appear here after transcription starts.
+						Submitted video URLs will appear here after transcription starts.
 					</p>
 				</div>
 			) : null}
@@ -555,7 +566,11 @@ function LibTable({
 								{row.is_partial ? (
 									<span className="chip warn">partial</span>
 								) : null}
-								<RowLinks row={row} onDelete={onDelete} busy={deleteBusyId === row.id} />
+								<RowLinks
+									row={row}
+									onDelete={onDelete}
+									busy={deleteBusyId === row.id}
+								/>
 							</td>
 							<td>
 								<TagList row={row} onTagClick={onTagClick} />
@@ -607,7 +622,11 @@ function LibFeed({
 					<p className="feed-excerpt">{row.summary_excerpt}</p>
 					<RowMeta row={row} displayCurrency={displayCurrency} />
 					<TagList row={row} onTagClick={onTagClick} />
-					<RowLinks row={row} onDelete={onDelete} busy={deleteBusyId === row.id} />
+					<RowLinks
+						row={row}
+						onDelete={onDelete}
+						busy={deleteBusyId === row.id}
+					/>
 				</article>
 			))}
 		</div>
@@ -646,7 +665,11 @@ function LibCards({
 					<p className="feed-excerpt">{row.summary_excerpt}</p>
 					<TagList row={row} onTagClick={onTagClick} />
 					<RowMeta row={row} displayCurrency={displayCurrency} />
-					<RowLinks row={row} onDelete={onDelete} busy={deleteBusyId === row.id} />
+					<RowLinks
+						row={row}
+						onDelete={onDelete}
+						busy={deleteBusyId === row.id}
+					/>
 				</article>
 			))}
 		</div>
@@ -707,7 +730,9 @@ function RowLinks({
 }) {
 	return (
 		<div className="row-links">
-			<a href={`https://youtu.be/${row.video_id}`}>YouTube</a>
+			{youtubeVideoIdPattern.test(row.video_id) ? (
+				<a href={`https://youtu.be/${row.video_id}`}>YouTube</a>
+			) : null}
 			{row.summary_shortlink !== null ? (
 				<a href={row.summary_shortlink}>Summary</a>
 			) : null}

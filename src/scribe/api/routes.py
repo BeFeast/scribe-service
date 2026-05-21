@@ -61,7 +61,7 @@ from scribe.obs import metrics
 from scribe.obs import ops as ops_helpers
 from scribe.obs.live_logs import job_log_buffer
 from scribe.pipeline import prompts, shortlinks, summarizer
-from scribe.pipeline.downloader import DownloadError, extract_video_id
+from scribe.pipeline.downloader import initial_video_key
 
 router = APIRouter()
 log = logging.getLogger("scribe.api")
@@ -399,13 +399,10 @@ def rotate_token(_auth: None = Depends(require_config_auth)) -> None:
 
 @router.post("/jobs", response_model=JobView, status_code=201)
 def create_job(body: JobCreate, session: Session = Depends(get_session)) -> JobView:
-    """Submit a YouTube URL. Deduplicates by video_id against **done** transcripts
+    """Submit a video URL. Deduplicates by video_id against **done** transcripts
     and in-flight jobs. Partial transcripts (whisper succeeded but summary
     failed) do NOT dedup — the new job's worker will resume them."""
-    try:
-        video_id = extract_video_id(body.url)
-    except DownloadError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    video_id = initial_video_key(body.url)
 
     done = _latest_done_transcript(session, video_id)
     if done is not None:

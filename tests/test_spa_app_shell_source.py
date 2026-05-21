@@ -152,8 +152,8 @@ def test_cmdk_custom_event_is_wired_without_window_globals() -> None:
 def test_command_palette_covers_submit_search_navigation_and_a11y() -> None:
     source = read("components/CommandPalette.tsx")
 
-    for shape in ("youtu.be", "/watch", "/shorts/"):
-        assert shape in source
+    assert "parseVideoUrl" in source
+    assert "url.protocol === \"http:\"" in source
     assert 'fetch("/jobs"' in source
     assert 'source: "manual"' in source
     assert "Queued as job #" in source

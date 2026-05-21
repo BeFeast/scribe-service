@@ -1,4 +1,4 @@
-"""scribe — self-hosted YouTube video-summary service.
+"""scribe — self-hosted video-summary service.
 
 Design: HomeLab/Projects/video-summary-service-design-2026-05-14.md (Obsidian vault).
 Obsidian-agnostic: scribe owns URL -> transcript -> summary -> DB + API + web-UI.
