@@ -1,4 +1,4 @@
-"""Runtime settings, env-driven (SCRIBE_* / .env) with a DB overlay."""
+"""Runtime settings, Infisical/env-driven (SCRIBE_* / .env) with a DB overlay."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from typing import Any, Literal
 
 from pydantic import AnyHttpUrl, PrivateAttr, TypeAdapter, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from scribe.runtime_config import RuntimeConfigError, load_infisical_settings, redact_values
 
 ConfigKind = Literal[
     "bool",
@@ -224,4 +226,15 @@ class Settings(BaseSettings):
         return "db" if key in self._runtime_sources else "env"
 
 
-settings = Settings()
+def build_settings() -> Settings:
+    """Build process settings with Infisical taking precedence over env."""
+    overlay = load_infisical_settings(Settings.model_fields)
+    try:
+        return Settings(**overlay)
+    except ValidationError as exc:
+        if not overlay:
+            raise
+        raise RuntimeConfigError(redact_values(str(exc), overlay.values())) from None
+
+
+settings = build_settings()
