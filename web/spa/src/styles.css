@@ -1755,8 +1755,53 @@ a {
 
 .topbar-actions {
 	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
 	justify-content: flex-end;
 	gap: 0.45rem;
+}
+
+.topbar-access-status {
+	display: inline-flex;
+	align-items: center;
+	min-height: 2.35rem;
+	padding: 0 0.7rem;
+	border: var(--rule);
+	border-radius: var(--radius);
+	background: var(--bg-card);
+	color: var(--muted);
+	font-size: 0.78rem;
+	font-weight: 800;
+	text-transform: uppercase;
+	white-space: nowrap;
+}
+
+.auth-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 2.35rem;
+	padding: 0 0.8rem;
+	border: var(--rule);
+	border-radius: var(--radius);
+	background: var(--accent);
+	color: var(--accent-fg);
+	font-weight: 800;
+}
+
+.auth-button.ghost {
+	background: var(--bg);
+	color: var(--fg);
+}
+
+.auth-button:hover:not(:disabled) {
+	border-color: var(--accent);
+	filter: brightness(1.03);
+}
+
+.auth-button:disabled {
+	cursor: wait;
+	opacity: 0.65;
 }
 
 .icon-button {
