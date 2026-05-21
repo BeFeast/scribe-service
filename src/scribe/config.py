@@ -187,6 +187,7 @@ class Settings(BaseSettings):
     # each whisper run owns its own Vast instance, so two in flight is safe and
     # halves wall time on a small batch.
     worker_concurrency: int = 2
+    app_start_workers: bool = True
 
     # Daily Vast.ai spend cap in USD (rolling 24h). 0 disables the cap.
     # When exceeded, POST /jobs returns 429 until the rolling window opens up.

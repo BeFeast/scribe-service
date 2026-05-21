@@ -119,7 +119,7 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 		try {
 			const [configResponse, promptsResponse] = await Promise.all([
 				auth.protectedFetch("/api/config", { headers }),
-				fetch("/api/prompts"),
+				auth.protectedFetch("/api/prompts", { headers }),
 			]);
 			if (!configResponse.ok) {
 				throw new Error(await responseMessage(configResponse));
@@ -130,7 +130,10 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 			const configBody = (await configResponse.json()) as ConfigResponse;
 			const promptsBody = (await promptsResponse.json()) as PromptListResponse;
 			const activeVersion = promptsBody.active_version;
-			const promptResponse = await fetch(`/api/prompts/${activeVersion}`);
+			const promptResponse = await auth.protectedFetch(
+				`/api/prompts/${activeVersion}`,
+				{ headers },
+			);
 			if (!promptResponse.ok) {
 				throw new Error(await responseMessage(promptResponse));
 			}
@@ -162,7 +165,9 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 		const version = next as PromptVersionId;
 		setError(null);
 		try {
-			const response = await fetch(`/api/prompts/${version}`);
+			const response = await auth.protectedFetch(`/api/prompts/${version}`, {
+				headers,
+			});
 			if (!response.ok) {
 				throw new Error(await responseMessage(response));
 			}

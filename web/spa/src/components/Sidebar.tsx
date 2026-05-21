@@ -1,5 +1,6 @@
 import React from "react";
 
+import { useAuth } from "../hooks/useAuth";
 import type { Route, RoutePage } from "../hooks/useRoute";
 
 type SidebarProps = {
@@ -80,6 +81,7 @@ function pipelineFromOps(body: OpsResponse): PipelineStats {
 }
 
 export function Sidebar({ route, navigate }: SidebarProps) {
+	const auth = useAuth();
 	const [tags, setTags] = React.useState<TagCount[]>(mockTags);
 	const [pipeline, setPipeline] = React.useState<PipelineStats>(mockPipeline);
 	const [isMock, setIsMock] = React.useState(true);
@@ -90,8 +92,10 @@ export function Sidebar({ route, navigate }: SidebarProps) {
 		async function loadSidebarData() {
 			try {
 				const [libraryResponse, opsResponse] = await Promise.all([
-					fetch("/api/library?limit=100", { signal: abort.signal }),
-					fetch("/api/ops", { signal: abort.signal }),
+					auth.protectedFetch("/api/library?limit=100", {
+						signal: abort.signal,
+					}),
+					auth.protectedFetch("/api/ops", { signal: abort.signal }),
 				]);
 				if (!libraryResponse.ok || !opsResponse.ok) {
 					throw new Error("sidebar endpoints unavailable");
@@ -112,7 +116,7 @@ export function Sidebar({ route, navigate }: SidebarProps) {
 
 		void loadSidebarData();
 		return () => abort.abort();
-	}, []);
+	}, [auth]);
 
 	return (
 		<aside className="sidebar" aria-label="Primary">

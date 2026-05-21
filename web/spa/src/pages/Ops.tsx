@@ -1,5 +1,6 @@
 import React from "react";
 
+import { useAuth } from "../hooks/useAuth";
 import type { Route } from "../hooks/useRoute";
 import type { DisplayCurrency } from "../lib/currency";
 import { formatUsdCost } from "../lib/currency";
@@ -229,35 +230,39 @@ function FailureRow({
 }
 
 export function Ops({ displayCurrency, navigate }: OpsProps) {
+	const auth = useAuth();
 	const [snapshot, setSnapshot] = React.useState<OpsSnapshot | null>(null);
 	const [error, setError] = React.useState<string | null>(null);
 	const [loading, setLoading] = React.useState(true);
 	const [visibleFailures, setVisibleFailures] =
 		React.useState(FAILURE_PAGE_SIZE);
 
-	const load = React.useCallback(async (signal?: AbortSignal) => {
-		setLoading(true);
-		setError(null);
-		try {
-			const response = await fetch("/api/ops", { signal });
-			if (!response.ok) {
-				throw new Error(`ops endpoint returned ${response.status}`);
+	const load = React.useCallback(
+		async (signal?: AbortSignal) => {
+			setLoading(true);
+			setError(null);
+			try {
+				const response = await auth.protectedFetch("/api/ops", { signal });
+				if (!response.ok) {
+					throw new Error(`ops endpoint returned ${response.status}`);
+				}
+				const body = (await response.json()) as OpsSnapshot;
+				setSnapshot(body);
+				setVisibleFailures(FAILURE_PAGE_SIZE);
+			} catch (caught) {
+				if (!signal?.aborted) {
+					setError(
+						caught instanceof Error ? caught.message : "failed to load ops",
+					);
+				}
+			} finally {
+				if (!signal?.aborted) {
+					setLoading(false);
+				}
 			}
-			const body = (await response.json()) as OpsSnapshot;
-			setSnapshot(body);
-			setVisibleFailures(FAILURE_PAGE_SIZE);
-		} catch (caught) {
-			if (!signal?.aborted) {
-				setError(
-					caught instanceof Error ? caught.message : "failed to load ops",
-				);
-			}
-		} finally {
-			if (!signal?.aborted) {
-				setLoading(false);
-			}
-		}
-	}, []);
+		},
+		[auth],
+	);
 
 	React.useEffect(() => {
 		const abort = new AbortController();
@@ -335,11 +340,13 @@ export function Ops({ displayCurrency, navigate }: OpsProps) {
 								<div>
 									<p className="section-label">14-day spend</p>
 									<strong>
-										{formatUsdCost(snapshot.vast_spend_30d, displayCurrency)} / 30 d
+										{formatUsdCost(snapshot.vast_spend_30d, displayCurrency)} /
+										30 d
 									</strong>
 								</div>
 								<span className="chip info">
-									cap {formatUsdCost(snapshot.daily_spend_cap_usd, displayCurrency)}
+									cap{" "}
+									{formatUsdCost(snapshot.daily_spend_cap_usd, displayCurrency)}
 								</span>
 							</div>
 							<Sparkline
