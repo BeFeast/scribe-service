@@ -18,11 +18,10 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse, StreamingResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
-from scribe.api.auth import OwnerIdentity, current_owner
+from scribe.api.auth import AuthState, OwnerIdentity, current_owner, require_operator_auth
 from scribe.api.schemas import (
     ActiveJobsResponse,
     ActiveJobView,
@@ -67,7 +66,6 @@ from scribe.source_links import source_link_for_url
 
 router = APIRouter()
 log = logging.getLogger("scribe.api")
-_CONFIG_AUTH = HTTPBearer(auto_error=False)
 
 # Postgres advisory-lock key used to serialise the daily-spend-cap check.
 # Arbitrary 8-byte int derived from the literal so it's stable across deploys.
@@ -350,22 +348,8 @@ def _config_response(*, restart_required: list[str] | None = None) -> ConfigResp
     )
 
 
-def require_config_auth(
-    credentials: HTTPAuthorizationCredentials | None = Depends(_CONFIG_AUTH),
-) -> None:
-    token = settings.config_api_bearer_token.strip()
-    if not token:
-        return
-    if (
-        credentials is None
-        or credentials.scheme.lower() != "bearer"
-        or not secrets.compare_digest(credentials.credentials, token)
-    ):
-        raise HTTPException(status_code=401, detail="invalid bearer token")
-
-
 @router.get("/api/config", response_model=ConfigResponse)
-def get_config(_auth: None = Depends(require_config_auth)) -> ConfigResponse:
+def get_config() -> ConfigResponse:
     return _config_response()
 
 
@@ -373,7 +357,7 @@ def get_config(_auth: None = Depends(require_config_auth)) -> ConfigResponse:
 def update_config(
     body: dict[str, object] = Body(...),
     session: Session = Depends(get_session),
-    _auth: None = Depends(require_config_auth),
+    _auth: AuthState = Depends(require_operator_auth),
 ) -> ConfigResponse:
     unknown = sorted(set(body) - set(RUNTIME_CONFIG))
     if unknown:
@@ -418,7 +402,7 @@ def update_config(
 
 
 @router.post("/api/config/rotate-token", status_code=501)
-def rotate_token(_auth: None = Depends(require_config_auth)) -> None:
+def rotate_token(_auth: AuthState = Depends(require_operator_auth)) -> None:
     # TODO(PRD §4.6): implement once the auth surface owns bearer-token rotation.
     raise HTTPException(status_code=501, detail="bearer-token rotation is not implemented yet")
 
@@ -428,6 +412,7 @@ def create_job(
     body: JobCreate,
     request: Request,
     session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
 ) -> JobView:
     """Submit a video URL. Deduplicates by video_id against **done** transcripts
     and in-flight jobs. Partial transcripts (whisper succeeded but summary
@@ -578,7 +563,11 @@ def get_transcript_detail(
 
 
 @router.delete("/admin/transcripts/{transcript_id}", status_code=204)
-def admin_delete_transcript(transcript_id: int, session: Session = Depends(get_session)) -> Response:
+def admin_delete_transcript(
+    transcript_id: int,
+    session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
+) -> Response:
     """Remove a transcript and its owning job from the operator UI.
 
     Transcripts are created one-to-one from jobs, so deleting only the transcript
@@ -823,7 +812,10 @@ def list_prompt_versions() -> PromptListView:
 
 
 @router.post("/api/prompts/active", response_model=PromptListView, tags=["prompts"])
-def set_active_prompt(body: PromptActiveWrite) -> PromptListView:
+def set_active_prompt(
+    body: PromptActiveWrite,
+    _auth: AuthState = Depends(require_operator_auth),
+) -> PromptListView:
     try:
         prompts.set_active_version(body.version)
         active, versions = prompts.list_prompts()
@@ -848,6 +840,7 @@ def set_active_prompt(body: PromptActiveWrite) -> PromptListView:
 async def dry_run_prompt(
     body: PromptDryRunCreate,
     session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
 ) -> PromptDryRunView:
     try:
         prompts.validate_version(body.version)
@@ -895,7 +888,11 @@ def get_prompt_version(version: str) -> Response:
 
 
 @router.post("/api/prompts/{version}", status_code=204, tags=["prompts"])
-def write_prompt_version(version: str, body: PromptWrite) -> Response:
+def write_prompt_version(
+    version: str,
+    body: PromptWrite,
+    _auth: AuthState = Depends(require_operator_auth),
+) -> Response:
     try:
         prompts.write_prompt(version, body.body)
     except prompts.PromptError as exc:
@@ -971,6 +968,7 @@ async def resummarize(
     request: Request,
     csrf_token: str | None = Form(None),
     session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
 ):
     """Re-run the summarizer on an existing transcript (partial or done) and
     UPDATE the row. Useful when codex was down at the time of the original job.
@@ -1042,7 +1040,11 @@ async def resummarize(
 
 
 @router.post("/admin/jobs/{job_id}/cancel", response_model=JobView)
-def admin_cancel_job(job_id: int, session: Session = Depends(get_session)) -> JobView:
+def admin_cancel_job(
+    job_id: int,
+    session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
+) -> JobView:
     """Mark an in-flight job failed so workers and queue polling stop tracking it."""
     job = session.scalar(select(Job).where(Job.id == job_id).with_for_update())
     if job is None:
@@ -1060,7 +1062,11 @@ def admin_cancel_job(job_id: int, session: Session = Depends(get_session)) -> Jo
 
 
 @router.post("/admin/jobs/{job_id}/retry", response_model=JobView, status_code=201)
-def admin_retry_job(job_id: int, session: Session = Depends(get_session)) -> JobView:
+def admin_retry_job(
+    job_id: int,
+    session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
+) -> JobView:
     """Operator recovery (PRD §5.4): re-queue a terminal job as a new Job row.
 
     Bypasses POST /jobs dedup — a done job's transcript would otherwise short-
@@ -1135,7 +1141,11 @@ def admin_retry_job(job_id: int, session: Session = Depends(get_session)) -> Job
 
 
 @router.delete("/admin/jobs/{job_id}", status_code=204)
-def admin_delete_job(job_id: int, session: Session = Depends(get_session)) -> Response:
+def admin_delete_job(
+    job_id: int,
+    session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
+) -> Response:
     """Dismiss a failed job from operator queues.
 
     Done jobs with transcripts should be removed via DELETE /admin/transcripts/{id}
