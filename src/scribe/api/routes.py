@@ -525,8 +525,10 @@ def create_extension_token(
     body: ExtensionTokenCreate,
     request: Request,
     session: Session = Depends(get_session),
-    _auth: AuthState = Depends(require_operator_auth),
+    auth: AuthState = Depends(require_operator_auth),
 ) -> ExtensionTokenCreateResponse:
+    if auth not in {AuthState.clerk_user, AuthState.trusted_lan}:
+        raise HTTPException(status_code=403, detail="extension tokens require interactive Scribe access")
     user = _user_for_owner(session, current_owner(request))
     if user is None:
         raise HTTPException(status_code=403, detail="extension tokens require a Scribe user")

@@ -130,7 +130,9 @@ def _owner_from_clerk_jwt(token: str) -> OwnerIdentity | None:
 
 def _owner_from_clerk_headers(request: Request) -> OwnerIdentity | None:
     secret = settings.clerk_header_secret.strip()
-    if secret and not secrets.compare_digest(request.headers.get("x-scribe-clerk-secret", ""), secret):
+    if not secret:
+        return None
+    if not secrets.compare_digest(request.headers.get("x-scribe-clerk-secret", ""), secret):
         return None
     subject = request.headers.get("x-clerk-user-id", "").strip()
     email = request.headers.get("x-clerk-user-email", "").strip()
@@ -211,6 +213,9 @@ def _authorized_clerk_owner(owner: OwnerIdentity) -> OwnerIdentity:
 
 
 def _owner_from_extension_token(token: str) -> OwnerIdentity | None:
+    if not token.startswith("scribe_ext_"):
+        return None
+
     from scribe.db.models import ExtensionToken
     from scribe.db.session import SessionLocal
 

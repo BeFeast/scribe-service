@@ -15,7 +15,8 @@ EXTERNAL = {"x-forwarded-for": "203.0.113.10"}
 
 
 @pytest.fixture(autouse=True)
-def clean_auth_tables(db_session):
+def clean_auth_tables(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "clerk_header_secret", "test-header-secret")
     db_session.execute(delete(Job))
     db_session.execute(delete(Owner))
     db_session.commit()
@@ -37,6 +38,7 @@ def _client(db_session):
 
 def _clerk(email: str, subject: str = "user_123") -> dict[str, str]:
     return EXTERNAL | {
+        "x-scribe-clerk-secret": "test-header-secret",
         "x-clerk-user-id": subject,
         "x-clerk-user-email": email,
         "x-clerk-user-name": "Test User",
@@ -85,6 +87,18 @@ def _seed_transcript(db_session, *, owner_id: int | None, video_id: str):
 def test_external_unauthenticated_post_jobs_is_rejected(db_session):
     with _client(db_session) as client:
         resp = client.post("/jobs", json={"url": "https://youtu.be/jNQXAC9IVRw"}, headers=EXTERNAL)
+    assert resp.status_code == 401
+
+
+def test_unsigned_clerk_headers_are_rejected_when_header_secret_is_unset(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "clerk_header_secret", "")
+    monkeypatch.setattr(settings, "auth_bootstrap_admin_email", "admin@example.com")
+    with _client(db_session) as client:
+        resp = client.post(
+            "/jobs",
+            json={"url": "https://youtu.be/jNQXAC9IVRw"},
+            headers=_clerk("admin@example.com", "clerk_admin"),
+        )
     assert resp.status_code == 401
 
 
@@ -149,6 +163,25 @@ def test_extension_token_can_submit_outside_lan(db_session):
     job = db_session.get(Job, submit.json()["job_id"])
     assert job is not None
     assert job.owner_id == user.owner_id
+
+
+def test_extension_token_cannot_mint_another_extension_token(db_session):
+    user = _seed_user(db_session, email="admin@example.com", role=UserRole.admin, subject="clerk_admin")
+    with _client(db_session) as client:
+        token_resp = client.post(
+            "/api/auth/extension-token",
+            json={"label": "Chrome"},
+            headers=_clerk(user.primary_email, user.clerk_subject or ""),
+        )
+        assert token_resp.status_code == 201, token_resp.text
+        token = token_resp.json()["token"]
+
+        resp = client.post(
+            "/api/auth/extension-token",
+            json={"label": "Copied"},
+            headers=EXTERNAL | {"authorization": f"Bearer {token}"},
+        )
+    assert resp.status_code == 403
 
 
 def test_library_and_queue_are_scoped_to_authenticated_user(db_session):

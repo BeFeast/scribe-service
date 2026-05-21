@@ -32,14 +32,22 @@ def test_database_url() -> str:
 @pytest.fixture(scope="session")
 def engine(test_database_url):
     from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
 
+    from scribe.db import session as session_module
     from scribe.db.models import Base
 
     eng = create_engine(test_database_url, future=True)
+    original_engine = session_module.engine
+    original_session_local = session_module.SessionLocal
+    session_module.engine = eng
+    session_module.SessionLocal = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
     Base.metadata.drop_all(eng)
     Base.metadata.create_all(eng)
     yield eng
     Base.metadata.drop_all(eng)
+    session_module.engine = original_engine
+    session_module.SessionLocal = original_session_local
     eng.dispose()
 
 
