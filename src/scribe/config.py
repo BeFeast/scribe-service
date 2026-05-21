@@ -199,6 +199,8 @@ class Settings(BaseSettings):
     auth_clerk_issuer: str = ""
     auth_clerk_jwks_url: str = ""
     auth_clerk_jwks_json: str = ""
+    clerk_publishable_key: str = ""
+    clerk_frontend_api: str = ""
     bot_wall_retry: bool = False
     webhook_default: str = ""
     webhook_embed_transcript: bool = False

@@ -1366,6 +1366,26 @@ a {
 	font-family: var(--font-mono);
 }
 
+.access-status {
+	display: inline-flex;
+	align-items: center;
+	min-height: 1.5rem;
+	border: var(--rule);
+	border-radius: var(--radius);
+	padding: 0.2rem 0.5rem;
+	background: var(--bg-card);
+	color: var(--muted);
+	font-size: 0.78rem;
+	font-weight: 800;
+	text-transform: uppercase;
+	white-space: nowrap;
+}
+
+.settings-auth-actions {
+	display: flex;
+	justify-content: flex-end;
+}
+
 .settings-row {
 	display: grid;
 	grid-template-columns: minmax(10rem, 1fr) minmax(12rem, 2fr);

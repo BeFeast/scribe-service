@@ -5,6 +5,7 @@ import { DesignSystemPlayground } from "./DesignSystemPlayground";
 import { CommandPalette } from "./components/CommandPalette";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
+import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { useRoute } from "./hooks/useRoute";
 import { useTweaks } from "./hooks/useTweaks";
 import type { DisplayCurrency } from "./lib/currency";
@@ -22,12 +23,13 @@ const CONFIG_SAVED_EVENT = "scribe-config-saved";
 function App() {
 	const { route, navigate } = useRoute();
 	const { tweaks, setTheme, replaceTweaks } = useTweaks();
+	const auth = useAuth();
 	const [displayCurrency, setDisplayCurrency] =
 		React.useState<DisplayCurrency>("USD");
 
 	const loadDisplayCurrency = React.useCallback(async () => {
 		try {
-			const response = await fetch("/api/config");
+			const response = await auth.protectedFetch("/api/config");
 			if (!response.ok) {
 				return;
 			}
@@ -40,7 +42,7 @@ function App() {
 		} catch {
 			// Display falls back to USD if the runtime config endpoint is unavailable.
 		}
-	}, []);
+	}, [auth]);
 
 	React.useEffect(() => {
 		void loadDisplayCurrency();
@@ -114,6 +116,8 @@ if (root === null) {
 
 createRoot(root).render(
 	<React.StrictMode>
-		<App />
+		<AuthProvider>
+			<App />
+		</AuthProvider>
 	</React.StrictMode>,
 );

@@ -81,6 +81,10 @@ def require_operator_auth(request: Request) -> AuthState:
     return state
 
 
+def is_trusted_lan_request(request: Request) -> bool:
+    return _is_trusted_lan_request(request)
+
+
 def _bearer_token(request: Request, *, strict: bool = False) -> str | None:
     header = request.headers.get("authorization")
     if header is None:
