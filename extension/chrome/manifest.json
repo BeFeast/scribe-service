@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "Scribe YouTube Submitter",
-  "description": "Submit the current YouTube video or link to a configured Scribe queue.",
+  "name": "Scribe Video Submitter",
+  "description": "Submit the current video page or link to a configured Scribe queue.",
   "version": "0.1.0",
   "action": {
-    "default_title": "Submit YouTube video to Scribe"
+    "default_title": "Submit video to Scribe"
   },
   "background": {
     "service_worker": "service_worker.js"
@@ -18,9 +18,6 @@
     "storage"
   ],
   "host_permissions": [
-    "https://www.youtube.com/*",
-    "https://youtube.com/*",
-    "https://youtu.be/*",
     "https://scribe.oklabs.uk/*"
   ],
   "optional_host_permissions": [

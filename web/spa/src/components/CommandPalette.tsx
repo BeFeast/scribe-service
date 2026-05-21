@@ -70,7 +70,6 @@ type SubmitState =
 
 const RECENTS_KEY = "scribe.cmdk.recentSubmissions";
 const MAX_RECENTS = 5;
-const SHORTS_PATH_PREFIX = "/shorts/";
 
 const NAV_ITEMS: Array<{
 	page: RoutePage;
@@ -108,7 +107,7 @@ function route(page: RoutePage, id?: number): Route {
 	return { page, params: id === undefined ? {} : { id } };
 }
 
-function parseYouTubeVideoId(value: string): string | null {
+function parseVideoUrl(value: string): string | null {
 	const trimmed = value.trim();
 	if (trimmed.length === 0) {
 		return null;
@@ -119,25 +118,12 @@ function parseYouTubeVideoId(value: string): string | null {
 			? trimmed
 			: `https://${trimmed}`;
 		const url = new URL(candidate);
-		const host = url.hostname.replace(/^www\./, "");
-		if (host === "youtu.be") {
-			return url.pathname.split("/").filter(Boolean)[0] ?? null;
-		}
-		if (host === "youtube.com" || host === "m.youtube.com") {
-			if (url.pathname === "/watch") {
-				return url.searchParams.get("v");
-			}
-			if (url.pathname.startsWith(SHORTS_PATH_PREFIX)) {
-				return (
-					url.pathname.slice(SHORTS_PATH_PREFIX.length).split("/")[0] || null
-				);
-			}
-		}
+		return url.protocol === "http:" || url.protocol === "https:"
+			? url.href
+			: null;
 	} catch {
 		return null;
 	}
-
-	return null;
 }
 
 function readRecents(): RecentSubmission[] {
@@ -214,7 +200,7 @@ function errorMessage(status: number, body: unknown): string {
 		return detail;
 	}
 	if (status === 422) {
-		return "Bad YouTube URL.";
+		return "Bad video URL.";
 	}
 	if (status === 429) {
 		return "Daily spend cap reached.";
@@ -274,7 +260,7 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 	});
 	const inputRef = React.useRef<HTMLInputElement>(null);
 	const dialogRef = React.useRef<HTMLDialogElement>(null);
-	const videoId = parseYouTubeVideoId(query);
+	const videoUrl = parseVideoUrl(query);
 
 	React.useEffect(() => {
 		if (!isOpen) {
@@ -352,15 +338,15 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 			...jobItems,
 			...transcriptItems,
 		];
-		if (videoId !== null) {
+		if (videoUrl !== null) {
 			return allItems;
 		}
 		return allItems.filter((item) => fuzzyMatch(item.keywords, query));
-	}, [jobs, library, query, recents, videoId]);
+	}, [jobs, library, query, recents, videoUrl]);
 
 	const submitUrl = async () => {
 		if (
-			videoId === null ||
+			videoUrl === null ||
 			submitState.state === "submitting" ||
 			submitState.state === "success"
 		) {
@@ -371,7 +357,7 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 			const response = await fetch("/jobs", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ url: query.trim(), source: "manual" }),
+				body: JSON.stringify({ url: videoUrl, source: "manual" }),
 			});
 			const body = (await response.json()) as unknown;
 			if (!response.ok) {
@@ -424,7 +410,7 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 		navigate(route("job", jobId));
 		close();
 	};
-	const urlModeOffset = videoId !== null ? 1 : 0;
+	const urlModeOffset = videoUrl !== null ? 1 : 0;
 
 	const onKeyDown = (event: React.KeyboardEvent<HTMLDialogElement>) => {
 		if (event.key === "Escape") {
@@ -466,7 +452,7 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 		}
 		if (event.key === "Enter") {
 			event.preventDefault();
-			if (videoId !== null && selectedIndex === 0) {
+			if (videoUrl !== null && selectedIndex === 0) {
 				void submitUrl();
 			} else {
 				openItem(items[selectedIndex - urlModeOffset]);
@@ -490,14 +476,14 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 					className="cmdk-input"
 					value={query}
 					onChange={onQueryChange}
-					placeholder="Search, jump, or paste a YouTube URL"
+					placeholder="Search, jump, or paste a video URL"
 					aria-label="Search commands and transcripts"
 				/>
-				{videoId !== null ? (
+				{videoUrl !== null ? (
 					<div className="cmdk-submit">
 						<div>
 							<span className="cmdk-label">Submit job</span>
-							<strong>{videoId}</strong>
+							<strong>{videoUrl}</strong>
 							<small>source manual · {capRemainingLabel(ops)}</small>
 						</div>
 						<button
