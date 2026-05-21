@@ -59,10 +59,34 @@ def test_service_worker_reports_success_dedup_and_errors() -> None:
     assert 'const NOTIFICATION_ICON = "icons/scribe-128.png";' in source
     assert "Could not reach Scribe" in source
     assert "Scribe rejected the URL" in source
+    assert "formatHttpError(response.status, body, Boolean(config.bearerToken))" in source
     assert "formatDetail" in source
     assert "chrome.alarms.create(CLEAR_BADGE_ALARM" in source
     assert "setTimeout" not in source
     assert "chrome.permissions.request" not in source
+
+
+def test_service_worker_sends_authorization_header_only_when_token_configured() -> None:
+    source = read("service_worker.js")
+
+    assert 'bearerToken: String(stored.bearerToken || "").trim()' in source
+    assert "if (config.bearerToken) {" in source
+    assert "headers.Authorization = `Bearer ${config.bearerToken}`;" in source
+    assert 'bearerToken: "",' in source
+
+
+def test_service_worker_formats_401_and_403_auth_errors_for_notifications() -> None:
+    source = read("service_worker.js")
+
+    assert "function formatHttpError(status, body, tokenConfigured)" in source
+    assert "status === 401" in source
+    assert "Scribe authentication required (401)" in source
+    assert "This Scribe URL requires authentication" in source
+    assert "The saved bearer token was rejected" in source
+    assert "status === 403" in source
+    assert "Scribe authorization failed (403)" in source
+    assert "This Scribe URL is protected" in source
+    assert "The saved bearer token is invalid or does not allow this request" in source
 
 
 def test_options_store_base_url_and_optional_bearer_token_without_hardcoded_secret() -> None:
@@ -72,6 +96,7 @@ def test_options_store_base_url_and_optional_bearer_token_without_hardcoded_secr
     assert 'id="base-url"' in html
     assert 'id="bearer-token"' in html
     assert 'type="password"' in html
+    assert "Required for protected Scribe URLs outside trusted LAN" in html
     assert 'const DEFAULT_BASE_URL = "https://scribe.oklabs.uk";' in source
     assert "chrome.storage.sync.get" in source
     assert "chrome.storage.sync.set" in source
@@ -89,5 +114,9 @@ def test_extension_docs_include_install_and_manual_verification_checklist() -> N
     assert "Manual Verification" in docs
     assert "toolbar action" in docs
     assert "Right-click a video link" in docs
+    assert "A bearer token is required when the configured Scribe URL is protected" in docs
+    assert "outside a trusted LAN" in docs
+    assert "401/403 notification explains that auth is required" in docs
+    assert "invalid bearer token" in docs
     assert "unreachable host" in docs
     assert "POST /jobs" in docs
