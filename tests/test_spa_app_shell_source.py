@@ -107,7 +107,7 @@ def test_library_page_fetches_api_and_supports_layouts() -> None:
     assert "Previous" in source
     assert "Next" in source
     assert "window.setTimeout(() => setDebouncedQuery(query), 200)" in source
-    assert 'fetch("/api/jobs/active"' in source
+    assert 'auth.protectedFetch("/api/jobs/active"' in source
     assert 'auth.protectedFetch("/jobs"' in source
     assert "`/admin/transcripts/${row.id}`" in source
     assert 'source: "manual"' in source
@@ -171,6 +171,7 @@ def test_spa_auth_config_and_protected_fetch_are_wired() -> None:
     assert "@clerk/ui@1/dist/ui.browser.js" in source
     assert "@clerk/clerk-js@6/dist/clerk.browser.js" in source
     assert "__internal_ClerkUICtor" in source
+    assert "addListener" in source
     assert 'headers.set("Authorization", `Bearer ${token}`)' in source
     assert "protectedFetch" in source
     assert "AuthProvider" in main
@@ -230,8 +231,8 @@ def test_command_palette_covers_submit_search_navigation_and_a11y() -> None:
     assert 'source: "manual"' in source
     assert "Queued as job #" in source
     assert "Watch pipeline →" in source
-    assert 'fetch("/api/library?limit=100"' in source
-    assert 'fetch("/api/jobs/active"' in source
+    assert 'protectedFetch("/api/library?limit=100"' in source
+    assert 'protectedFetch("/api/jobs/active"' in source
     assert "Library" in source
     assert "Queue" in source
     assert "Ops" in source
@@ -276,8 +277,8 @@ def test_sidebar_has_api_fetch_and_marked_mock_fallback() -> None:
     source = read("components/Sidebar.tsx")
 
     assert "TODO: replace with /api/library + /api/ops" in source
-    assert 'fetch("/api/library?limit=100"' in source
-    assert 'fetch("/api/ops"' in source
+    assert 'auth.protectedFetch("/api/library?limit=100"' in source
+    assert 'auth.protectedFetch("/api/ops"' in source
     assert "[mock]" in source
     assert "mockTags" in source
     assert "mockPipeline" in source

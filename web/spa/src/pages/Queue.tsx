@@ -26,33 +26,36 @@ export function Queue({ navigate }: QueueProps) {
 	const [loading, setLoading] = React.useState(true);
 	const [clearingId, setClearingId] = React.useState<number | null>(null);
 
-	const load = React.useCallback(async (signal: AbortSignal) => {
-		try {
-			const [activeResponse, failuresResponse] = await Promise.all([
-				fetch("/api/jobs/active", { signal }),
-				fetch("/api/jobs/recent-failures?limit=5", { signal }),
-			]);
-			if (!activeResponse.ok || !failuresResponse.ok) {
-				throw new Error("queue endpoints unavailable");
-			}
-			const activeBody = (await activeResponse.json()) as ActiveJobsResponse;
-			const failuresBody =
-				(await failuresResponse.json()) as RecentFailuresResponse;
-			setActive(activeBody.jobs ?? []);
-			setFailures(failuresBody.jobs ?? []);
-			setError(null);
-			setLoading(false);
-		} catch (queueError) {
-			if (!signal.aborted) {
-				setError(
-					queueError instanceof Error
-						? queueError.message
-						: "queue load failed",
-				);
+	const load = React.useCallback(
+		async (signal: AbortSignal) => {
+			try {
+				const [activeResponse, failuresResponse] = await Promise.all([
+					auth.protectedFetch("/api/jobs/active", { signal }),
+					auth.protectedFetch("/api/jobs/recent-failures?limit=5", { signal }),
+				]);
+				if (!activeResponse.ok || !failuresResponse.ok) {
+					throw new Error("queue endpoints unavailable");
+				}
+				const activeBody = (await activeResponse.json()) as ActiveJobsResponse;
+				const failuresBody =
+					(await failuresResponse.json()) as RecentFailuresResponse;
+				setActive(activeBody.jobs ?? []);
+				setFailures(failuresBody.jobs ?? []);
+				setError(null);
 				setLoading(false);
+			} catch (queueError) {
+				if (!signal.aborted) {
+					setError(
+						queueError instanceof Error
+							? queueError.message
+							: "queue load failed",
+					);
+					setLoading(false);
+				}
 			}
-		}
-	}, []);
+		},
+		[auth],
+	);
 
 	usePoll(load, 2000);
 

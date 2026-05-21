@@ -20,6 +20,9 @@ type ClerkRuntime = {
 	load: (options?: ClerkLoadOptions) => Promise<void>;
 	openSignIn: () => void;
 	signOut: () => Promise<void>;
+	addListener?: (
+		listener: (resources: { session: ClerkSession | null }) => void,
+	) => () => void;
 	session: ClerkSession | null;
 };
 
@@ -118,6 +121,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 	React.useEffect(() => {
 		const abort = new AbortController();
+		let unsubscribe: (() => void) | undefined;
 
 		async function loadAuth() {
 			const response = await fetch("/api/auth/config", {
@@ -134,6 +138,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			await loadClerk(body);
 			setClerkReady(true);
 			syncSignedIn();
+			unsubscribe = window.Clerk?.addListener?.(({ session }) => {
+				setSignedIn(session !== null);
+			});
 		}
 
 		loadAuth().catch((error) => {
@@ -146,7 +153,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 				});
 			}
 		});
-		return () => abort.abort();
+		return () => {
+			abort.abort();
+			unsubscribe?.();
+		};
 	}, [syncSignedIn]);
 
 	const trustedNetwork = config?.trusted_network === true;

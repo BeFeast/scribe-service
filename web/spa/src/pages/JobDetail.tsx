@@ -63,7 +63,7 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 				return;
 			}
 			try {
-				const response = await fetch(`/jobs/${id}`, { signal });
+				const response = await auth.protectedFetch(`/jobs/${id}`, { signal });
 				if (!response.ok) {
 					throw new Error(`job ${id} returned ${response.status}`);
 				}
@@ -78,7 +78,7 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 				}
 			}
 		},
-		[id],
+		[auth, id],
 	);
 
 	usePoll(load, 2000, { enabled: id !== undefined && !isTerminal });

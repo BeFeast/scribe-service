@@ -15,16 +15,38 @@ def _external_client(headers: dict[str, str] | None = None) -> TestClient:
     return TestClient(app, headers=headers or {}, client=("203.0.113.10", 50000))
 
 
-def test_public_reads_work_without_auth_from_external_ip(monkeypatch):
+def test_auth_config_remains_public_from_external_ip(monkeypatch):
     monkeypatch.setattr(settings, "trusted_cidrs", "10.10.0.0/16")
     monkeypatch.setattr(settings, "machine_bearer_token", MACHINE_TOKEN)
     client = _external_client()
 
-    prompts = client.get("/api/prompts")
-    config = client.get("/api/config")
+    config = client.get("/api/auth/config")
 
-    assert prompts.status_code == 200
     assert config.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/config",
+        "/api/prompts",
+        "/api/prompts/v1",
+        "/api/library",
+        "/api/jobs/active",
+        "/api/jobs/recent-failures",
+        "/api/ops",
+        "/admin/backup-status",
+        "/admin/daily-report",
+        "/jobs/1",
+        "/transcripts",
+    ],
+)
+def test_external_unauthenticated_app_reads_are_401(monkeypatch, path):
+    monkeypatch.setattr(settings, "trusted_cidrs", "10.10.0.0/16")
+    monkeypatch.setattr(settings, "machine_bearer_token", MACHINE_TOKEN)
+    resp = _external_client().get(path)
+
+    assert resp.status_code == 401
 
 
 @pytest.mark.parametrize(

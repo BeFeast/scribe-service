@@ -275,15 +275,17 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 		setSelectedIndex(0);
 		window.setTimeout(() => inputRef.current?.focus(), 0);
 		void Promise.all([
-			fetch("/api/library?limit=100", { signal: controller.signal }).then(
-				(response) => response.json() as Promise<LibraryResponse>,
-			),
-			fetch("/api/jobs/active", { signal: controller.signal }).then(
-				(response) => response.json() as Promise<ActiveJobsResponse>,
-			),
-			fetch("/api/ops", { signal: controller.signal }).then(
-				(response) => response.json() as Promise<OpsResponse>,
-			),
+			auth
+				.protectedFetch("/api/library?limit=100", {
+					signal: controller.signal,
+				})
+				.then((response) => response.json() as Promise<LibraryResponse>),
+			auth
+				.protectedFetch("/api/jobs/active", { signal: controller.signal })
+				.then((response) => response.json() as Promise<ActiveJobsResponse>),
+			auth
+				.protectedFetch("/api/ops", { signal: controller.signal })
+				.then((response) => response.json() as Promise<OpsResponse>),
 		])
 			.then(([libraryBody, jobsBody, opsBody]) => {
 				setLibrary(libraryBody.rows ?? []);
@@ -299,7 +301,7 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 				setOps(null);
 			});
 		return () => controller.abort();
-	}, [isOpen]);
+	}, [auth, isOpen]);
 
 	const items = React.useMemo<PaletteItem[]>(() => {
 		const navigation = NAV_ITEMS.map((item) => ({

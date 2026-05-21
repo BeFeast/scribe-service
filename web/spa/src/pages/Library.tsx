@@ -173,7 +173,7 @@ export function Library({
 			setIsLoading(true);
 			setError(null);
 			try {
-				const response = await fetch(
+				const response = await auth.protectedFetch(
 					buildLibraryUrl(debouncedQuery, selectedTag, libraryPageSize, offset),
 					{
 						signal,
@@ -201,7 +201,7 @@ export function Library({
 				}
 			}
 		},
-		[debouncedQuery, offset, selectedTag],
+		[auth, debouncedQuery, offset, selectedTag],
 	);
 
 	React.useEffect(() => {
@@ -455,25 +455,31 @@ export function Library({
 }
 
 function InFlightStrip({ navigate }: { navigate: (route: Route) => void }) {
+	const auth = useAuth();
 	const [jobs, setJobs] = React.useState<ActiveJob[]>([]);
 	const [error, setError] = React.useState(false);
 	const interval = hasNonTerminalJob(jobs) ? 5000 : 30000;
 
-	const poll = React.useCallback(async (signal: AbortSignal) => {
-		try {
-			const response = await fetch("/api/jobs/active", { signal });
-			if (!response.ok) {
-				throw new Error("active jobs request failed");
+	const poll = React.useCallback(
+		async (signal: AbortSignal) => {
+			try {
+				const response = await auth.protectedFetch("/api/jobs/active", {
+					signal,
+				});
+				if (!response.ok) {
+					throw new Error("active jobs request failed");
+				}
+				const body = (await response.json()) as ActiveJobsResponse;
+				setJobs(body.jobs);
+				setError(false);
+			} catch (loadError) {
+				if (!signal.aborted) {
+					setError(true);
+				}
 			}
-			const body = (await response.json()) as ActiveJobsResponse;
-			setJobs(body.jobs);
-			setError(false);
-		} catch (loadError) {
-			if (!signal.aborted) {
-				setError(true);
-			}
-		}
-	}, []);
+		},
+		[auth],
+	);
 
 	usePoll(poll, interval);
 

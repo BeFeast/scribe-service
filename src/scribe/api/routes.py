@@ -360,7 +360,7 @@ def get_auth_config(request: Request, response: Response) -> AuthConfigResponse:
 
 
 @router.get("/api/config", response_model=ConfigResponse)
-def get_config() -> ConfigResponse:
+def get_config(_auth: AuthState = Depends(require_operator_auth)) -> ConfigResponse:
     return _config_response()
 
 
@@ -499,7 +499,11 @@ def create_job(
 
 
 @router.get("/jobs/{job_id}", response_model=JobView)
-def get_job(job_id: int, session: Session = Depends(get_session)) -> JobView:
+def get_job(
+    job_id: int,
+    session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
+) -> JobView:
     job = session.get(Job, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
@@ -549,6 +553,7 @@ def stream_job_log(job_id: int, session: Session = Depends(get_session)) -> Stre
 def list_transcripts(
     request: Request,
     session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     include_partial: bool = Query(False, description="Also return partial transcripts (summary pending)."),
@@ -605,6 +610,7 @@ def api_library(
     response: Response,
     request: Request,
     session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
     q: str | None = Query(None, description="Fuzzy match against title and summary markdown."),
     tag: str | None = Query(None, description="Exact tag match."),
     limit: int = Query(50, ge=1, le=200),
@@ -694,6 +700,7 @@ def api_jobs_active(
     response: Response,
     request: Request,
     session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
 ) -> ActiveJobsResponse:
     """Return all queued/in-flight jobs with derived pipeline stage state."""
     _no_store(response)
@@ -745,6 +752,7 @@ def api_jobs_recent_failures(
     response: Response,
     request: Request,
     session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
     limit: int = Query(10, ge=1, le=50),
 ) -> RecentFailuresResponse:
     """Return the newest failed jobs for the Queue failure rail."""
@@ -802,7 +810,7 @@ def _prompt_error(exc: prompts.PromptError) -> HTTPException:
 
 
 @router.get("/api/prompts", response_model=PromptListView, tags=["prompts"])
-def list_prompt_versions() -> PromptListView:
+def list_prompt_versions(_auth: AuthState = Depends(require_operator_auth)) -> PromptListView:
     try:
         active, versions = prompts.list_prompts()
     except prompts.PromptError as exc:
@@ -890,7 +898,10 @@ async def dry_run_prompt(
 
 
 @router.get("/api/prompts/{version}", tags=["prompts"])
-def get_prompt_version(version: str) -> Response:
+def get_prompt_version(
+    version: str,
+    _auth: AuthState = Depends(require_operator_auth),
+) -> Response:
     try:
         body = prompts.read_prompt(version)
     except prompts.PromptError as exc:
@@ -1196,7 +1207,7 @@ def get_metrics(session: Session = Depends(get_session)) -> Response:
 
 
 @router.get("/admin/backup-status")
-def backup_status() -> dict:
+def backup_status(_auth: AuthState = Depends(require_operator_auth)) -> dict:
     """Read the heartbeat written by the scribe-backups sidecar (PRD §4.12).
 
     Cheap, file-based, no DB hit — designed for `curl -f` healthcheck polling.
@@ -1252,7 +1263,11 @@ def _service_version() -> str:
 
 
 @router.get("/api/ops", response_model=OpsSnapshot)
-def api_ops(response: Response, session: Session = Depends(get_session)) -> OpsSnapshot:
+def api_ops(
+    response: Response,
+    session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
+) -> OpsSnapshot:
     """One-shot JSON snapshot for the SPA Ops dashboard."""
     _no_store(response)
     now = dt.datetime.now(dt.UTC)
@@ -1323,7 +1338,11 @@ def api_ops(response: Response, session: Session = Depends(get_session)) -> OpsS
 
 
 @router.get("/admin/daily-report")
-def daily_report(session: Session = Depends(get_session), days: int = Query(1, ge=1, le=30)) -> dict:
+def daily_report(
+    session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
+    days: int = Query(1, ge=1, le=30),
+) -> dict:
     """Aggregate stats for the last N days (default 1). Intended for a small
     cron that POSTs the digest to Telegram — see README ops section."""
     since = dt.datetime.now(dt.UTC) - dt.timedelta(days=days)
