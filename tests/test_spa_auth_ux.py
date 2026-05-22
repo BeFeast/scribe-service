@@ -43,8 +43,6 @@ def test_library_handles_auth_required_without_raw_401_copy() -> None:
 
     # 401/403 routes through the typed auth state and triggers Clerk.
     assert "isAuthStatus" in source
-    assert "401" in source
-    assert "403" in source
     assert 'kind: "auth"' in source
     assert "auth.maybeAutoSignIn()" in source
     assert "auth.signIn" in source
@@ -52,6 +50,15 @@ def test_library_handles_auth_required_without_raw_401_copy() -> None:
     # Submit URL / search must not look usable in the signed-out protected
     # state — the inputs are disabled until the user signs in.
     assert "disabled={authRequired}" in source
+
+
+def test_shared_auth_helper_covers_401_and_403() -> None:
+    source = read("lib/auth.ts")
+
+    # Single source of truth for which HTTP statuses gate the auth UX.
+    assert "isAuthStatus" in source
+    assert "401" in source
+    assert "403" in source
 
 
 def test_sidebar_renders_no_mock_data_when_auth_required() -> None:
@@ -66,11 +73,11 @@ def test_sidebar_renders_no_mock_data_when_auth_required() -> None:
     # Auth-required is a discriminated UI state, not a thrown error.
     assert "auth-required" in source
     assert "isAuthStatus" in source
-    assert "401" in source
-    assert "403" in source
 
-    # Sign in CTA wires into the shared useAuth hook.
+    # Sign in CTA wires into the shared useAuth hook and is disabled until
+    # the Clerk browser runtime is ready, matching the Library page.
     assert "auth.signIn" in source
+    assert "auth.clerkReady" in source
 
 
 def test_top_bar_signin_button_remains_wired_for_clerk() -> None:

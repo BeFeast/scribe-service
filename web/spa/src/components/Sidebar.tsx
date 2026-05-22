@@ -2,6 +2,7 @@ import React from "react";
 
 import { useAuth } from "../hooks/useAuth";
 import type { Route, RoutePage } from "../hooks/useRoute";
+import { isAuthStatus } from "../lib/auth";
 
 type SidebarProps = {
 	route: Route;
@@ -65,10 +66,6 @@ function pipelineFromOps(body: OpsResponse): PipelineStats {
 		partial: body.transcripts_partial ?? 0,
 		workers: `${active}/${capacity}`,
 	};
-}
-
-function isAuthStatus(status: number): boolean {
-	return status === 401 || status === 403;
 }
 
 export function Sidebar({ route, navigate }: SidebarProps) {
@@ -147,7 +144,7 @@ export function Sidebar({ route, navigate }: SidebarProps) {
 				<SidebarPanel
 					status={status}
 					onSignIn={auth.signIn}
-					emptyLabel="No tags yet"
+					signInDisabled={auth.clerkConfigured && !auth.clerkReady}
 					unavailableLabel="Tags unavailable — retry shortly."
 					authPrompt="Sign in to see your tags."
 				>
@@ -183,7 +180,7 @@ export function Sidebar({ route, navigate }: SidebarProps) {
 				<SidebarPanel
 					status={status}
 					onSignIn={auth.signIn}
-					emptyLabel="Pipeline idle"
+					signInDisabled={auth.clerkConfigured && !auth.clerkReady}
 					unavailableLabel="Pipeline unavailable — retry shortly."
 					authPrompt="Sign in to see pipeline status."
 				>
@@ -206,7 +203,9 @@ export function Sidebar({ route, navigate }: SidebarProps) {
 								<dd>{pipeline.partial}</dd>
 							</div>
 						</dl>
-					) : null}
+					) : (
+						<p className="empty-note">Pipeline idle</p>
+					)}
 				</SidebarPanel>
 			</section>
 		</aside>
@@ -216,14 +215,14 @@ export function Sidebar({ route, navigate }: SidebarProps) {
 function SidebarPanel({
 	status,
 	onSignIn,
-	emptyLabel,
+	signInDisabled,
 	unavailableLabel,
 	authPrompt,
 	children,
 }: {
 	status: SidebarStatus;
 	onSignIn: () => void;
-	emptyLabel: string;
+	signInDisabled: boolean;
 	unavailableLabel: string;
 	authPrompt: string;
 	children: React.ReactNode;
@@ -236,6 +235,7 @@ function SidebarPanel({
 					type="button"
 					className="btn ghost sidebar-signin"
 					onClick={onSignIn}
+					disabled={signInDisabled}
 				>
 					Sign in
 				</button>
@@ -256,5 +256,5 @@ function SidebarPanel({
 			</p>
 		);
 	}
-	return <>{children ?? <p className="empty-note">{emptyLabel}</p>}</>;
+	return <>{children}</>;
 }

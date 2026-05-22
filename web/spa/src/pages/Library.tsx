@@ -5,6 +5,7 @@ import { useAuth } from "../hooks/useAuth";
 import { usePoll } from "../hooks/usePoll";
 import type { Route } from "../hooks/useRoute";
 import type { LibraryLayout } from "../hooks/useTweaks";
+import { isAuthStatus } from "../lib/auth";
 import type { DisplayCurrency } from "../lib/currency";
 import { formatUsdCost } from "../lib/currency";
 
@@ -128,10 +129,6 @@ function errorMessage(status: number, body: unknown): string {
 		return body.detail;
 	}
 	return `Submit failed: ${status}`;
-}
-
-function isAuthStatus(status: number): boolean {
-	return status === 401 || status === 403;
 }
 
 type LibraryError = { kind: "auth" } | { kind: "service"; message: string };
