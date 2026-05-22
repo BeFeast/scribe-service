@@ -692,6 +692,7 @@ async def _stream_job_logs(job_id: int, session: Session | None = None):
             if not lines:
                 yield ":\n\n"
             if session is not None:
+                session.expire_all()
                 job = session.get(Job, job_id)
                 if job is None or job.status in _TERMINAL:
                     discard_on_exit = True
