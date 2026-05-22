@@ -6,6 +6,7 @@ so a single `uvicorn scribe.main:app` serves the API + web-UI and processes jobs
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -30,9 +31,13 @@ async def lifespan(app: FastAPI):
         settings.runtime_overlay()
     except (SQLAlchemyError, ValueError):
         log.exception("runtime config overlay failed")
+    if settings.auth_test_mode:
+        log.warning("auth test mode is enabled; test identity headers can impersonate local users")
     threads = []
     stop = None
-    if settings.app_start_workers:
+    if not settings.app_start_workers or "PYTEST_CURRENT_TEST" in os.environ:
+        log.info("workers disabled", extra={"pytest": "PYTEST_CURRENT_TEST" in os.environ})
+    else:
         threads, stop = start_workers()
         log.info("workers started", extra={"thread_count": len(threads)})
     try:

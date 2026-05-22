@@ -94,6 +94,50 @@ curl http://localhost:13120/jobs/1
 Web UI: `GET /` lists transcripts, `GET /transcripts/{id}` renders summary +
 transcript as HTML.
 
+## Auth v2
+
+Scribe keeps product authorization in Postgres. Clerk signs humans in; Scribe
+verifies Clerk JWTs with the configured JWKS, maps the Clerk subject/email to a
+local `users` row, and scopes jobs/transcripts by `owner_id`.
+The Clerk session token must include an email claim (`email`,
+`primary_email`, `primary_email_address`, or `email_address`) so Scribe can
+bootstrap and match local users.
+
+Configure:
+
+```bash
+SCRIBE_AUTH_CLERK_ISSUER=https://your-clerk-domain
+SCRIBE_AUTH_CLERK_JWKS_URL=https://your-clerk-domain/.well-known/jwks.json
+SCRIBE_BOOTSTRAP_ADMIN_EMAIL=admin@example.com
+SCRIBE_MACHINE_BEARER_TOKEN=... # automation fallback only
+```
+
+The bootstrap admin email is only used when the first Clerk user signs in and
+the `users` table is empty. After that, admins manage allowed users through:
+
+```bash
+curl -H "Authorization: Bearer <admin Clerk session token>" \
+  -X POST http://localhost:13120/api/admin/users \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","role":"user"}'
+```
+
+Trusted LAN clients remain passwordless. External clients must use a Clerk
+session token, a generated extension token, or the machine bearer token. To set
+up the Chrome extension without fishing secrets from Infisical, sign in to the
+Scribe UI, create an extension token with:
+
+```bash
+curl -H "Authorization: Bearer <admin Clerk session token>" \
+  -X POST http://localhost:13120/api/auth/extension-token \
+  -H "Content-Type: application/json" \
+  -d '{"label":"Chrome extension"}'
+```
+
+Store the returned `stx_...` token in the extension and send it as
+`Authorization: Bearer stx_...` on `POST /jobs`. The raw public transcript and
+summary links under `/transcripts/{id}` remain public.
+
 ## Vast.ai worker image
 
 See `docker/vast/`. Build + push from any host with Docker and a GitHub

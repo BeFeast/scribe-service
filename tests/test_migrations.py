@@ -133,6 +133,9 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
             "revision e4f5a6b7c801 likely silent-noop'd"
         )
         assert "app_config" in tables, f"upgrade head did not create app_config (got {tables})"
+        assert "owners" in tables, f"upgrade head did not create owners (got {tables})"
+        assert "users" in tables, f"upgrade head did not create users (got {tables})"
+        assert "extension_tokens" in tables, f"upgrade head did not create extension_tokens (got {tables})"
 
         app_config_cols = _column_names(eng, "app_config")
         assert {"key", "value", "updated_at"}.issubset(app_config_cols), (
@@ -153,6 +156,7 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
             "jobs owner columns missing after upgrade head — "
             "revision f6a7b8c9d012 likely silent-noop'd"
         )
+        assert "owner_id" in jobs_cols, "jobs.owner_id missing after auth ownership migration"
 
         transcripts_cols = _column_names(eng, "transcripts")
         assert "vast_cost" in transcripts_cols, (
@@ -167,6 +171,21 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
             "transcripts owner columns missing after upgrade head — "
             "revision f6a7b8c9d012 likely silent-noop'd"
         )
+        assert "owner_id" in transcripts_cols, (
+            "transcripts.owner_id missing after auth ownership migration"
+        )
+
+        users_cols = _column_names(eng, "users")
+        assert {
+            "owner_id",
+            "clerk_subject",
+            "primary_email",
+            "display_name",
+            "role",
+            "disabled",
+            "created_at",
+            "updated_at",
+        } <= users_cols, "users table missing auth columns"
 
         # Revision a7c1d3e4f201 relaxes transcripts.summary_md to nullable.
         # Asserting column presence alone would miss a silent-noop of that

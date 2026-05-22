@@ -1,23 +1,32 @@
-"""Request owner attribution and operator auth policy helpers."""
-
+"""Request authentication, owner attribution, and authorization helpers."""
 from __future__ import annotations
 
 import base64
 import binascii
+import datetime as dt
+import hashlib
 import ipaddress
 import json
 import secrets
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Literal
 
 import httpx
 import jwt
 from fastapi import HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials
 from jwt import InvalidTokenError, PyJWK
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from scribe.config import settings
+from scribe.db.models import ExtensionToken, Owner, User
 
 _JWKS_CACHE: dict[tuple[str, str], dict] = {}
+_TOKEN_PREFIX = "stx_"
+
+Role = Literal["admin", "user", "machine", "lan"]
 
 
 class AuthState(StrEnum):
@@ -32,6 +41,29 @@ class OwnerIdentity:
     subject: str
     email: str | None = None
     display_name: str | None = None
+
+
+@dataclass(frozen=True)
+class Actor:
+    kind: str
+    role: Role
+    subject: str | None = None
+    user_id: int | None = None
+    owner_id: int | None = None
+    email: str | None = None
+    display_name: str | None = None
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role in {"admin", "machine", "lan"}
+
+
+def token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def new_extension_token() -> str:
+    return f"{_TOKEN_PREFIX}{secrets.token_urlsafe(32)}"
 
 
 def default_owner() -> OwnerIdentity | None:
@@ -51,11 +83,11 @@ def current_owner(request: Request) -> OwnerIdentity | None:
         machine_token = settings.machine_bearer_token.strip()
         if machine_token and secrets.compare_digest(bearer, machine_token):
             return default_owner()
-        clerk_owner = _owner_from_clerk_jwt(bearer)
+        clerk_owner = _owner_from_clerk_jwt(bearer, verify=False)
         if clerk_owner is not None:
             return clerk_owner
 
-    if _is_trusted_lan_request(request):
+    if is_trusted_lan_request(request):
         return default_owner()
     return None
 
@@ -69,7 +101,7 @@ def classify_auth(request: Request) -> AuthState:
         if _clerk_configured():
             _validate_clerk_user(bearer)
             return AuthState.clerk_user
-    if _is_trusted_lan_request(request):
+    if is_trusted_lan_request(request):
         return AuthState.trusted_lan
     return AuthState.public
 
@@ -82,7 +114,7 @@ def require_operator_auth(request: Request) -> AuthState:
 
 
 def is_trusted_lan_request(request: Request) -> bool:
-    return _is_trusted_lan_request(request)
+    return _is_trusted_host(_client_ip(request))
 
 
 def _bearer_token(request: Request, *, strict: bool = False) -> str | None:
@@ -97,14 +129,39 @@ def _bearer_token(request: Request, *, strict: bool = False) -> str | None:
     return parts[1]
 
 
-def _owner_from_clerk_jwt(token: str) -> OwnerIdentity | None:
-    claims = _jwt_payload(token)
-    subject = str(claims.get("sub") or "").strip()
-    if not subject:
+def _trusted_networks() -> list[ipaddress._BaseNetwork]:
+    networks: list[ipaddress._BaseNetwork] = []
+    for raw in settings.trusted_cidrs.split(","):
+        value = raw.strip()
+        if not value:
+            continue
+        networks.append(ipaddress.ip_network(value, strict=False))
+    return networks
+
+
+def _is_trusted_host(host: str) -> bool:
+    if host == "testclient":
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return any(ip in network for network in _trusted_networks())
+
+
+def _client_ip(request: Request) -> str:
+    host = request.client.host if request.client else ""
+    forwarded_for = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+    if forwarded_for and _is_trusted_host(host):
+        return forwarded_for
+    return host
+
+
+def _normal_email(value: str | None) -> str | None:
+    if value is None:
         return None
-    email = _claim_string(claims, "email", "primary_email_address", "email_address")
-    display_name = _claim_string(claims, "name", "full_name", "username")
-    return OwnerIdentity(subject=subject, email=email, display_name=display_name)
+    normalized = value.strip().lower()
+    return normalized or None
 
 
 def _claim_string(claims: dict[str, object], *keys: str) -> str | None:
@@ -113,6 +170,22 @@ def _claim_string(claims: dict[str, object], *keys: str) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _claims_email(claims: dict[str, object]) -> str | None:
+    return _normal_email(
+        _claim_string(claims, "email", "primary_email", "primary_email_address", "email_address")
+    )
+
+
+def _claims_name(claims: dict[str, object]) -> str | None:
+    value = _claim_string(claims, "name", "full_name", "display_name", "username")
+    if value:
+        return value
+    first = claims.get("given_name")
+    last = claims.get("family_name")
+    joined = " ".join(part.strip() for part in (first, last) if isinstance(part, str) and part.strip())
+    return joined or None
 
 
 def _jwt_payload(token: str) -> dict[str, object]:
@@ -129,42 +202,17 @@ def _jwt_payload(token: str) -> dict[str, object]:
     return decoded if isinstance(decoded, dict) else {}
 
 
-def _is_trusted_lan_request(request: Request) -> bool:
-    host = _request_host(request)
-    if host is None:
-        return False
-    networks = []
-    for raw in settings.trusted_cidrs.split(","):
-        value = raw.strip()
-        if not value:
-            continue
-        try:
-            networks.append(ipaddress.ip_network(value, strict=False))
-        except ValueError:
-            continue
-    return any(host in network for network in networks)
-
-
-def _request_host(request: Request) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
-    forwarded_for = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
-    raw_host = forwarded_for or (request.client.host if request.client else "")
-    if raw_host == "testclient":
-        raw_host = "127.0.0.1"
-    try:
-        return ipaddress.ip_address(raw_host)
-    except ValueError:
+def _owner_from_clerk_jwt(token: str, *, verify: bool = True) -> OwnerIdentity | None:
+    claims = _validate_clerk_user(token) if verify else _jwt_payload(token)
+    subject = str(claims.get("sub") or "").strip()
+    if not subject:
         return None
+    return OwnerIdentity(subject=subject, email=_claims_email(claims), display_name=_claims_name(claims))
 
 
 def _clerk_configured() -> bool:
     return bool(settings.auth_clerk_issuer.strip()) and (
         bool(settings.auth_clerk_jwks_url.strip()) or bool(settings.auth_clerk_jwks_json.strip())
-    )
-
-
-def _allowed_emails() -> frozenset[str]:
-    return frozenset(
-        email.strip().lower() for email in settings.auth_allowed_emails.replace("\n", ",").split(",") if email.strip()
     )
 
 
@@ -216,7 +264,7 @@ def _jwk_for_token(token: str) -> PyJWK:
         raise HTTPException(status_code=503, detail="Clerk JWKS is invalid") from exc
 
 
-def _validate_clerk_user(token: str) -> None:
+def _validate_clerk_user(token: str) -> dict[str, object]:
     issuer = settings.auth_clerk_issuer.strip()
     if not issuer:
         raise HTTPException(status_code=503, detail="Clerk issuer is not configured")
@@ -232,10 +280,163 @@ def _validate_clerk_user(token: str) -> None:
         )
     except InvalidTokenError as exc:
         raise HTTPException(status_code=401, detail="invalid Clerk JWT") from exc
+    if not isinstance(claims, dict):
+        return {}
+    allowed = _allowed_emails()
+    if allowed:
+        email = _claims_email(claims)
+        if email is None or email not in allowed:
+            raise HTTPException(status_code=403, detail="email is not allowed")
+    return claims
 
-    email = _claim_string(claims, "email", "primary_email_address", "email_address")
-    if email is None or email.lower() not in _allowed_emails():
-        raise HTTPException(status_code=403, detail="email is not allowed")
+
+def _allowed_emails() -> frozenset[str]:
+    return frozenset(
+        email.strip().lower() for email in settings.auth_allowed_emails.replace("\n", ",").split(",") if email.strip()
+    )
+
+
+def _actor_from_user(user: User, *, kind: str) -> Actor:
+    if user.disabled:
+        raise HTTPException(status_code=403, detail="Scribe user is disabled")
+    if user.role not in {"admin", "user"}:
+        raise HTTPException(status_code=403, detail="Scribe user role is invalid")
+    return Actor(
+        kind=kind,
+        role=user.role,  # type: ignore[arg-type]
+        subject=user.clerk_subject,
+        user_id=user.id,
+        owner_id=user.owner_id,
+        email=user.primary_email,
+        display_name=user.display_name,
+    )
+
+
+def _bootstrap_user(session: Session, *, subject: str, email: str, display_name: str | None) -> User | None:
+    bootstrap_email = _normal_email(settings.bootstrap_admin_email)
+    if bootstrap_email != email:
+        return None
+    user_count = session.scalar(select(func.count()).select_from(User)) or 0
+    if user_count:
+        return None
+    owner = Owner(display_name=display_name or email)
+    user = User(
+        owner=owner,
+        clerk_subject=subject,
+        primary_email=email,
+        display_name=display_name,
+        role="admin",
+    )
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return user
+
+
+def _find_or_link_user(
+    session: Session, *, subject: str, email: str, display_name: str | None
+) -> User | None:
+    subject_user = session.scalar(select(User).where(User.clerk_subject == subject))
+    email_user = session.scalar(select(User).where(User.primary_email == email))
+    if subject_user is not None and email_user is not None and subject_user.id != email_user.id:
+        raise HTTPException(status_code=403, detail="Clerk identity conflicts with an existing Scribe user")
+
+    user = subject_user or email_user
+    if user is None:
+        return _bootstrap_user(session, subject=subject, email=email, display_name=display_name)
+    if user.clerk_subject is None:
+        user.clerk_subject = subject
+    elif user.clerk_subject != subject:
+        raise HTTPException(status_code=403, detail="Clerk identity conflicts with an existing Scribe user")
+    if display_name and user.display_name != display_name:
+        user.display_name = display_name
+    if user.primary_email != email:
+        user.primary_email = email
+    session.commit()
+    session.refresh(user)
+    return user
+
+
+def _actor_from_clerk_token(session: Session, token: str) -> Actor:
+    claims = _validate_clerk_user(token)
+    subject = str(claims.get("sub") or "").strip()
+    email = _claims_email(claims)
+    if not subject or email is None:
+        raise HTTPException(status_code=401, detail="Clerk token is missing subject or email")
+    user = _find_or_link_user(session, subject=subject, email=email, display_name=_claims_name(claims))
+    if user is None:
+        raise HTTPException(status_code=403, detail="Scribe access is not allowed for this Clerk user")
+    return _actor_from_user(user, kind="clerk")
+
+
+def _actor_from_extension_token(session: Session, token: str) -> Actor | None:
+    if not token.startswith(_TOKEN_PREFIX):
+        return None
+    row = session.scalar(select(ExtensionToken).where(ExtensionToken.token_hash == token_hash(token)))
+    if row is None or row.disabled:
+        raise HTTPException(status_code=401, detail="invalid extension token")
+    row.last_used_at = dt.datetime.now(dt.UTC)
+    session.commit()
+    return _actor_from_user(row.user, kind="extension")
+
+
+def _actor_from_test_headers(request: Request, session: Session) -> Actor | None:
+    if not settings.auth_test_mode:
+        return None
+    subject = request.headers.get("x-scribe-test-clerk-sub")
+    email = _normal_email(request.headers.get("x-scribe-test-email"))
+    if not subject or not email:
+        return None
+    user = _find_or_link_user(
+        session,
+        subject=subject,
+        email=email,
+        display_name=request.headers.get("x-scribe-test-name"),
+    )
+    if user is None:
+        raise HTTPException(status_code=403, detail="Scribe access is not allowed for this Clerk user")
+    return _actor_from_user(user, kind="clerk-test")
+
+
+def current_actor(
+    request: Request,
+    session: Session,
+    credentials: HTTPAuthorizationCredentials | None,
+) -> Actor:
+    if test_actor := _actor_from_test_headers(request, session):
+        return test_actor
+    if request.headers.get("authorization") and credentials is None:
+        raise HTTPException(status_code=401, detail="invalid authorization header")
+    if credentials is not None and credentials.scheme.lower() == "bearer":
+        token = credentials.credentials
+        machine = settings.machine_bearer_token.strip()
+        if machine and secrets.compare_digest(token, machine):
+            owner = default_owner()
+            return Actor(
+                kind="machine",
+                role="machine",
+                subject=owner.subject if owner else None,
+                email=owner.email if owner else None,
+                display_name=owner.display_name if owner else None,
+            )
+        if extension_actor := _actor_from_extension_token(session, token):
+            return extension_actor
+        if not _clerk_configured():
+            if is_trusted_lan_request(request):
+                owner = _owner_from_clerk_jwt(token, verify=False)
+                if owner is not None:
+                    return Actor(
+                        kind="legacy-clerk",
+                        role="user",
+                        subject=owner.subject,
+                        email=owner.email,
+                        display_name=owner.display_name,
+                    )
+            raise HTTPException(status_code=401, detail="invalid bearer token")
+        return _actor_from_clerk_token(session, token)
+    if is_trusted_lan_request(request):
+        return Actor(kind="trusted-lan", role="lan")
+    raise HTTPException(status_code=401, detail="authentication required")
 
 
 def clear_jwks_cache() -> None:

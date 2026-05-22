@@ -18,10 +18,21 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
-from scribe.api.auth import AuthState, OwnerIdentity, current_owner, is_trusted_lan_request, require_operator_auth
+from scribe.api.auth import (
+    Actor,
+    AuthState,
+    OwnerIdentity,
+    current_actor,
+    current_owner,
+    is_trusted_lan_request,
+    new_extension_token,
+    require_operator_auth,
+    token_hash,
+)
 from scribe.api.schemas import (
     ActiveJobsResponse,
     ActiveJobView,
@@ -29,6 +40,9 @@ from scribe.api.schemas import (
     BackupSnapshot,
     ConfigEntry,
     ConfigResponse,
+    CurrentUserView,
+    ExtensionTokenCreate,
+    ExtensionTokenView,
     FailedJobView,
     JobCreate,
     JobStageView,
@@ -47,6 +61,8 @@ from scribe.api.schemas import (
     SystemSnapshot,
     TranscriptBrief,
     TranscriptFull,
+    UserAdminCreate,
+    UserAdminView,
     WorkerPoolSnapshot,
 )
 from scribe.config import (
@@ -55,7 +71,7 @@ from scribe.config import (
     serialize_runtime_config_value,
     settings,
 )
-from scribe.db.models import AppConfig, Job, JobStageEvent, JobStatus, Transcript
+from scribe.db.models import AppConfig, ExtensionToken, Job, JobStageEvent, JobStatus, Owner, Transcript, User
 from scribe.db.query import escape_like
 from scribe.db.session import SessionLocal
 from scribe.obs import metrics
@@ -67,6 +83,7 @@ from scribe.source_links import source_link_for_url
 
 router = APIRouter()
 log = logging.getLogger("scribe.api")
+_AUTH = HTTPBearer(auto_error=False)
 
 # Postgres advisory-lock key used to serialise the daily-spend-cap check.
 # Arbitrary 8-byte int derived from the literal so it's stable across deploys.
@@ -95,6 +112,20 @@ def get_session() -> Iterator[Session]:
         yield session
     finally:
         session.close()
+
+
+def require_actor(
+    request: Request,
+    session: Session = Depends(get_session),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_AUTH),
+) -> Actor:
+    return current_actor(request, session, credentials)
+
+
+def require_admin_actor(actor: Actor = Depends(require_actor)) -> Actor:
+    if not actor.is_admin:
+        raise HTTPException(status_code=403, detail="admin role required")
+    return actor
 
 
 def _brief(t: Transcript) -> TranscriptBrief:
@@ -201,6 +232,33 @@ def _owner_filter(stmt, model, owner: OwnerIdentity | None):
     if owner is None:
         return stmt
     return stmt.where(model.owner_subject == owner.subject)
+
+
+def _actor_filter(stmt, model, actor: Actor):
+    if actor.kind == "machine" and actor.subject is not None:
+        return stmt.where(model.owner_subject == actor.subject)
+    if actor.is_admin:
+        return stmt
+    if actor.owner_id is not None:
+        if actor.subject is not None:
+            return stmt.where(or_(model.owner_id == actor.owner_id, model.owner_subject == actor.subject))
+        return stmt.where(model.owner_id == actor.owner_id)
+    if actor.subject is not None:
+        return stmt.where(model.owner_subject == actor.subject)
+    raise HTTPException(status_code=403, detail="owner-scoped access requires a user account")
+
+
+def _require_owned_job(session: Session, job_id: int, actor: Actor) -> Job:
+    job = session.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    if actor.is_admin:
+        return job
+    if actor.owner_id is not None and job.owner_id == actor.owner_id:
+        return job
+    if actor.subject is not None and job.owner_subject == actor.subject:
+        return job
+    raise HTTPException(status_code=404, detail=f"job {job_id} not found")
 
 
 def _latest_done_transcript(session: Session, video_id: str, owner: OwnerIdentity | None = None) -> Transcript | None:
@@ -418,12 +476,110 @@ def rotate_token(_auth: AuthState = Depends(require_operator_auth)) -> None:
     raise HTTPException(status_code=501, detail="bearer-token rotation is not implemented yet")
 
 
+def _user_view(user: User) -> UserAdminView:
+    return UserAdminView(
+        id=user.id,
+        owner_id=user.owner_id,
+        clerk_subject=user.clerk_subject,
+        primary_email=user.primary_email,
+        display_name=user.display_name,
+        role=user.role,
+        disabled=user.disabled,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+    )
+
+
+@router.get("/api/auth/me", response_model=CurrentUserView)
+def auth_me(actor: Actor = Depends(require_actor)) -> CurrentUserView:
+    return CurrentUserView(
+        authenticated=True,
+        kind=actor.kind,
+        role=actor.role,
+        user_id=actor.user_id,
+        owner_id=actor.owner_id,
+        email=actor.email,
+        display_name=actor.display_name,
+    )
+
+
+@router.post("/api/auth/extension-token", response_model=ExtensionTokenView)
+def create_extension_token(
+    body: ExtensionTokenCreate,
+    session: Session = Depends(get_session),
+    actor: Actor = Depends(require_actor),
+) -> ExtensionTokenView:
+    if actor.user_id is None:
+        raise HTTPException(status_code=403, detail="extension tokens require a signed-in Scribe user")
+    token = new_extension_token()
+    session.add(
+        ExtensionToken(
+            user_id=actor.user_id,
+            token_hash=token_hash(token),
+            label=body.label.strip() if body.label and body.label.strip() else "Chrome extension",
+        )
+    )
+    session.commit()
+    return ExtensionTokenView(token=token)
+
+
+@router.get("/api/admin/users", response_model=list[UserAdminView])
+def list_users(
+    session: Session = Depends(get_session),
+    _actor: Actor = Depends(require_admin_actor),
+) -> list[UserAdminView]:
+    rows = session.scalars(select(User).order_by(User.id)).all()
+    return [_user_view(user) for user in rows]
+
+
+@router.post("/api/admin/users", response_model=UserAdminView, status_code=201)
+def add_user(
+    body: UserAdminCreate,
+    session: Session = Depends(get_session),
+    _actor: Actor = Depends(require_admin_actor),
+) -> UserAdminView:
+    email = body.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=422, detail="valid email is required")
+    if body.role not in {"admin", "user"}:
+        raise HTTPException(status_code=422, detail="role must be admin or user")
+    existing = session.scalar(select(User).where(User.primary_email == email))
+    if existing is not None:
+        existing.display_name = body.display_name
+        existing.role = body.role
+        existing.disabled = False
+        session.commit()
+        session.refresh(existing)
+        return _user_view(existing)
+    owner = Owner(display_name=body.display_name or email)
+    user = User(owner=owner, primary_email=email, display_name=body.display_name, role=body.role)
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return _user_view(user)
+
+
+@router.post("/api/admin/users/{user_id}/disable", response_model=UserAdminView)
+def disable_user(
+    user_id: int,
+    session: Session = Depends(get_session),
+    _actor: Actor = Depends(require_admin_actor),
+) -> UserAdminView:
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail=f"user {user_id} not found")
+    user.disabled = True
+    session.commit()
+    session.refresh(user)
+    return _user_view(user)
+
+
 @router.post("/jobs", response_model=JobView, status_code=201)
 def create_job(
     body: JobCreate,
     request: Request,
     session: Session = Depends(get_session),
-    _auth: AuthState = Depends(require_operator_auth),
+    actor: Actor = Depends(require_actor),
 ) -> JobView:
     """Submit a video URL. Deduplicates by video_id against **done** transcripts
     and in-flight jobs. Partial transcripts (whisper succeeded but summary
@@ -431,7 +587,13 @@ def create_job(
     video_id = initial_video_key(body.url)
 
     owner = current_owner(request)
-    done = _latest_done_transcript(session, video_id, owner)
+    done = session.scalar(
+        _actor_filter(
+            select(Transcript).where(Transcript.video_id == video_id, Transcript.summary_md.is_not(None)),
+            Transcript,
+            actor,
+        ).order_by(Transcript.id.desc())
+    )
     if done is not None:
         # dedup-done bypasses the cost cap: no new GPU work happens
         return JobView(job_id=done.job_id, url=body.url, video_id=video_id,
@@ -439,10 +601,10 @@ def create_job(
                        status=JobStatus.done.value, deduplicated=True, transcript=_brief(done))
 
     active = session.scalar(
-        _owner_filter(
+        _actor_filter(
             select(Job).where(Job.video_id == video_id, Job.status.in_(_ACTIVE)),
             Job,
-            owner,
+            actor,
         ).order_by(Job.id.desc())
     )
     if active is not None:
@@ -456,9 +618,11 @@ def create_job(
     # so the cap doesn't apply — and *blocking* this submission would make
     # the job permanently unrecoverable until enough spend rolls off.
     partial_exists = session.scalar(
-        select(Transcript.id)
-        .where(Transcript.video_id == video_id, Transcript.summary_md.is_(None))
-        .where(Transcript.owner_subject == owner.subject if owner else True)
+        _actor_filter(
+            select(Transcript.id).where(Transcript.video_id == video_id, Transcript.summary_md.is_(None)),
+            Transcript,
+            actor,
+        )
         .limit(1)
     ) is not None
 
@@ -485,6 +649,7 @@ def create_job(
         owner_subject=owner.subject if owner else None,
         owner_email=owner.email if owner else None,
         owner_display_name=owner.display_name if owner else None,
+        owner_id=actor.owner_id,
     )
     session.add(job)
     session.flush()
@@ -502,11 +667,9 @@ def create_job(
 def get_job(
     job_id: int,
     session: Session = Depends(get_session),
-    _auth: AuthState = Depends(require_operator_auth),
+    actor: Actor = Depends(require_actor),
 ) -> JobView:
-    job = session.get(Job, job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    job = _require_owned_job(session, job_id, actor)
     return render_job_view(session, job)
 
 
@@ -514,7 +677,7 @@ def _sse_data(payload: dict[str, object]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 
 
-async def _stream_job_logs(job_id: int):
+async def _stream_job_logs(job_id: int, session: Session | None = None):
     version, lines = job_log_buffer.snapshot(job_id)
     for line in lines:
         yield _sse_data(line)
@@ -528,7 +691,8 @@ async def _stream_job_logs(job_id: int):
                 yield _sse_data(line)
             if not lines:
                 yield ":\n\n"
-            with SessionLocal() as session:
+            if session is not None:
+                session.expire_all()
                 job = session.get(Job, job_id)
                 if job is None or job.status in _TERMINAL:
                     discard_on_exit = True
@@ -543,7 +707,7 @@ def stream_job_log(job_id: int, session: Session = Depends(get_session)) -> Stre
     if session.get(Job, job_id) is None:
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
     return StreamingResponse(
-        _stream_job_logs(job_id),
+        _stream_job_logs(job_id, session),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
@@ -551,16 +715,14 @@ def stream_job_log(job_id: int, session: Session = Depends(get_session)) -> Stre
 
 @router.get("/transcripts", response_model=list[TranscriptBrief])
 def list_transcripts(
-    request: Request,
     session: Session = Depends(get_session),
-    _auth: AuthState = Depends(require_operator_auth),
+    actor: Actor = Depends(require_actor),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     include_partial: bool = Query(False, description="Also return partial transcripts (summary pending)."),
 ) -> list[TranscriptBrief]:
     stmt = select(Transcript).order_by(Transcript.id.desc())
-    owner = current_owner(request)
-    stmt = _owner_filter(stmt, Transcript, owner)
+    stmt = _actor_filter(stmt, Transcript, actor)
     if not include_partial:
         stmt = stmt.where(Transcript.summary_md.is_not(None))
     rows = session.scalars(stmt.limit(limit).offset(offset)).all()
@@ -608,9 +770,8 @@ def admin_delete_transcript(
 @router.get("/api/library", response_model=LibraryResponse)
 def api_library(
     response: Response,
-    request: Request,
     session: Session = Depends(get_session),
-    _auth: AuthState = Depends(require_operator_auth),
+    actor: Actor = Depends(require_actor),
     q: str | None = Query(None, description="Fuzzy match against title and summary markdown."),
     tag: str | None = Query(None, description="Exact tag match."),
     limit: int = Query(50, ge=1, le=200),
@@ -619,8 +780,7 @@ def api_library(
     """List transcript rows for the SPA Library view without full summary bodies."""
     _no_store(response)
     stmt = select(Transcript)
-    owner = current_owner(request)
-    stmt = _owner_filter(stmt, Transcript, owner)
+    stmt = _actor_filter(stmt, Transcript, actor)
     if q and q.strip():
         like = f"%{escape_like(q.strip())}%"
         stmt = stmt.where(or_(Transcript.title.ilike(like), Transcript.summary_md.ilike(like)))
@@ -698,14 +858,12 @@ def _stage_views(job: Job, events: dict[str, JobStageEvent]) -> dict[str, JobSta
 @router.get("/api/jobs/active", response_model=ActiveJobsResponse, response_model_exclude_none=True)
 def api_jobs_active(
     response: Response,
-    request: Request,
     session: Session = Depends(get_session),
-    _auth: AuthState = Depends(require_operator_auth),
+    actor: Actor = Depends(require_actor),
 ) -> ActiveJobsResponse:
     """Return all queued/in-flight jobs with derived pipeline stage state."""
     _no_store(response)
-    owner = current_owner(request)
-    stmt = _owner_filter(select(Job).where(Job.status.in_(_ACTIVE)), Job, owner)
+    stmt = _actor_filter(select(Job).where(Job.status.in_(_ACTIVE)), Job, actor)
     jobs = session.scalars(stmt.order_by(Job.id)).all()
     if not jobs:
         return ActiveJobsResponse(jobs=[])
@@ -715,10 +873,10 @@ def api_jobs_active(
 
     video_ids = {job.video_id for job in jobs}
     transcripts = session.scalars(
-        _owner_filter(
+        _actor_filter(
             select(Transcript).where(Transcript.video_id.in_(video_ids)),
             Transcript,
-            owner,
+            actor,
         ).order_by(Transcript.id.desc())
     ).all()
     title_by_video: dict[str, str] = {}
@@ -1087,7 +1245,7 @@ def admin_cancel_job(
 def admin_retry_job(
     job_id: int,
     session: Session = Depends(get_session),
-    _auth: AuthState = Depends(require_operator_auth),
+    _actor: Actor = Depends(require_admin_actor),
 ) -> JobView:
     """Operator recovery (PRD §5.4): re-queue a terminal job as a new Job row.
 
@@ -1141,6 +1299,7 @@ def admin_retry_job(
         source=job.source, title=job.title, callback_url=job.callback_url,
         owner_subject=job.owner_subject, owner_email=job.owner_email,
         owner_display_name=job.owner_display_name,
+        owner_id=job.owner_id,
     )
     session.add(new_job)
     session.flush()
@@ -1166,7 +1325,7 @@ def admin_retry_job(
 def admin_delete_job(
     job_id: int,
     session: Session = Depends(get_session),
-    _auth: AuthState = Depends(require_operator_auth),
+    _actor: Actor = Depends(require_admin_actor),
 ) -> Response:
     """Dismiss a failed job from operator queues.
 
@@ -1266,40 +1425,47 @@ def _service_version() -> str:
 def api_ops(
     response: Response,
     session: Session = Depends(get_session),
-    _auth: AuthState = Depends(require_operator_auth),
+    actor: Actor = Depends(require_actor),
 ) -> OpsSnapshot:
     """One-shot JSON snapshot for the SPA Ops dashboard."""
     _no_store(response)
     now = dt.datetime.now(dt.UTC)
     since = now - dt.timedelta(days=1)
-    by_status = dict(
-        session.execute(
-            select(Job.status, func.count())
-            .where(Job.created_at >= since)
-            .group_by(Job.status)
-        ).all()
-    )
+    jobs_recent = _actor_filter(select(Job).where(Job.created_at >= since), Job, actor).subquery()
+    by_status = dict(session.execute(select(jobs_recent.c.status, func.count()).group_by(jobs_recent.c.status)).all())
+    transcripts_recent = _actor_filter(
+        select(Transcript).where(Transcript.created_at >= since),
+        Transcript,
+        actor,
+    ).subquery()
     transcripts_done = session.scalar(
-        select(func.count()).select_from(Transcript)
-        .where(Transcript.created_at >= since, Transcript.summary_md.is_not(None))
+        select(func.count())
+        .select_from(transcripts_recent)
+        .where(transcripts_recent.c.summary_md.is_not(None))
     ) or 0
     transcripts_partial = session.scalar(
-        select(func.count()).select_from(Transcript)
-        .where(Transcript.created_at >= since, Transcript.summary_md.is_(None))
+        select(func.count())
+        .select_from(transcripts_recent)
+        .where(transcripts_recent.c.summary_md.is_(None))
     ) or 0
     queue_depth = session.scalar(
-        select(func.count()).select_from(Job).where(Job.status.in_(_ACTIVE))
+        select(func.count()).select_from(_actor_filter(select(Job).where(Job.status.in_(_ACTIVE)), Job, actor).subquery())
     ) or 0
     active_workers = session.scalar(
-        select(func.count()).select_from(Job).where(
-            Job.status.in_((JobStatus.downloading, JobStatus.transcribing, JobStatus.summarizing))
+        select(func.count()).select_from(
+            _actor_filter(
+                select(Job).where(
+                    Job.status.in_((JobStatus.downloading, JobStatus.transcribing, JobStatus.summarizing))
+                ),
+                Job,
+                actor,
+            ).subquery()
         )
     ) or 0
     # DB-derived proxy for worker occupancy. It can lag real OS thread state
     # after a worker crash until retry/recovery updates the in-flight jobs.
     recent_failures = session.execute(
-        select(Job)
-        .where(Job.status == JobStatus.failed)
+        _actor_filter(select(Job).where(Job.status == JobStatus.failed), Job, actor)
         .order_by(Job.updated_at.desc(), Job.id.desc())
         .limit(50)
     ).scalars().all()
