@@ -11,6 +11,7 @@ import secrets
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
+from urllib.parse import quote
 
 import httpx
 import jwt
@@ -24,6 +25,7 @@ from scribe.config import settings
 from scribe.db.models import ExtensionToken, Owner, User
 
 _JWKS_CACHE: dict[tuple[str, str], dict] = {}
+_CLERK_USER_CACHE: dict[str, OwnerIdentity | None] = {}
 _TOKEN_PREFIX = "stx_"
 
 Role = Literal["admin", "user", "machine", "lan"]
@@ -186,6 +188,71 @@ def _claims_name(claims: dict[str, object]) -> str | None:
     last = claims.get("family_name")
     joined = " ".join(part.strip() for part in (first, last) if isinstance(part, str) and part.strip())
     return joined or None
+
+
+def _clerk_profile_email(data: dict[str, object]) -> str | None:
+    emails = data.get("email_addresses")
+    if not isinstance(emails, list):
+        return None
+
+    primary_id = data.get("primary_email_address_id")
+    if isinstance(primary_id, str) and primary_id:
+        for item in emails:
+            if isinstance(item, dict) and item.get("id") == primary_id:
+                value = item.get("email_address")
+                return _normal_email(value if isinstance(value, str) else None)
+
+    for item in emails:
+        if isinstance(item, dict):
+            value = item.get("email_address")
+            email = _normal_email(value if isinstance(value, str) else None)
+            if email:
+                return email
+    return None
+
+
+def _clerk_profile_name(data: dict[str, object]) -> str | None:
+    name = _claim_string(data, "full_name", "name", "username")
+    if name:
+        return name
+    first = data.get("first_name")
+    last = data.get("last_name")
+    joined = " ".join(part.strip() for part in (first, last) if isinstance(part, str) and part.strip())
+    return joined or None
+
+
+def _clerk_user_profile(subject: str) -> OwnerIdentity | None:
+    if subject in _CLERK_USER_CACHE:
+        return _CLERK_USER_CACHE[subject]
+
+    secret = settings.clerk_secret_key.strip()
+    if not secret:
+        _CLERK_USER_CACHE[subject] = None
+        return None
+
+    base_url = settings.clerk_backend_api_url.strip().rstrip("/") or "https://api.clerk.com"
+    try:
+        response = httpx.get(
+            f"{base_url}/v1/users/{quote(subject, safe='')}",
+            headers={"Authorization": f"Bearer {secret}"},
+            timeout=5.0,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except (httpx.HTTPError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=503, detail="Clerk user lookup failed") from exc
+
+    profile = (
+        OwnerIdentity(
+            subject=subject,
+            email=_clerk_profile_email(data),
+            display_name=_clerk_profile_name(data),
+        )
+        if isinstance(data, dict)
+        else None
+    )
+    _CLERK_USER_CACHE[subject] = profile
+    return profile
 
 
 def _jwt_payload(token: str) -> dict[str, object]:
@@ -362,8 +429,28 @@ def _actor_from_clerk_token(session: Session, token: str) -> Actor:
     subject = str(claims.get("sub") or "").strip()
     email = _claims_email(claims)
     if not subject or email is None:
-        raise HTTPException(status_code=401, detail="Clerk token is missing subject or email")
-    user = _find_or_link_user(session, subject=subject, email=email, display_name=_claims_name(claims))
+        if not subject:
+            raise HTTPException(status_code=401, detail="Clerk token is missing subject")
+
+    display_name = _claims_name(claims)
+    if email is None or display_name is None:
+        profile = _clerk_user_profile(subject)
+        if profile is not None:
+            email = email or profile.email
+            display_name = display_name or profile.display_name
+
+    subject_user = session.scalar(select(User).where(User.clerk_subject == subject))
+    if subject_user is not None and email is None:
+        if display_name and subject_user.display_name != display_name:
+            subject_user.display_name = display_name
+            session.commit()
+            session.refresh(subject_user)
+        return _actor_from_user(subject_user, kind="clerk")
+
+    if email is None:
+        raise HTTPException(status_code=401, detail="Clerk token is missing email")
+
+    user = _find_or_link_user(session, subject=subject, email=email, display_name=display_name)
     if user is None:
         raise HTTPException(status_code=403, detail="Scribe access is not allowed for this Clerk user")
     return _actor_from_user(user, kind="clerk")
@@ -441,3 +528,4 @@ def current_actor(
 
 def clear_jwks_cache() -> None:
     _JWKS_CACHE.clear()
+    _CLERK_USER_CACHE.clear()

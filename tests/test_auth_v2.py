@@ -5,6 +5,7 @@ import logging
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
 
+from scribe.api import auth as auth_module
 from scribe.api import routes as routes_module
 from scribe.config import settings
 from scribe.db.models import ExtensionToken, Job, JobStatus, Owner, Transcript, User
@@ -30,7 +31,7 @@ def _clear_auth(session) -> None:
     session.commit()
 
 
-def _seed_user(session, *, email: str, subject: str, role: str = "user", disabled: bool = False) -> User:
+def _seed_user(session, *, email: str, subject: str | None, role: str = "user", disabled: bool = False) -> User:
     owner = Owner(display_name=email)
     user = User(
         owner=owner,
@@ -215,6 +216,65 @@ def test_unauthorized_clerk_user_is_rejected(db_session, monkeypatch):
         )
     app.dependency_overrides.pop(routes_module.get_session, None)
     assert resp.status_code == 403
+
+
+def test_clerk_token_without_email_links_existing_user_from_backend_profile(db_session, monkeypatch):
+    _clear_auth(db_session)
+    user = _seed_user(db_session, email="owner@example.test", subject=None, role="admin")
+    auth_module.clear_jwks_cache()
+    monkeypatch.setattr(settings, "clerk_secret_key", "sk_test_profile")
+    monkeypatch.setattr(settings, "clerk_backend_api_url", "https://api.clerk.test")
+    monkeypatch.setattr(auth_module, "_validate_clerk_user", lambda _token: {"sub": "user_profile"})
+
+    class ProfileResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "id": "user_profile",
+                "first_name": "Owner",
+                "last_name": "Example",
+                "primary_email_address_id": "email_primary",
+                "email_addresses": [
+                    {"id": "email_primary", "email_address": "owner@example.test"},
+                ],
+            }
+
+    def fake_get(url, *, headers, timeout):
+        assert url == "https://api.clerk.test/v1/users/user_profile"
+        assert headers == {"Authorization": "Bearer sk_test_profile"}
+        assert timeout == 5.0
+        return ProfileResponse()
+
+    monkeypatch.setattr(auth_module.httpx, "get", fake_get)
+
+    actor = auth_module._actor_from_clerk_token(db_session, "token-without-email")
+
+    db_session.refresh(user)
+    assert actor.user_id == user.id
+    assert actor.role == "admin"
+    assert actor.email == "owner@example.test"
+    assert user.clerk_subject == "user_profile"
+    assert user.display_name == "Owner Example"
+
+
+def test_clerk_token_without_email_uses_existing_subject_mapping(db_session, monkeypatch):
+    _clear_auth(db_session)
+    user = _seed_user(db_session, email="mapped@example.test", subject="user_mapped")
+    auth_module.clear_jwks_cache()
+    monkeypatch.setattr(settings, "clerk_secret_key", "")
+    monkeypatch.setattr(auth_module, "_validate_clerk_user", lambda _token: {"sub": "user_mapped"})
+
+    def fail_get(*_args, **_kwargs):
+        raise AssertionError("existing subject mapping must not call Clerk backend")
+
+    monkeypatch.setattr(auth_module.httpx, "get", fail_get)
+
+    actor = auth_module._actor_from_clerk_token(db_session, "token-without-email")
+
+    assert actor.user_id == user.id
+    assert actor.email == "mapped@example.test"
 
 
 def test_extension_token_can_submit_outside_lan(db_session, monkeypatch):
