@@ -99,15 +99,18 @@ transcript as HTML.
 Scribe keeps product authorization in Postgres. Clerk signs humans in; Scribe
 verifies Clerk JWTs with the configured JWKS, maps the Clerk subject/email to a
 local `users` row, and scopes jobs/transcripts by `owner_id`.
-The Clerk session token must include an email claim (`email`,
-`primary_email`, `primary_email_address`, or `email_address`) so Scribe can
-bootstrap and match local users.
+If the Clerk session token does not include an email claim, Scribe uses the
+Clerk Backend API and `SCRIBE_CLERK_SECRET_KEY` to resolve the user profile by
+Clerk subject. After a subject is linked to a local user, future session tokens
+do not need to carry email on every request.
 
 Configure:
 
 ```bash
 SCRIBE_AUTH_CLERK_ISSUER=https://your-clerk-domain
 SCRIBE_AUTH_CLERK_JWKS_URL=https://your-clerk-domain/.well-known/jwks.json
+SCRIBE_CLERK_BACKEND_API_URL=https://api.clerk.com
+SCRIBE_CLERK_SECRET_KEY=...
 SCRIBE_BOOTSTRAP_ADMIN_EMAIL=admin@example.com
 SCRIBE_MACHINE_BEARER_TOKEN=... # automation fallback only
 ```
