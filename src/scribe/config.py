@@ -217,7 +217,7 @@ class Settings(BaseSettings):
     # the owner attribution code consumes them without exposing bearer secrets
     # through the mutable config API.
     machine_bearer_token: str = ""
-    trusted_cidrs: str = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,::1/128,fc00::/7,fe80::/10"
+    trusted_cidrs: str = "127.0.0.0/8,::1/128"
 
     # Path the scribe-backups sidecar writes after each successful run; surfaced
     # by GET /admin/backup-status for healthcheck curl-polling (PRD §4.12).

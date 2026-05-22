@@ -17,7 +17,7 @@ import jwt
 from fastapi import HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from jwt import InvalidTokenError, PyJWK
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from scribe.config import settings
@@ -336,11 +336,18 @@ def _bootstrap_user(session: Session, *, subject: str, email: str, display_name:
 def _find_or_link_user(
     session: Session, *, subject: str, email: str, display_name: str | None
 ) -> User | None:
-    user = session.scalar(select(User).where(or_(User.clerk_subject == subject, User.primary_email == email)))
+    subject_user = session.scalar(select(User).where(User.clerk_subject == subject))
+    email_user = session.scalar(select(User).where(User.primary_email == email))
+    if subject_user is not None and email_user is not None and subject_user.id != email_user.id:
+        raise HTTPException(status_code=403, detail="Clerk identity conflicts with an existing Scribe user")
+
+    user = subject_user or email_user
     if user is None:
         return _bootstrap_user(session, subject=subject, email=email, display_name=display_name)
     if user.clerk_subject is None:
         user.clerk_subject = subject
+    elif user.clerk_subject != subject:
+        raise HTTPException(status_code=403, detail="Clerk identity conflicts with an existing Scribe user")
     if display_name and user.display_name != display_name:
         user.display_name = display_name
     if user.primary_email != email:

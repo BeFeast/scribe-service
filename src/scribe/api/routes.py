@@ -240,6 +240,8 @@ def _actor_filter(stmt, model, actor: Actor):
     if actor.is_admin:
         return stmt
     if actor.owner_id is not None:
+        if actor.subject is not None:
+            return stmt.where(or_(model.owner_id == actor.owner_id, model.owner_subject == actor.subject))
         return stmt.where(model.owner_id == actor.owner_id)
     if actor.subject is not None:
         return stmt.where(model.owner_subject == actor.subject)
@@ -256,9 +258,7 @@ def _require_owned_job(session: Session, job_id: int, actor: Actor) -> Job:
         return job
     if actor.subject is not None and job.owner_subject == actor.subject:
         return job
-    if not actor.is_admin:
-        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
-    return job
+    raise HTTPException(status_code=404, detail=f"job {job_id} not found")
 
 
 def _latest_done_transcript(session: Session, video_id: str, owner: OwnerIdentity | None = None) -> Transcript | None:

@@ -31,6 +31,8 @@ async def lifespan(app: FastAPI):
         settings.runtime_overlay()
     except (SQLAlchemyError, ValueError):
         log.exception("runtime config overlay failed")
+    if settings.auth_test_mode:
+        log.warning("auth test mode is enabled; test identity headers can impersonate local users")
     threads = []
     stop = None
     if not settings.app_start_workers or "PYTEST_CURRENT_TEST" in os.environ:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
 
@@ -44,12 +46,15 @@ def _seed_user(session, *, email: str, subject: str, role: str = "user", disable
     return user
 
 
-def _seed_transcript(session, *, video_id: str, owner_id: int | None) -> Transcript:
+def _seed_transcript(
+    session, *, video_id: str, owner_id: int | None, owner_subject: str | None = None
+) -> Transcript:
     job = Job(
         url=f"https://youtu.be/{video_id}",
         video_id=video_id,
         status=JobStatus.done,
         owner_id=owner_id,
+        owner_subject=owner_subject,
     )
     session.add(job)
     session.flush()
@@ -60,6 +65,7 @@ def _seed_transcript(session, *, video_id: str, owner_id: int | None) -> Transcr
         transcript_md="transcript",
         summary_md="summary",
         owner_id=owner_id,
+        owner_subject=owner_subject,
     )
     session.add(transcript)
     session.commit()
@@ -107,6 +113,66 @@ def test_authorized_clerk_user_can_post_jobs_and_owns_row(db_session, monkeypatc
     job = db_session.get(Job, resp.json()["job_id"])
     assert job is not None
     assert job.owner_id == user.owner_id
+
+
+def test_owner_scoped_reads_include_pre_migration_subject_rows(db_session, monkeypatch):
+    _clear_auth(db_session)
+    monkeypatch.setattr(settings, "auth_test_mode", True)
+    _seed_user(db_session, email="legacy@example.test", subject="user_legacy")
+    transcript = _seed_transcript(
+        db_session,
+        video_id="legacy11111",
+        owner_id=None,
+        owner_subject="user_legacy",
+    )
+
+    with _client(db_session) as client:
+        resp = client.get(
+            "/api/library",
+            headers=_external_headers(
+                {
+                    "X-Scribe-Test-Clerk-Sub": "user_legacy",
+                    "X-Scribe-Test-Email": "legacy@example.test",
+                }
+            ),
+        )
+    app.dependency_overrides.pop(routes_module.get_session, None)
+
+    assert resp.status_code == 200, resp.text
+    assert {row["id"] for row in resp.json()["rows"]} == {transcript.id}
+
+
+def test_clerk_identity_conflict_returns_forbidden(db_session, monkeypatch):
+    _clear_auth(db_session)
+    monkeypatch.setattr(settings, "auth_test_mode", True)
+    _seed_user(db_session, email="subject@example.test", subject="user_subject")
+    _seed_user(db_session, email="email@example.test", subject="user_email")
+
+    with _client(db_session) as client:
+        resp = client.post(
+            "/jobs",
+            json={"url": "https://youtu.be/dQw4w9WgXcQ"},
+            headers=_external_headers(
+                {
+                    "X-Scribe-Test-Clerk-Sub": "user_subject",
+                    "X-Scribe-Test-Email": "email@example.test",
+                }
+            ),
+        )
+    app.dependency_overrides.pop(routes_module.get_session, None)
+
+    assert resp.status_code == 403
+    assert "conflicts" in resp.json()["detail"]
+
+
+def test_auth_test_mode_warns_on_startup(db_session, monkeypatch, caplog):
+    monkeypatch.setattr(settings, "auth_test_mode", True)
+    caplog.set_level(logging.WARNING, logger="scribe")
+    with _client(db_session):
+        pass
+    app.dependency_overrides.pop(routes_module.get_session, None)
+
+    assert "auth test mode is enabled" in caplog.text
 
 
 def test_bootstrap_admin_email_creates_first_user(db_session, monkeypatch):
