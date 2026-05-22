@@ -16,6 +16,43 @@ class JobCreate(BaseModel):
     callback_url: AnyHttpUrl | None = None
 
 
+class CurrentUserView(BaseModel):
+    authenticated: bool
+    kind: str
+    role: str
+    user_id: int | None = None
+    owner_id: int | None = None
+    email: str | None = None
+    display_name: str | None = None
+
+
+class UserAdminCreate(BaseModel):
+    email: str
+    display_name: str | None = None
+    role: str = "user"
+
+
+class UserAdminView(BaseModel):
+    id: int
+    owner_id: int
+    clerk_subject: str | None = None
+    primary_email: str
+    display_name: str | None = None
+    role: str
+    disabled: bool
+    created_at: dt.datetime
+    updated_at: dt.datetime
+
+
+class ExtensionTokenCreate(BaseModel):
+    label: str | None = None
+
+
+class ExtensionTokenView(BaseModel):
+    token: str
+    token_type: str = "bearer"
+
+
 class TranscriptBrief(BaseModel):
     id: int
     video_id: str
