@@ -48,6 +48,10 @@ export function Queue({ navigate }: QueueProps) {
 	const [cancelCandidate, setCancelCandidate] =
 		React.useState<JobCardJob | null>(null);
 	const [cancelBusyId, setCancelBusyId] = React.useState<number | null>(null);
+	// IDs cancelled locally but still possibly returned by an in-flight or
+	// lagging /api/jobs/active poll. Filter them out until the backend drops
+	// them from the active list, then forget them.
+	const cancelledIdsRef = React.useRef<Set<number>>(new Set());
 
 	const load = React.useCallback(
 		async (signal: AbortSignal) => {
@@ -62,7 +66,20 @@ export function Queue({ navigate }: QueueProps) {
 				const activeBody = (await activeResponse.json()) as ActiveJobsResponse;
 				const failuresBody =
 					(await failuresResponse.json()) as RecentFailuresResponse;
-				setActive(activeBody.jobs ?? []);
+				const fetchedActive = activeBody.jobs ?? [];
+				const cancelled = cancelledIdsRef.current;
+				if (cancelled.size > 0) {
+					const next = new Set<number>();
+					for (const id of cancelled) {
+						if (fetchedActive.some((job) => job.id === id)) {
+							next.add(id);
+						}
+					}
+					cancelledIdsRef.current = next;
+				}
+				setActive(
+					fetchedActive.filter((job) => !cancelledIdsRef.current.has(job.id)),
+				);
 				setFailures(failuresBody.jobs ?? []);
 				setError(null);
 				setLoading(false);
@@ -143,14 +160,15 @@ export function Queue({ navigate }: QueueProps) {
 				const message = await readErrorMessage(response);
 				throw new Error(message);
 			}
+			cancelledIdsRef.current.add(job.id);
 			setActive((current) => current.filter((entry) => entry.id !== job.id));
-			setCancelCandidate(null);
 		} catch (cancelError) {
 			setError(
 				cancelError instanceof Error ? cancelError.message : "cancel failed",
 			);
 		} finally {
 			setCancelBusyId(null);
+			setCancelCandidate(null);
 		}
 	}, [auth, cancelBusyId, cancelCandidate]);
 

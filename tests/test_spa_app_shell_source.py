@@ -176,6 +176,20 @@ def test_queue_active_jobs_can_cancel_running_jobs() -> None:
     # Polling stays in place alongside the cancel flow.
     assert "usePoll(load, 2000)" in queue
 
+    # Cancelled job IDs are tracked so an in-flight or lagging
+    # /api/jobs/active poll cannot re-add the row after a successful cancel.
+    assert "cancelledIdsRef" in queue
+    assert "cancelledIdsRef.current.add(job.id)" in queue
+    assert "cancelledIdsRef.current.has(job.id)" in queue
+
+    # Cancel failures must close the modal so the inline error banner is
+    # visible instead of staying hidden behind the backdrop.
+    assert "setCancelCandidate(null)" in queue
+    assert (
+        "} finally {\n\t\t\tsetCancelBusyId(null);\n"
+        "\t\t\tsetCancelCandidate(null);\n\t\t}"
+    ) in queue
+
 
 def test_live_update_hooks_wrap_poll_and_eventsource_lifecycles() -> None:
     use_poll = read("hooks/usePoll.ts")
