@@ -172,6 +172,9 @@ def test_spa_auth_config_and_protected_fetch_are_wired() -> None:
     assert "@clerk/clerk-js@6/dist/clerk.browser.js" in source
     assert "__internal_ClerkUICtor" in source
     assert "addListener" in source
+    assert "setSignedIn(Boolean(window.Clerk?.session))" in source
+    assert "setSignedIn(Boolean(session))" in source
+    assert "window.Clerk?.session?.getToken()" in source
     assert 'headers.set("Authorization", `Bearer ${token}`)' in source
     assert "protectedFetch" in source
     assert "AuthProvider" in main

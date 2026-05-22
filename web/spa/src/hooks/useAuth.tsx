@@ -116,7 +116,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 	const [clerkReady, setClerkReady] = React.useState(false);
 	const [signedIn, setSignedIn] = React.useState(false);
 	const syncSignedIn = React.useCallback(() => {
-		setSignedIn(window.Clerk?.session !== null);
+		setSignedIn(Boolean(window.Clerk?.session));
 	}, []);
 
 	React.useEffect(() => {
@@ -139,7 +139,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			setClerkReady(true);
 			syncSignedIn();
 			unsubscribe = window.Clerk?.addListener?.(({ session }) => {
-				setSignedIn(session !== null);
+				setSignedIn(Boolean(session));
 			});
 		}
 
@@ -182,10 +182,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 	const protectedFetch = React.useCallback(
 		async (input: RequestInfo | URL, init: RequestInit = {}) => {
-			const token = signedIn ? await window.Clerk?.session?.getToken() : null;
+			const token = await window.Clerk?.session?.getToken();
 			return fetch(input, token ? mergeAuthHeader(init, token) : init);
 		},
-		[signedIn],
+		[],
 	);
 
 	const value = React.useMemo(
