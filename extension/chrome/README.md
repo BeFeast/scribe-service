@@ -16,9 +16,9 @@ No build step is required.
 Open the extension options page and set:
 
 - Scribe base URL, defaulting to `https://scribe.oklabs.uk`.
-- Optional bearer token. A bearer token is required when the configured Scribe URL is protected,
-  especially when using it outside a trusted LAN. Leave it blank only for deployments that accept
-  unauthenticated `POST /jobs` requests.
+- Optional bearer token. Create a Chrome extension token in Scribe Settings, then paste it here.
+  A bearer token is required when the configured Scribe URL is protected, especially when using it
+  outside a trusted LAN.
 
 Saving the base URL asks Chrome for permission to reach that Scribe origin.
 The token is stored in Chrome sync storage and sent as `Authorization: Bearer ...` only when configured. No token is hardcoded in the extension.
@@ -28,7 +28,7 @@ The token is stored in Chrome sync storage and sent as `Authorization: Bearer ..
 1. Load the unpacked extension and keep the default Scribe base URL or set a local/runtime Scribe URL.
 2. If using a non-default Scribe URL, open the extension options page, save the base URL, and approve Chrome's host access prompt.
 3. Open a video page supported by `yt-dlp` and click the toolbar action.
-4. Confirm Chrome shows a success notification and clicking it opens `{Scribe base URL}/__spa__/#/jobs/{job_id}`.
+4. Confirm Chrome shows a success notification and clicking it opens `{Scribe base URL}/#/jobs/{job_id}`.
 5. Right-click a video page and choose Submit this video page to Scribe; confirm success or already-known status is shown clearly.
 6. Right-click a video link and choose Submit video link to Scribe; confirm success or already-known status is shown clearly.
 7. For a protected Scribe URL, leave the bearer token blank and submit again; confirm a 401/403 notification explains that auth is required.

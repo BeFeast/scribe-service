@@ -183,6 +183,18 @@ def test_spa_auth_config_and_protected_fetch_are_wired() -> None:
     assert "`/transcripts/${id}/resummarize`" in transcript
 
 
+def test_settings_creates_extension_tokens_without_browser_prompts() -> None:
+    settings = read("pages/Settings.tsx")
+
+    assert 'auth.protectedFetch("/api/auth/extension-token"' in settings
+    assert "Chrome extension token" in settings
+    assert "Extension token created" in settings
+    assert "scribe.extensionToken" in settings
+    assert "window.prompt" not in settings
+    assert "/api/config/rotate-token" not in settings
+    assert "Rotate API token" not in settings
+
+
 def test_global_shell_shows_access_status_and_operator_auth() -> None:
     settings_source = read("pages/Settings.tsx")
     topbar = read("components/TopBar.tsx")

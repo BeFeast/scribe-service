@@ -38,6 +38,11 @@ type PromptListResponse = {
 	versions: PromptVersion[];
 };
 
+type ExtensionTokenResponse = {
+	token: string;
+	token_type: string;
+};
+
 type PromptVersionId = "v1" | "v2" | "v3";
 type ConfigKey =
 	| "daily_spend_cap_usd"
@@ -62,7 +67,7 @@ type SettingsRowProps = {
 	children: React.ReactNode;
 };
 
-const CONFIG_TOKEN_KEY = "scribe.configToken";
+const EXTENSION_TOKEN_KEY = "scribe.extensionToken";
 const CONFIG_SAVED_EVENT = "scribe-config-saved";
 const configKeys: ConfigKey[] = [
 	"daily_spend_cap_usd",
@@ -85,7 +90,9 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 	const [savedTweaks, setSavedTweaks] = React.useState<Tweaks>(tweaks);
 	const [dirtyKeys, setDirtyKeys] = React.useState<Set<ConfigKey>>(new Set());
 	const [restartKeys, setRestartKeys] = React.useState<string[]>([]);
-	const [token, setToken] = React.useState(readStoredToken);
+	const [extensionToken, setExtensionToken] = React.useState(
+		readStoredExtensionToken,
+	);
 	const [promptList, setPromptList] = React.useState<PromptListResponse | null>(
 		null,
 	);
@@ -99,14 +106,15 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 	const [dryRunMarkdown, setDryRunMarkdown] = React.useState<string | null>(
 		null,
 	);
-	const [showRotate, setShowRotate] = React.useState(false);
 	const [status, setStatus] = React.useState<string | null>(null);
 	const [error, setError] = React.useState<string | null>(null);
 	const [loading, setLoading] = React.useState(true);
 	const [saving, setSaving] = React.useState(false);
 	const [dryRunning, setDryRunning] = React.useState(false);
+	const [creatingExtensionToken, setCreatingExtensionToken] =
+		React.useState(false);
+	const [showExtensionToken, setShowExtensionToken] = React.useState(false);
 
-	const headers = React.useMemo(() => authHeaders(token), [token]);
 	const promptDirty =
 		promptBody !== savedPromptBody || promptVersion !== savedPromptVersion;
 	const appearanceDirty = !tweaksEqual(tweaks, savedTweaks);
@@ -118,8 +126,8 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 		setError(null);
 		try {
 			const [configResponse, promptsResponse] = await Promise.all([
-				auth.protectedFetch("/api/config", { headers }),
-				auth.protectedFetch("/api/prompts", { headers }),
+				auth.protectedFetch("/api/config"),
+				auth.protectedFetch("/api/prompts"),
 			]);
 			if (!configResponse.ok) {
 				throw new Error(await responseMessage(configResponse));
@@ -132,7 +140,6 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 			const activeVersion = promptsBody.active_version;
 			const promptResponse = await auth.protectedFetch(
 				`/api/prompts/${activeVersion}`,
-				{ headers },
 			);
 			if (!promptResponse.ok) {
 				throw new Error(await responseMessage(promptResponse));
@@ -155,7 +162,7 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 		} finally {
 			setLoading(false);
 		}
-	}, [auth, headers]);
+	}, [auth]);
 
 	React.useEffect(() => {
 		void loadSettings();
@@ -165,9 +172,7 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 		const version = next as PromptVersionId;
 		setError(null);
 		try {
-			const response = await auth.protectedFetch(`/api/prompts/${version}`, {
-				headers,
-			});
+			const response = await auth.protectedFetch(`/api/prompts/${version}`);
 			if (!response.ok) {
 				throw new Error(await responseMessage(response));
 			}
@@ -212,7 +217,7 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 				}
 				const response = await auth.protectedFetch("/api/config", {
 					method: "POST",
-					headers: { ...headers, "Content-Type": "application/json" },
+					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify(payload),
 				});
 				if (!response.ok) {
@@ -288,42 +293,54 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 		}
 	}
 
-	function storeToken(nextToken: string) {
-		setToken(nextToken.trim());
+	function storeExtensionToken(nextToken: string) {
+		setExtensionToken(nextToken.trim());
 		try {
-			localStorage.setItem(CONFIG_TOKEN_KEY, nextToken.trim());
+			localStorage.setItem(EXTENSION_TOKEN_KEY, nextToken.trim());
 		} catch {
 			// Runtime use still works for this tab.
 		}
 	}
 
-	async function copyToken() {
-		if (!token) {
+	async function copyExtensionToken() {
+		if (!extensionToken) {
 			return;
 		}
-		await navigator.clipboard.writeText(token);
-		setStatus("Token copied");
+		if (await writeClipboard(extensionToken)) {
+			setStatus("Extension token copied");
+		} else {
+			setError("Could not copy token; select and copy it manually.");
+		}
 	}
 
-	async function rotateToken() {
+	async function createExtensionToken() {
+		setCreatingExtensionToken(true);
 		setError(null);
+		setStatus(null);
 		try {
-			const response = await auth.protectedFetch("/api/config/rotate-token", {
+			const response = await auth.protectedFetch("/api/auth/extension-token", {
 				method: "POST",
-				headers,
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ label: "Chrome extension" }),
 			});
 			if (!response.ok) {
 				throw new Error(await responseMessage(response));
 			}
-			setStatus("Token rotated");
-		} catch (rotateError) {
+			const body = (await response.json()) as ExtensionTokenResponse;
+			storeExtensionToken(body.token);
+			if (await writeClipboard(body.token)) {
+				setStatus("Extension token created and copied");
+			} else {
+				setStatus("Extension token created; select and copy it manually.");
+			}
+		} catch (createError) {
 			setError(
-				rotateError instanceof Error
-					? rotateError.message
-					: "token rotation failed",
+				createError instanceof Error
+					? createError.message
+					: "extension token creation failed",
 			);
 		} finally {
-			setShowRotate(false);
+			setCreatingExtensionToken(false);
 		}
 	}
 
@@ -390,10 +407,13 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 				<section className="settings-group">
 					<h2 className="section-label">API access</h2>
 					<TokenRow
-						token={token}
-						onStore={storeToken}
-						onCopy={copyToken}
-						onRotate={() => setShowRotate(true)}
+						token={extensionToken}
+						showToken={showExtensionToken}
+						isCreating={creatingExtensionToken}
+						canCreate={auth.accessStatus === "Signed in"}
+						onCreate={createExtensionToken}
+						onCopy={copyExtensionToken}
+						onToggleShow={() => setShowExtensionToken((value) => !value)}
 					/>
 				</section>
 
@@ -541,40 +561,6 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 							</button>
 						</header>
 						<Markdown body={dryRunMarkdown} />
-					</dialog>
-				</div>
-			) : null}
-
-			{showRotate ? (
-				<div className="modal-backdrop" role="presentation">
-					<dialog
-						className="settings-modal compact"
-						aria-label="Rotate API token"
-						open
-					>
-						<header>
-							<strong>Rotate API token</strong>
-						</header>
-						<p className="hint">
-							Existing clients will need the new bearer token after rotation.
-							The endpoint is currently a server-side stub.
-						</p>
-						<div className="modal-actions">
-							<button
-								className="btn ghost"
-								type="button"
-								onClick={() => setShowRotate(false)}
-							>
-								Cancel
-							</button>
-							<button
-								className="btn primary"
-								type="button"
-								onClick={rotateToken}
-							>
-								Rotate
-							</button>
-						</div>
 					</dialog>
 				</div>
 			) : null}
@@ -876,60 +862,71 @@ export function PromptEditor({
 
 export function TokenRow({
 	token,
-	onStore,
+	showToken,
+	isCreating,
+	canCreate,
+	onCreate,
 	onCopy,
-	onRotate,
+	onToggleShow,
 }: {
 	token: string;
-	onStore: (value: string) => void;
+	showToken: boolean;
+	isCreating: boolean;
+	canCreate: boolean;
+	onCreate: () => void;
 	onCopy: () => void;
-	onRotate: () => void;
+	onToggleShow: () => void;
 }) {
-	function enterToken() {
-		const next = window.prompt("Bearer token", token);
-		if (next !== null) {
-			onStore(next);
-		}
-	}
-
 	return (
 		<SettingsRow
-			label="Bearer token"
-			hint="Stored in this browser and used for protected config calls."
+			label="Chrome extension token"
+			hint="Create a per-user bearer token, copy it, then paste it into the Chrome extension options."
 		>
 			<input
 				className="settings-input token"
-				type="password"
-				value={token ? maskToken(token) : ""}
-				placeholder="No token set"
+				type={showToken ? "text" : "password"}
+				value={token}
+				placeholder="No extension token created"
 				readOnly
 			/>
-			<button className="btn" type="button" onClick={enterToken}>
-				Use
+			<button
+				className="btn"
+				type="button"
+				disabled={!canCreate || isCreating}
+				onClick={onCreate}
+			>
+				{isCreating ? "Creating" : "Create"}
 			</button>
 			<button className="btn" type="button" disabled={!token} onClick={onCopy}>
 				Copy
 			</button>
-			<button className="btn ghost" type="button" onClick={onRotate}>
-				Rotate
+			<button
+				className="btn ghost"
+				type="button"
+				disabled={!token}
+				onClick={onToggleShow}
+			>
+				{showToken ? "Hide" : "Show"}
 			</button>
 		</SettingsRow>
 	);
 }
 
-function readStoredToken(): string {
+function readStoredExtensionToken(): string {
 	try {
-		return localStorage.getItem(CONFIG_TOKEN_KEY) ?? "";
+		return localStorage.getItem(EXTENSION_TOKEN_KEY) ?? "";
 	} catch {
 		return "";
 	}
 }
 
-function authHeaders(token: string): HeadersInit {
-	if (!token) {
-		return {};
+async function writeClipboard(value: string): Promise<boolean> {
+	try {
+		await navigator.clipboard.writeText(value);
+		return true;
+	} catch {
+		return false;
 	}
-	return { Authorization: `Bearer ${token}` };
 }
 
 function draftFromConfig(
@@ -965,13 +962,6 @@ function tweaksEqual(left: Tweaks, right: Tweaks): boolean {
 		left.density === right.density &&
 		left.libraryLayout === right.libraryLayout
 	);
-}
-
-function maskToken(token: string): string {
-	if (token.length <= 8) {
-		return "****";
-	}
-	return `${token.slice(0, 4)}****${token.slice(-4)}`;
 }
 
 async function responseMessage(response: Response): Promise<string> {
