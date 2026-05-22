@@ -1983,7 +1983,10 @@ a {
 .library-actions {
 	display: grid;
 	grid-template-columns: minmax(14rem, 22rem) minmax(18rem, 30rem);
-	align-items: end;
+	/* Anchor both cells at the top so the Submit URL input keeps its
+	   baseline next to the Search input when the status row appears
+	   below it (issue #121). */
+	align-items: start;
 	justify-content: end;
 	width: min(100%, 54rem);
 }
