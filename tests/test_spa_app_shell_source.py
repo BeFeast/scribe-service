@@ -144,6 +144,39 @@ def test_queue_and_job_detail_can_clear_failed_jobs() -> None:
     assert "YouTube" not in detail
 
 
+def test_queue_active_jobs_can_cancel_running_jobs() -> None:
+    """Queue Active Jobs must wire the cancel control to the protected admin
+    cancel endpoint and use the in-app ConfirmDialog (not window.confirm).
+    See issue #127."""
+    queue = read("pages/Queue.tsx")
+    job_card = read("components/JobCard.tsx")
+
+    # Cancel posts to the existing protected admin endpoint.
+    assert "auth.protectedFetch" in queue
+    assert "`/admin/jobs/${job.id}/cancel`" in queue
+    assert 'method: "POST"' in queue
+
+    # No browser-native confirm/alert paths.
+    assert "window.confirm" not in queue + job_card
+    assert "window.alert" not in queue + job_card
+    assert "window.prompt" not in queue + job_card
+
+    # Confirmation flows through the existing in-app dialog.
+    assert "ConfirmDialog" in queue
+    assert "cancelCandidate" in queue
+    assert 'confirmLabel="Cancel job"' in queue
+
+    # JobCard exposes the cancel control, with busy + disabled signals.
+    assert "onCancel" in job_card
+    assert "cancelBusy" in job_card
+    assert "aria-busy" in job_card
+    assert "disabled={cancelBusy || cancelDisabled}" in job_card
+    assert "Cancelling" in job_card
+
+    # Polling stays in place alongside the cancel flow.
+    assert "usePoll(load, 2000)" in queue
+
+
 def test_live_update_hooks_wrap_poll_and_eventsource_lifecycles() -> None:
     use_poll = read("hooks/usePoll.ts")
     use_event_source = read("hooks/useEventSource.ts")

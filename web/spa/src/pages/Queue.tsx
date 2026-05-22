@@ -1,5 +1,6 @@
 import React from "react";
 
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { type FailureJob, FailureRow } from "../components/FailureRow";
 import { JobCard, type JobCardJob } from "../components/JobCard";
 import { useAuth } from "../hooks/useAuth";
@@ -18,6 +19,25 @@ type QueueProps = {
 	navigate: (route: Route) => void;
 };
 
+async function readErrorMessage(response: Response): Promise<string> {
+	try {
+		const body = await response.json();
+		if (typeof body?.detail === "string") {
+			return body.detail;
+		}
+		if (Array.isArray(body?.detail)) {
+			return body.detail
+				.map((entry: { msg?: string }) =>
+					typeof entry?.msg === "string" ? entry.msg : JSON.stringify(entry),
+				)
+				.join("; ");
+		}
+	} catch {
+		// fall through to the status line
+	}
+	return `HTTP ${response.status} ${response.statusText}`.trim();
+}
+
 export function Queue({ navigate }: QueueProps) {
 	const auth = useAuth();
 	const [active, setActive] = React.useState<JobCardJob[]>([]);
@@ -25,6 +45,9 @@ export function Queue({ navigate }: QueueProps) {
 	const [error, setError] = React.useState<string | null>(null);
 	const [loading, setLoading] = React.useState(true);
 	const [clearingId, setClearingId] = React.useState<number | null>(null);
+	const [cancelCandidate, setCancelCandidate] =
+		React.useState<JobCardJob | null>(null);
+	const [cancelBusyId, setCancelBusyId] = React.useState<number | null>(null);
 
 	const load = React.useCallback(
 		async (signal: AbortSignal) => {
@@ -89,6 +112,48 @@ export function Queue({ navigate }: QueueProps) {
 		[auth, clearingId],
 	);
 
+	const requestCancel = React.useCallback(
+		(id: number) => {
+			if (cancelBusyId !== null) {
+				return;
+			}
+			const job = active.find((candidate) => candidate.id === id) ?? null;
+			if (job === null) {
+				return;
+			}
+			setError(null);
+			setCancelCandidate(job);
+		},
+		[active, cancelBusyId],
+	);
+
+	const confirmCancel = React.useCallback(async () => {
+		if (cancelCandidate === null || cancelBusyId !== null) {
+			return;
+		}
+		const job = cancelCandidate;
+		setCancelBusyId(job.id);
+		setError(null);
+		try {
+			const response = await auth.protectedFetch(
+				`/admin/jobs/${job.id}/cancel`,
+				{ method: "POST" },
+			);
+			if (!response.ok) {
+				const message = await readErrorMessage(response);
+				throw new Error(message);
+			}
+			setActive((current) => current.filter((entry) => entry.id !== job.id));
+			setCancelCandidate(null);
+		} catch (cancelError) {
+			setError(
+				cancelError instanceof Error ? cancelError.message : "cancel failed",
+			);
+		} finally {
+			setCancelBusyId(null);
+		}
+	}, [auth, cancelBusyId, cancelCandidate]);
+
 	return (
 		<section className="pane queue-page">
 			<header className="pane-header">
@@ -99,7 +164,11 @@ export function Queue({ navigate }: QueueProps) {
 				<span className="queue-count">{active.length}</span>
 			</header>
 
-			{error ? <p className="error-banner">{error}</p> : null}
+			{error ? (
+				<p className="error-banner" data-testid="queue-error">
+					{error}
+				</p>
+			) : null}
 
 			<section className="queue-section">
 				{loading ? <p className="muted">Loading queue...</p> : null}
@@ -110,7 +179,16 @@ export function Queue({ navigate }: QueueProps) {
 				) : (
 					<div className="job-card-list">
 						{active.map((job) => (
-							<JobCard key={job.id} job={job} onOpen={openJob} />
+							<JobCard
+								key={job.id}
+								job={job}
+								onOpen={openJob}
+								onCancel={requestCancel}
+								cancelBusy={cancelBusyId === job.id}
+								cancelDisabled={
+									cancelBusyId !== null && cancelBusyId !== job.id
+								}
+							/>
 						))}
 					</div>
 				)}
@@ -136,6 +214,18 @@ export function Queue({ navigate }: QueueProps) {
 					<p className="muted">No recent failures</p>
 				)}
 			</section>
+
+			{cancelCandidate !== null ? (
+				<ConfirmDialog
+					title="Cancel job"
+					body={`Cancel job ${cancelCandidate.id} (${cancelCandidate.title ?? cancelCandidate.video_id})? The current pipeline stage may still finish, but the job will be marked failed.`}
+					confirmLabel="Cancel job"
+					busyLabel="Cancelling"
+					busy={cancelBusyId === cancelCandidate.id}
+					onCancel={() => setCancelCandidate(null)}
+					onConfirm={confirmCancel}
+				/>
+			) : null}
 		</section>
 	);
 }
