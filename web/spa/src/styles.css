@@ -1983,7 +1983,10 @@ a {
 .library-actions {
 	display: grid;
 	grid-template-columns: minmax(14rem, 22rem) minmax(18rem, 30rem);
-	align-items: end;
+	/* Anchor both cells at the top so the Submit URL input keeps its
+	   baseline next to the Search input when the status row appears
+	   below it (issue #121). */
+	align-items: start;
 	justify-content: end;
 	width: min(100%, 54rem);
 }
@@ -1993,9 +1996,6 @@ a {
 	grid-template-columns: minmax(0, 1fr) auto;
 	align-items: end;
 	gap: 0.45rem;
-	/* Anchor for the absolute status so the form's height does not
-	   grow when `Queued job #…` appears (issue #121). */
-	position: relative;
 }
 
 .library-search,
@@ -2022,9 +2022,7 @@ a {
 }
 
 .library-submit-status {
-	position: absolute;
-	inset-inline: 0;
-	top: calc(100% + 0.25rem);
+	grid-column: 1 / -1;
 	margin: 0;
 	font-size: 0.82rem;
 	text-transform: none;
