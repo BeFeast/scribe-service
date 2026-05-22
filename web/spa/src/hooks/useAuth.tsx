@@ -43,11 +43,14 @@ type AuthContextValue = {
 	trustedNetwork: boolean;
 	signIn: () => void;
 	signOut: () => Promise<void>;
+	maybeAutoSignIn: () => boolean;
 	protectedFetch: (
 		input: RequestInfo | URL,
 		init?: RequestInit,
 	) => Promise<Response>;
 };
+
+const AUTO_SIGN_IN_KEY = "scribe.signInAttempted";
 
 const AuthContext = React.createContext<AuthContextValue | null>(null);
 
@@ -180,6 +183,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		setSignedIn(false);
 	}, []);
 
+	// Auto-trigger Clerk sign-in once per browser session when a protected
+	// SPA call returns 401/403. The sessionStorage guard stops a cancelled
+	// or failed sign-in from re-spawning the modal on every retry.
+	const maybeAutoSignIn = React.useCallback((): boolean => {
+		if (trustedNetwork || signedIn || !clerkConfigured || !clerkReady) {
+			return false;
+		}
+		try {
+			if (window.sessionStorage.getItem(AUTO_SIGN_IN_KEY) === "1") {
+				return false;
+			}
+			window.sessionStorage.setItem(AUTO_SIGN_IN_KEY, "1");
+		} catch {
+			return false;
+		}
+		signIn();
+		return true;
+	}, [trustedNetwork, signedIn, clerkConfigured, clerkReady, signIn]);
+
 	const protectedFetch = React.useCallback(
 		async (input: RequestInfo | URL, init: RequestInit = {}) => {
 			const token = await window.Clerk?.session?.getToken();
@@ -197,6 +219,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			trustedNetwork,
 			signIn,
 			signOut,
+			maybeAutoSignIn,
 			protectedFetch,
 		}),
 		[
@@ -207,6 +230,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			trustedNetwork,
 			signIn,
 			signOut,
+			maybeAutoSignIn,
 			protectedFetch,
 		],
 	);

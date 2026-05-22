@@ -1913,17 +1913,30 @@ a {
 	color: var(--fg);
 }
 
-.mock-chip {
-	display: inline-flex;
-	align-items: center;
-	min-height: 1.35rem;
-	padding: 0.12rem 0.4rem;
+.sidebar-locked {
+	display: grid;
+	gap: 0.5rem;
+	padding: 0.55rem 0.65rem;
 	border: var(--rule);
 	border-radius: var(--radius);
 	background: var(--bg-card);
-	color: var(--warn);
-	font-family: var(--font-mono);
-	font-size: 0.72rem;
+}
+
+.sidebar-signin {
+	justify-self: start;
+}
+
+.library-auth-gate {
+	display: grid;
+	gap: 0.55rem;
+	padding: 1rem;
+	border: var(--rule);
+	border-radius: var(--radius-lg);
+	background: var(--bg-card);
+}
+
+.library-auth-gate .btn {
+	justify-self: start;
 }
 
 .empty-note {
