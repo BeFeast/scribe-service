@@ -1993,6 +1993,9 @@ a {
 	grid-template-columns: minmax(0, 1fr) auto;
 	align-items: end;
 	gap: 0.45rem;
+	/* Anchor for the absolute status so the form's height does not
+	   grow when `Queued job #…` appears (issue #121). */
+	position: relative;
 }
 
 .library-search,
@@ -2019,7 +2022,9 @@ a {
 }
 
 .library-submit-status {
-	grid-column: 1 / -1;
+	position: absolute;
+	inset-inline: 0;
+	top: calc(100% + 0.25rem);
 	margin: 0;
 	font-size: 0.82rem;
 	text-transform: none;

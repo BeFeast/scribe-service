@@ -166,3 +166,21 @@ def test_source_css_gzip_size_budget() -> None:
     css = STYLES.read_bytes()
 
     assert len(gzip.compress(css)) <= 30_000
+
+
+def test_library_submit_status_does_not_shift_toolbar_row() -> None:
+    """Regression for #121: the queued/error status must not change the
+    submit form's height, so the Submit URL input keeps its baseline
+    next to the Search input across all variants."""
+    css = STYLES.read_text(encoding="utf-8")
+
+    start = css.index(".library-submit {")
+    block = css[start : css.index("}", start)]
+    assert "position: relative" in block
+
+    start = css.index(".library-submit-status {")
+    block = css[start : css.index("}", start)]
+    assert "position: absolute" in block
+    assert "top: calc(100% + 0.25rem)" in block
+    # Out-of-flow status must not still claim a grid row in the form.
+    assert "grid-column" not in block
