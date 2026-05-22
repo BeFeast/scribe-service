@@ -5,6 +5,7 @@ import { useAuth } from "../hooks/useAuth";
 import { usePoll } from "../hooks/usePoll";
 import type { Route } from "../hooks/useRoute";
 import type { LibraryLayout } from "../hooks/useTweaks";
+import { isAuthStatus } from "../lib/auth";
 import type { DisplayCurrency } from "../lib/currency";
 import { formatUsdCost } from "../lib/currency";
 
@@ -130,6 +131,8 @@ function errorMessage(status: number, body: unknown): string {
 	return `Submit failed: ${status}`;
 }
 
+type LibraryError = { kind: "auth" } | { kind: "service"; message: string };
+
 export function Library({
 	layout,
 	displayCurrency,
@@ -152,7 +155,7 @@ export function Library({
 	const [offset, setOffset] = React.useState(0);
 	const [retryTick, setRetryTick] = React.useState(0);
 	const [isLoading, setIsLoading] = React.useState(true);
-	const [error, setError] = React.useState<string | null>(null);
+	const [error, setError] = React.useState<LibraryError | null>(null);
 	const [deleteBusyId, setDeleteBusyId] = React.useState<number | null>(null);
 	const [deleteCandidate, setDeleteCandidate] =
 		React.useState<LibraryRow | null>(null);
@@ -179,8 +182,21 @@ export function Library({
 						signal,
 					},
 				);
+				if (isAuthStatus(response.status)) {
+					setRows([]);
+					setTotal(0);
+					setError({ kind: "auth" });
+					auth.maybeAutoSignIn();
+					return;
+				}
 				if (!response.ok) {
-					throw new Error(`Library request failed: ${response.status}`);
+					setRows([]);
+					setTotal(0);
+					setError({
+						kind: "service",
+						message: `Service temporarily unavailable (HTTP ${response.status}).`,
+					});
+					return;
 				}
 				const body = (await response.json()) as LibraryResponse;
 				setRows(body.rows);
@@ -189,11 +205,13 @@ export function Library({
 				if (!signal.aborted) {
 					setRows([]);
 					setTotal(0);
-					setError(
-						loadError instanceof Error
-							? loadError.message
-							: "Library request failed",
-					);
+					setError({
+						kind: "service",
+						message:
+							loadError instanceof Error
+								? loadError.message
+								: "Service temporarily unavailable.",
+					});
 				}
 			} finally {
 				if (!signal.aborted) {
@@ -250,16 +268,21 @@ export function Library({
 			setTotal((current) => Math.max(0, current - 1));
 			setDeleteCandidate(null);
 		} catch (deleteError) {
-			setError(
-				deleteError instanceof Error ? deleteError.message : "Delete failed",
-			);
+			setError({
+				kind: "service",
+				message:
+					deleteError instanceof Error ? deleteError.message : "Delete failed",
+			});
 		} finally {
 			setDeleteBusyId(null);
 		}
 	};
+	const authRequired = error?.kind === "auth";
 	const submitTrimmed = submitUrl.trim();
 	const canSubmitUrl =
-		submitTrimmed.length > 0 && submitState.state !== "submitting";
+		submitTrimmed.length > 0 &&
+		submitState.state !== "submitting" &&
+		!authRequired;
 	const submitMessage =
 		submitState.state === "success"
 			? `Queued job #${submitState.job.job_id}`
@@ -329,6 +352,7 @@ export function Library({
 							value={query}
 							onChange={(event) => setQuery(event.currentTarget.value)}
 							placeholder="Title or summary"
+							disabled={authRequired}
 						/>
 					</label>
 					<form className="library-submit" onSubmit={submitJob}>
@@ -344,6 +368,7 @@ export function Library({
 									}
 								}}
 								placeholder="Video URL"
+								disabled={authRequired}
 							/>
 						</label>
 						<button
@@ -360,11 +385,34 @@ export function Library({
 				</div>
 			</header>
 
-			{error !== null ? (
+			{error?.kind === "auth" ? (
+				<div
+					className="library-state library-auth-gate"
+					data-state="auth-required"
+					aria-live="polite"
+				>
+					<span className="chip info">Sign in required</span>
+					<p className="feed-title">Your library is signed-in only</p>
+					<p className="feed-excerpt">
+						Library entries are owner-scoped. Sign in with your Scribe account
+						to see your transcripts.
+					</p>
+					<button
+						type="button"
+						className="btn primary"
+						onClick={auth.signIn}
+						disabled={auth.clerkConfigured && !auth.clerkReady}
+					>
+						Sign in
+					</button>
+				</div>
+			) : null}
+
+			{error?.kind === "service" ? (
 				<div className="library-state failure-row">
 					<span className="chip err">error</span>
-					<p className="err-title">Library unavailable</p>
-					<p className="err-msg">{error}</p>
+					<p className="err-title">Service temporarily unavailable</p>
+					<p className="err-msg">{error.message}</p>
 					<button type="button" className="btn" onClick={retry}>
 						Retry
 					</button>

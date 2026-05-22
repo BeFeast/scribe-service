@@ -258,13 +258,13 @@ def test_global_shell_shows_access_status_and_operator_auth() -> None:
     assert 'route.page === "settings"' in main
 
 
-def test_public_read_routes_do_not_render_auth_gate() -> None:
-    library = read("pages/Library.tsx")
+def test_transcript_route_does_not_render_auth_gate() -> None:
+    """Shared transcript pages are intentionally public (read-only via shortlinks);
+    they must not force a Clerk gate on first load. Library is owner-scoped after
+    #119/#129, so it can render an auth-required state on 401/403."""
     transcript = read("pages/Transcript.tsx")
 
-    assert "Sign in" not in library
     assert "Sign in" not in transcript
-    assert "auth.accessStatus" not in library
     assert "auth.accessStatus" not in transcript
 
 
@@ -335,15 +335,20 @@ def test_tweaks_defaults_persist_and_apply_to_html_dataset() -> None:
     assert "dataset.libraryLayout = tweaks.libraryLayout" in source
 
 
-def test_sidebar_has_api_fetch_and_marked_mock_fallback() -> None:
+def test_sidebar_routes_protected_fetch_without_mock_fallback() -> None:
+    """Per #129, the sidebar must not paper over auth failures with mock data
+    or `[mock]` badges. Auth failures route into a Sign-in CTA, generic
+    failures render an unavailable state, and success renders fetched data."""
     source = read("components/Sidebar.tsx")
 
-    assert "TODO: replace with /api/library + /api/ops" in source
     assert 'auth.protectedFetch("/api/library?limit=100"' in source
     assert 'auth.protectedFetch("/api/ops"' in source
-    assert "[mock]" in source
-    assert "mockTags" in source
-    assert "mockPipeline" in source
+    assert "[mock]" not in source
+    assert "mockTags" not in source
+    assert "mockPipeline" not in source
+    assert "mock-chip" not in source
+    assert "auth-required" in source
+    assert "Sign in" in source
 
 
 def test_route_hook_uses_typed_hash_routes() -> None:

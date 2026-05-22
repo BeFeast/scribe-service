@@ -2,6 +2,7 @@ import React from "react";
 
 import { useAuth } from "../hooks/useAuth";
 import type { Route, RoutePage } from "../hooks/useRoute";
+import { isAuthStatus } from "../lib/auth";
 
 type SidebarProps = {
 	route: Route;
@@ -34,27 +35,14 @@ type PipelineStats = {
 	workers: string;
 };
 
+type SidebarStatus = "loading" | "ready" | "auth-required" | "unavailable";
+
 const navItems: Array<{ page: RoutePage; label: string }> = [
 	{ page: "library", label: "Library" },
 	{ page: "queue", label: "Queue" },
 	{ page: "ops", label: "Ops" },
 	{ page: "settings", label: "Settings" },
 ];
-
-// TODO: replace with /api/library + /api/ops once the sidebar gets server-provided tag counts.
-const mockTags: TagCount[] = [
-	{ tag: "systems", count: 8 },
-	{ tag: "research", count: 5 },
-	{ tag: "ops", count: 3 },
-];
-
-// TODO: replace with /api/library + /api/ops once the pipeline mini-stats contract is final.
-const mockPipeline: PipelineStats = {
-	queueDepth: 2,
-	done: 42,
-	partial: 4,
-	workers: "1/2",
-};
 
 function tagCountsFromLibrary(body: LibraryResponse): TagCount[] {
 	const counts = new Map<string, number>();
@@ -82,9 +70,9 @@ function pipelineFromOps(body: OpsResponse): PipelineStats {
 
 export function Sidebar({ route, navigate }: SidebarProps) {
 	const auth = useAuth();
-	const [tags, setTags] = React.useState<TagCount[]>(mockTags);
-	const [pipeline, setPipeline] = React.useState<PipelineStats>(mockPipeline);
-	const [isMock, setIsMock] = React.useState(true);
+	const [tags, setTags] = React.useState<TagCount[]>([]);
+	const [pipeline, setPipeline] = React.useState<PipelineStats | null>(null);
+	const [status, setStatus] = React.useState<SidebarStatus>("loading");
 
 	React.useEffect(() => {
 		const abort = new AbortController();
@@ -97,6 +85,18 @@ export function Sidebar({ route, navigate }: SidebarProps) {
 					}),
 					auth.protectedFetch("/api/ops", { signal: abort.signal }),
 				]);
+				if (abort.signal.aborted) {
+					return;
+				}
+				if (
+					isAuthStatus(libraryResponse.status) ||
+					isAuthStatus(opsResponse.status)
+				) {
+					setTags([]);
+					setPipeline(null);
+					setStatus("auth-required");
+					return;
+				}
 				if (!libraryResponse.ok || !opsResponse.ok) {
 					throw new Error("sidebar endpoints unavailable");
 				}
@@ -104,12 +104,12 @@ export function Sidebar({ route, navigate }: SidebarProps) {
 				const opsBody = (await opsResponse.json()) as OpsResponse;
 				setTags(tagCountsFromLibrary(libraryBody));
 				setPipeline(pipelineFromOps(opsBody));
-				setIsMock(false);
-			} catch (error) {
+				setStatus("ready");
+			} catch (_error) {
 				if (!abort.signal.aborted) {
-					setTags(mockTags);
-					setPipeline(mockPipeline);
-					setIsMock(true);
+					setTags([]);
+					setPipeline(null);
+					setStatus("unavailable");
 				}
 			}
 		}
@@ -140,54 +140,121 @@ export function Sidebar({ route, navigate }: SidebarProps) {
 			<section className="sidebar-section">
 				<div className="section-heading">
 					<h2>Tags</h2>
-					{isMock ? <span className="mock-chip">[mock]</span> : null}
 				</div>
-				<div className="tag-list">
+				<SidebarPanel
+					status={status}
+					onSignIn={auth.signIn}
+					signInDisabled={auth.clerkConfigured && !auth.clerkReady}
+					unavailableLabel="Tags unavailable — retry shortly."
+					authPrompt="Sign in to see your tags."
+				>
 					{tags.length > 0 ? (
-						tags.map((item) => (
-							<button
-								type="button"
-								key={item.tag}
-								className={
-									route.params.tag === item.tag ? "tag-pill active" : "tag-pill"
-								}
-								onClick={() =>
-									navigate({ page: "library", params: { tag: item.tag } })
-								}
-							>
-								<span>{item.tag}</span>
-								<span className="tnum">{item.count}</span>
-							</button>
-						))
+						<div className="tag-list">
+							{tags.map((item) => (
+								<button
+									type="button"
+									key={item.tag}
+									className={
+										route.params.tag === item.tag
+											? "tag-pill active"
+											: "tag-pill"
+									}
+									onClick={() =>
+										navigate({ page: "library", params: { tag: item.tag } })
+									}
+								>
+									<span>{item.tag}</span>
+									<span className="tnum">{item.count}</span>
+								</button>
+							))}
+						</div>
 					) : (
 						<p className="empty-note">No tags yet</p>
 					)}
-				</div>
+				</SidebarPanel>
 			</section>
 			<section className="sidebar-section pipeline-mini">
 				<div className="section-heading">
 					<h2>Pipeline</h2>
-					{isMock ? <span className="mock-chip">[mock]</span> : null}
 				</div>
-				<dl className="mini-stats">
-					<div>
-						<dt>Queue</dt>
-						<dd>{pipeline.queueDepth}</dd>
-					</div>
-					<div>
-						<dt>Workers</dt>
-						<dd>{pipeline.workers}</dd>
-					</div>
-					<div>
-						<dt>Done</dt>
-						<dd>{pipeline.done}</dd>
-					</div>
-					<div>
-						<dt>Partial</dt>
-						<dd>{pipeline.partial}</dd>
-					</div>
-				</dl>
+				<SidebarPanel
+					status={status}
+					onSignIn={auth.signIn}
+					signInDisabled={auth.clerkConfigured && !auth.clerkReady}
+					unavailableLabel="Pipeline unavailable — retry shortly."
+					authPrompt="Sign in to see pipeline status."
+				>
+					{pipeline ? (
+						<dl className="mini-stats">
+							<div>
+								<dt>Queue</dt>
+								<dd>{pipeline.queueDepth}</dd>
+							</div>
+							<div>
+								<dt>Workers</dt>
+								<dd>{pipeline.workers}</dd>
+							</div>
+							<div>
+								<dt>Done</dt>
+								<dd>{pipeline.done}</dd>
+							</div>
+							<div>
+								<dt>Partial</dt>
+								<dd>{pipeline.partial}</dd>
+							</div>
+						</dl>
+					) : (
+						<p className="empty-note">Pipeline idle</p>
+					)}
+				</SidebarPanel>
 			</section>
 		</aside>
 	);
+}
+
+function SidebarPanel({
+	status,
+	onSignIn,
+	signInDisabled,
+	unavailableLabel,
+	authPrompt,
+	children,
+}: {
+	status: SidebarStatus;
+	onSignIn: () => void;
+	signInDisabled: boolean;
+	unavailableLabel: string;
+	authPrompt: string;
+	children: React.ReactNode;
+}) {
+	if (status === "auth-required") {
+		return (
+			<div className="sidebar-locked" data-state="auth-required">
+				<p className="empty-note">{authPrompt}</p>
+				<button
+					type="button"
+					className="btn ghost sidebar-signin"
+					onClick={onSignIn}
+					disabled={signInDisabled}
+				>
+					Sign in
+				</button>
+			</div>
+		);
+	}
+	if (status === "unavailable") {
+		return (
+			<p className="empty-note" data-state="unavailable">
+				{unavailableLabel}
+			</p>
+		);
+	}
+	if (status === "loading") {
+		return (
+			<p className="empty-note" data-state="loading" aria-busy="true">
+				Loading…
+			</p>
+		);
+	}
+	return <>{children}</>;
 }
