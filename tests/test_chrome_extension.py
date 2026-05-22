@@ -54,7 +54,7 @@ def test_service_worker_reports_success_dedup_and_errors() -> None:
 
     assert 'result.deduplicated ? "Already known to Scribe" : "Submitted to Scribe"' in source
     assert 'throw new Error("Scribe responded OK but returned no job ID.");' in source
-    assert 'const jobUrl = `${baseUrl}/__spa__/#/jobs/${result.job_id}`;' in source
+    assert 'const jobUrl = `${baseUrl}/#/jobs/${result.job_id}`;' in source
     assert "chrome.notifications.onClicked.addListener" in source
     assert 'const NOTIFICATION_ICON = "icons/scribe-128.png";' in source
     assert "Could not reach Scribe" in source
@@ -96,7 +96,7 @@ def test_options_store_base_url_and_optional_bearer_token_without_hardcoded_secr
     assert 'id="base-url"' in html
     assert 'id="bearer-token"' in html
     assert 'type="password"' in html
-    assert "Required for protected Scribe URLs outside trusted LAN" in html
+    assert "Create a Chrome extension token in Scribe Settings" in html
     assert 'const DEFAULT_BASE_URL = "https://scribe.oklabs.uk";' in source
     assert "chrome.storage.sync.get" in source
     assert "chrome.storage.sync.set" in source
@@ -119,4 +119,5 @@ def test_extension_docs_include_install_and_manual_verification_checklist() -> N
     assert "401/403 notification explains that auth is required" in docs
     assert "invalid bearer token" in docs
     assert "unreachable host" in docs
+    assert "{Scribe base URL}/#/jobs/{job_id}" in docs
     assert "POST /jobs" in docs

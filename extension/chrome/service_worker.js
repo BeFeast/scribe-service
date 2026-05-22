@@ -153,7 +153,7 @@ async function notifySuccess(baseUrl, result) {
     throw new Error("Scribe responded OK but returned no job ID.");
   }
 
-  const jobUrl = `${baseUrl}/__spa__/#/jobs/${result.job_id}`;
+  const jobUrl = `${baseUrl}/#/jobs/${result.job_id}`;
   const title = result.deduplicated ? "Already known to Scribe" : "Submitted to Scribe";
   const status = result.status ? `Status: ${result.status}. ` : "";
   const message = `${status}Click to open job #${result.job_id}.`;
