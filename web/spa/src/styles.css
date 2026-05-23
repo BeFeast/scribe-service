@@ -817,6 +817,54 @@ a {
 	color: var(--accent);
 }
 
+.transcript-actions {
+	display: grid;
+	justify-items: end;
+	gap: 0.7rem;
+}
+
+.share-control {
+	display: grid;
+	gap: 0.4rem;
+	justify-items: end;
+}
+
+.share-control .section-label {
+	margin: 0;
+}
+
+.share-targets {
+	display: grid;
+	gap: 0.45rem;
+}
+
+.share-target {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.3rem;
+}
+
+.share-target .btn {
+	min-height: 1.85rem;
+	padding: 0.32rem 0.55rem;
+	text-decoration: none;
+}
+
+.copy-state {
+	color: var(--muted);
+	font-size: 0.78rem;
+	font-weight: 750;
+}
+
+.copy-state.ok {
+	color: var(--ok);
+}
+
+.copy-state.err {
+	color: var(--err);
+}
+
 .transcript-body,
 .prose {
 	line-height: 1.7;
@@ -2249,8 +2297,16 @@ a {
 .row-links {
 	display: flex;
 	flex-wrap: wrap;
+	align-items: center;
 	gap: 0.6rem;
 	font-size: 0.9rem;
+}
+
+.row-links .share-targets {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.35rem;
 }
 
 .placeholder-pane {
