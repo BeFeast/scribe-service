@@ -43,7 +43,6 @@ def test_process_job_persists_resolved_non_youtube_video_id(db_session, monkeypa
         "summarize",
         lambda *_a, **_k: summarizer_module.SummaryResult(summary_md="summary", tags=["x"]),
     )
-    monkeypatch.setattr(worker_loop.shortlinks, "make_shortlink", lambda *_a, **_k: "short")
     monkeypatch.setattr(worker_loop.shutil, "rmtree", lambda *_a, **_k: None)
 
     job = Job(
