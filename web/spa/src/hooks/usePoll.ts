@@ -6,7 +6,11 @@ type PollOptions = {
 
 type PollFn = (signal: AbortSignal) => void | Promise<void>;
 
-export function usePoll(fn: PollFn, interval: number, options: PollOptions = {}) {
+export function usePoll(
+	fn: PollFn,
+	interval: number,
+	options: PollOptions = {},
+) {
 	const enabled = options.enabled ?? true;
 	const fnRef = React.useRef(fn);
 

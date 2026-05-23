@@ -22,9 +22,9 @@ type TweaksPanelProps = {
 	navigate: (route: Route) => void;
 };
 
-const variantOptions: ScribeVariant[] = ["paper", "terminal", "console"];
-const themeOptions: ScribeTheme[] = ["light", "dark"];
-const densityOptions: ScribeDensity[] = ["compact", "cozy", "comfy"];
+const variantOptions: ScribeVariant[] = ["field"];
+const themeOptions: ScribeTheme[] = ["light"];
+const densityOptions: ScribeDensity[] = ["compact"];
 const layoutOptions: LibraryLayout[] = ["feed", "table", "cards"];
 const jumpRoutes: Array<{ label: string; route: Route }> = [
 	{ label: "Library", route: { page: "library", params: {} } },

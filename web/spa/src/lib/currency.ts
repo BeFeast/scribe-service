@@ -1,6 +1,11 @@
 export type DisplayCurrency = "USD" | "EUR" | "ILS" | "GBP";
 
-export const displayCurrencies: DisplayCurrency[] = ["USD", "EUR", "ILS", "GBP"];
+export const displayCurrencies: DisplayCurrency[] = [
+	"USD",
+	"EUR",
+	"ILS",
+	"GBP",
+];
 
 const usdRates: Record<DisplayCurrency, number> = {
 	USD: 1,
@@ -10,7 +15,8 @@ const usdRates: Record<DisplayCurrency, number> = {
 };
 
 export function parseDisplayCurrency(value: unknown): DisplayCurrency {
-	return typeof value === "string" && displayCurrencies.includes(value as DisplayCurrency)
+	return typeof value === "string" &&
+		displayCurrencies.includes(value as DisplayCurrency)
 		? (value as DisplayCurrency)
 		: "USD";
 }

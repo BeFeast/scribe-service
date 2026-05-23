@@ -1,15 +1,14 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
-type Variant = "paper" | "terminal" | "console";
-type Theme = "light" | "dark";
-type Density = "compact" | "cozy" | "comfy";
+type Variant = "field";
+type Theme = "light";
+type Density = "compact";
 
-const variants: Variant[] = ["paper", "terminal", "console"];
-const themes: Theme[] = ["light", "dark"];
-const densities: Density[] = ["compact", "cozy", "comfy"];
+const variants: Variant[] = ["field"];
+const themes: Theme[] = ["light"];
 
 export function DesignSystemPlayground() {
-	const [density, setDensity] = useState<Density>("cozy");
+	const density: Density = "compact";
 	const combos = useMemo(
 		() =>
 			variants.flatMap((variant) =>
@@ -24,20 +23,8 @@ export function DesignSystemPlayground() {
 				<div>
 					<h1 className="pane-h1">Design system playground</h1>
 					<p className="pane-sub">
-						All variants, themes, densities, and shared component classes.
+						Field/light/compact primitives for production route ports.
 					</p>
-				</div>
-				<div className="toggle" aria-label="Density">
-					{densities.map((item) => (
-						<button
-							aria-pressed={density === item}
-							key={item}
-							onClick={() => setDensity(item)}
-							type="button"
-						>
-							{item}
-						</button>
-					))}
 				</div>
 			</section>
 
@@ -172,6 +159,43 @@ function ComponentSampler({
 					<strong>Card surface</strong>
 					<span className="hint">Card metadata and helper copy.</span>
 				</article>
+			</div>
+
+			<hr className="divider" />
+
+			<div className="share-sheet">
+				<strong>Share sheet</strong>
+				<div className="share-targets">
+					<div className="share-target">
+						<span className="tag">Page</span>
+						<button className="btn" type="button">
+							Copy link
+						</button>
+					</div>
+				</div>
+			</div>
+
+			<div className="access-row">
+				<div>
+					<div className="row-label">Access row</div>
+					<div className="hint">Operator account and role metadata.</div>
+				</div>
+				<span className="chip ok">admin</span>
+			</div>
+
+			<div className="empty-state">
+				<strong>Empty state</strong>
+				<span>No transcripts match this filter.</span>
+			</div>
+
+			<div className="loading-state">
+				<span className="spinner" aria-label="Loading" />
+				<span>Loading transcripts</span>
+			</div>
+
+			<div className="error-state">
+				<strong>Error state</strong>
+				<span>Service temporarily unavailable.</span>
 			</div>
 
 			<section className="transcript-body prose">

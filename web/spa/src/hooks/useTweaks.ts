@@ -1,8 +1,8 @@
 import React from "react";
 
-export type ScribeVariant = "paper" | "terminal" | "console";
-export type ScribeTheme = "light" | "dark";
-export type ScribeDensity = "compact" | "cozy" | "comfy";
+export type ScribeVariant = "field";
+export type ScribeTheme = "light";
+export type ScribeDensity = "compact";
 export type LibraryLayout = "feed" | "table" | "cards";
 
 export type Tweaks = {
@@ -15,19 +15,17 @@ export type Tweaks = {
 const STORAGE_KEY = "scribe.tweaks";
 
 export const DEFAULT_TWEAKS: Tweaks = {
-	variant: "terminal",
+	variant: "field",
 	theme: "light",
-	density: "cozy",
+	density: "compact",
 	libraryLayout: "feed",
 };
 
-type TweakAction =
-	| { type: "theme"; value: ScribeTheme }
-	| { type: "replace"; value: Tweaks };
+type TweakAction = { type: "replace"; value: Tweaks };
 
-const variants = new Set<ScribeVariant>(["paper", "terminal", "console"]);
-const themes = new Set<ScribeTheme>(["light", "dark"]);
-const densities = new Set<ScribeDensity>(["compact", "cozy", "comfy"]);
+const variants = new Set<ScribeVariant>(["field"]);
+const themes = new Set<ScribeTheme>(["light"]);
+const densities = new Set<ScribeDensity>(["compact"]);
 const libraryLayouts = new Set<LibraryLayout>(["feed", "table", "cards"]);
 
 function readStoredTweaks(): Tweaks {
@@ -61,13 +59,8 @@ function readStoredTweaks(): Tweaks {
 	}
 }
 
-function reducer(state: Tweaks, action: TweakAction): Tweaks {
-	switch (action.type) {
-		case "theme":
-			return { ...state, theme: action.value };
-		case "replace":
-			return action.value;
-	}
+function reducer(_state: Tweaks, action: TweakAction): Tweaks {
+	return action.value;
 }
 
 function applyTweaks(tweaks: Tweaks): void {
@@ -83,10 +76,6 @@ export function useTweaks() {
 		reducer,
 		DEFAULT_TWEAKS,
 		readStoredTweaks,
-	);
-	const setTheme = React.useCallback(
-		(value: ScribeTheme) => dispatch({ type: "theme", value }),
-		[],
 	);
 	const replaceTweaks = React.useCallback(
 		(value: Tweaks) => dispatch({ type: "replace", value }),
@@ -104,7 +93,6 @@ export function useTweaks() {
 
 	return {
 		tweaks,
-		setTheme,
 		replaceTweaks,
 	};
 }

@@ -335,9 +335,9 @@ def test_tweaks_defaults_persist_and_apply_to_html_dataset() -> None:
     source = read("hooks/useTweaks.ts")
 
     assert 'const STORAGE_KEY = "scribe.tweaks";' in source
-    assert 'variant: "terminal"' in source
+    assert 'variant: "field"' in source
     assert 'theme: "light"' in source
-    assert 'density: "cozy"' in source
+    assert 'density: "compact"' in source
     assert 'libraryLayout: "feed"' in source
     assert "localStorage.getItem(STORAGE_KEY)" in source
     assert "localStorage.setItem(STORAGE_KEY" in source
@@ -355,6 +355,30 @@ def test_tweaks_defaults_persist_and_apply_to_html_dataset() -> None:
     assert "dataset.theme = tweaks.theme" in source
     assert "dataset.density = tweaks.density" in source
     assert "dataset.libraryLayout = tweaks.libraryLayout" in source
+
+
+def test_appearance_settings_do_not_expose_debug_variant_or_density_controls() -> None:
+    settings = read("pages/Settings.tsx")
+
+    assert 'label="Variant"' not in settings
+    assert 'label="Density"' not in settings
+    assert '"paper"' not in settings
+    assert '"terminal"' not in settings
+    assert '"console"' not in settings
+    assert '"cozy"' not in settings
+    assert '"comfy"' not in settings
+
+
+def test_field_light_foundation_does_not_expose_theme_toggle() -> None:
+    hooks = read("hooks/useTweaks.ts")
+    topbar = read("components/TopBar.tsx")
+    settings = read("pages/Settings.tsx")
+    source = hooks + topbar + settings
+
+    assert 'export type ScribeTheme = "light";' in hooks
+    assert '"dark"' not in source
+    assert "onThemeChange" not in topbar
+    assert 'label="Theme"' not in settings
 
 
 def test_sidebar_routes_protected_fetch_without_mock_fallback() -> None:
