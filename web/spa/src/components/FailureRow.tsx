@@ -1,3 +1,8 @@
+import {
+	type Route,
+	handleRouteAnchorClick,
+	routeToHref,
+} from "../hooks/useRoute";
 import { StatusChip } from "./StatusChip";
 
 export type FailureJob = {
@@ -12,7 +17,7 @@ export type FailureJob = {
 
 type FailureRowProps = {
 	job: FailureJob;
-	onOpen: (id: number) => void;
+	navigate: (route: Route) => void;
 	onDismiss: (id: number) => void;
 	busy: boolean;
 };
@@ -26,13 +31,19 @@ function formatFailedAt(value: string) {
 	}).format(new Date(value));
 }
 
-export function FailureRow({ job, onOpen, onDismiss, busy }: FailureRowProps) {
+export function FailureRow({
+	job,
+	navigate,
+	onDismiss,
+	busy,
+}: FailureRowProps) {
+	const jobRoute: Route = { page: "job", params: { id: job.id } };
 	return (
 		<div className="failure-row">
-			<button
-				type="button"
+			<a
 				className="failure-action"
-				onClick={() => onOpen(job.id)}
+				href={routeToHref(jobRoute)}
+				onClick={(event) => handleRouteAnchorClick(event, jobRoute, navigate)}
 			>
 				<div>
 					<p className="err-title">{job.title ?? job.video_id}</p>
@@ -42,7 +53,7 @@ export function FailureRow({ job, onOpen, onDismiss, busy }: FailureRowProps) {
 						{formatFailedAt(job.failed_at)}
 					</p>
 				</div>
-			</button>
+			</a>
 			<div className="failure-row-actions">
 				<StatusChip status="failed" />
 				<button

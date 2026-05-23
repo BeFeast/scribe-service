@@ -5,7 +5,11 @@ import { PipelineDiagram, type StageMap } from "../components/PipelineDiagram";
 import { StatusChip } from "../components/StatusChip";
 import { useAuth } from "../hooks/useAuth";
 import { usePoll } from "../hooks/usePoll";
-import type { Route } from "../hooks/useRoute";
+import {
+	type Route,
+	handleRouteAnchorClick,
+	routeToHref,
+} from "../hooks/useRoute";
 
 type TranscriptBrief = {
 	id: number;
@@ -175,13 +179,29 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 		);
 	}
 
+	const linkedTranscript = job?.transcript ?? null;
+	const transcriptRoute: Route | null = linkedTranscript
+		? { page: "transcript", params: { id: linkedTranscript.id } }
+		: null;
+
 	return (
 		<section className="pane job-detail-page">
 			<header className="pane-header">
 				<div>
 					<p className="eyebrow">Job {id}</p>
 					<h1 className="pane-h1">
-						{job?.transcript?.title ?? job?.video_id ?? "Loading job"}
+						{transcriptRoute && linkedTranscript ? (
+							<a
+								href={routeToHref(transcriptRoute)}
+								onClick={(event) =>
+									handleRouteAnchorClick(event, transcriptRoute, navigate)
+								}
+							>
+								{linkedTranscript.title}
+							</a>
+						) : (
+							(job?.video_id ?? "Loading job")
+						)}
 					</h1>
 					{job ? (
 						<p className="detail-meta">

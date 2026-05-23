@@ -3,7 +3,11 @@ import React from "react";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useAuth } from "../hooks/useAuth";
 import { usePoll } from "../hooks/usePoll";
-import type { Route } from "../hooks/useRoute";
+import {
+	type Route,
+	handleRouteAnchorClick,
+	routeToHref,
+} from "../hooks/useRoute";
 import type { LibraryLayout } from "../hooks/useTweaks";
 import { isAuthStatus } from "../lib/auth";
 import type { DisplayCurrency } from "../lib/currency";
@@ -18,8 +22,6 @@ type LibraryRow = {
 	duration_seconds: number | null;
 	vast_cost: number | null;
 	created_at: string;
-	summary_shortlink: string | null;
-	transcript_shortlink: string | null;
 	source_url: string | null;
 	source_label: string | null;
 	summary_excerpt: string;
@@ -229,7 +231,6 @@ export function Library({
 		return () => abort.abort();
 	}, [loadLibrary, retryTick]);
 
-	const clearTag = () => navigate({ page: "library", params: {} });
 	const retry = () => setRetryTick((value) => value + 1);
 	const canPageBack = offset > 0;
 	const canPageForward = offset + rows.length < total;
@@ -238,10 +239,6 @@ export function Library({
 	const previousPage = () =>
 		setOffset((value) => Math.max(0, value - libraryPageSize));
 	const nextPage = () => setOffset((value) => value + libraryPageSize);
-	const tagClick = (tag: string) =>
-		navigate({ page: "library", params: { tag } });
-	const transcriptClick = (id: number) =>
-		navigate({ page: "transcript", params: { id } });
 	const requestDeleteTranscript = (row: LibraryRow) => {
 		if (deleteBusyId === null) {
 			setDeleteCandidate(row);
@@ -335,9 +332,19 @@ export function Library({
 					<div className="library-meta">
 						<span className="chip info">{total} transcripts</span>
 						{selectedTag !== undefined ? (
-							<button type="button" className="chip" onClick={clearTag}>
+							<a
+								className="chip"
+								href={routeToHref({ page: "library", params: {} })}
+								onClick={(event) =>
+									handleRouteAnchorClick(
+										event,
+										{ page: "library", params: {} },
+										navigate,
+									)
+								}
+							>
 								tag: {selectedTag}
-							</button>
+							</a>
 						) : null}
 						{isLoading ? (
 							<span className="spinner" aria-label="Loading" />
@@ -474,8 +481,7 @@ export function Library({
 						<LibTable
 							rows={rows}
 							displayCurrency={displayCurrency}
-							onTagClick={tagClick}
-							onOpen={transcriptClick}
+							navigate={navigate}
 							onDelete={requestDeleteTranscript}
 							deleteBusyId={deleteBusyId}
 						/>
@@ -484,8 +490,7 @@ export function Library({
 						<LibFeed
 							rows={rows}
 							displayCurrency={displayCurrency}
-							onTagClick={tagClick}
-							onOpen={transcriptClick}
+							navigate={navigate}
 							onDelete={requestDeleteTranscript}
 							deleteBusyId={deleteBusyId}
 						/>
@@ -494,8 +499,7 @@ export function Library({
 						<LibCards
 							rows={rows}
 							displayCurrency={displayCurrency}
-							onTagClick={tagClick}
-							onOpen={transcriptClick}
+							navigate={navigate}
 							onDelete={requestDeleteTranscript}
 							deleteBusyId={deleteBusyId}
 						/>
@@ -559,17 +563,20 @@ function InFlightStrip({ navigate }: { navigate: (route: Route) => void }) {
 				{error ? <span className="chip warn">poll delayed</span> : null}
 			</div>
 			{jobs.map((job) => (
-				<InFlightRow
-					key={job.id}
-					job={job}
-					onOpen={() => navigate({ page: "job", params: { id: job.id } })}
-				/>
+				<InFlightRow key={job.id} job={job} navigate={navigate} />
 			))}
 		</section>
 	);
 }
 
-function InFlightRow({ job, onOpen }: { job: ActiveJob; onOpen: () => void }) {
+function InFlightRow({
+	job,
+	navigate,
+}: {
+	job: ActiveJob;
+	navigate: (route: Route) => void;
+}) {
+	const jobRoute: Route = { page: "job", params: { id: job.id } };
 	const activeStage =
 		stageLabels.find((stage) => job.stages[stage]?.state === "active") ??
 		job.status;
@@ -582,7 +589,11 @@ function InFlightRow({ job, onOpen }: { job: ActiveJob; onOpen: () => void }) {
 	);
 
 	return (
-		<button type="button" className="inflight-row" onClick={onOpen}>
+		<a
+			className="inflight-row"
+			href={routeToHref(jobRoute)}
+			onClick={(event) => handleRouteAnchorClick(event, jobRoute, navigate)}
+		>
 			<span className="inflight-copy">
 				<strong>{job.title ?? job.video_id}</strong>
 				<span>
@@ -593,22 +604,20 @@ function InFlightRow({ job, onOpen }: { job: ActiveJob; onOpen: () => void }) {
 				<span style={{ width: `${progress}%` }} />
 			</span>
 			<span className="chip run">{job.status}</span>
-		</button>
+		</a>
 	);
 }
 
 function LibTable({
 	rows,
 	displayCurrency,
-	onTagClick,
-	onOpen,
+	navigate,
 	onDelete,
 	deleteBusyId,
 }: {
 	rows: LibraryRow[];
 	displayCurrency: DisplayCurrency;
-	onTagClick: (tag: string) => void;
-	onOpen: (id: number) => void;
+	navigate: (route: Route) => void;
 	onDelete: (row: LibraryRow) => void;
 	deleteBusyId: number | null;
 }) {
@@ -633,13 +642,22 @@ function LibTable({
 					{rows.map((row) => (
 						<tr key={row.id}>
 							<td>
-								<button
-									type="button"
+								<a
 									className="link-button table-title"
-									onClick={() => onOpen(row.id)}
+									href={routeToHref({
+										page: "transcript",
+										params: { id: row.id },
+									})}
+									onClick={(event) =>
+										handleRouteAnchorClick(
+											event,
+											{ page: "transcript", params: { id: row.id } },
+											navigate,
+										)
+									}
 								>
 									{row.title}
-								</button>
+								</a>
 								<p className="feed-excerpt">{row.summary_excerpt}</p>
 								{row.is_partial ? (
 									<span className="chip warn">partial</span>
@@ -651,7 +669,7 @@ function LibTable({
 								/>
 							</td>
 							<td>
-								<TagList row={row} onTagClick={onTagClick} />
+								<TagList row={row} navigate={navigate} />
 							</td>
 							<td className="muted">
 								<div className="table-meta-stack">
@@ -671,15 +689,13 @@ function LibTable({
 function LibFeed({
 	rows,
 	displayCurrency,
-	onTagClick,
-	onOpen,
+	navigate,
 	onDelete,
 	deleteBusyId,
 }: {
 	rows: LibraryRow[];
 	displayCurrency: DisplayCurrency;
-	onTagClick: (tag: string) => void;
-	onOpen: (id: number) => void;
+	navigate: (route: Route) => void;
 	onDelete: (row: LibraryRow) => void;
 	deleteBusyId: number | null;
 }) {
@@ -688,18 +704,27 @@ function LibFeed({
 			{rows.map((row) => (
 				<article className="feed-item" key={row.id}>
 					<div className="feed-head">
-						<button
-							type="button"
+						<a
 							className="link-button feed-title"
-							onClick={() => onOpen(row.id)}
+							href={routeToHref({
+								page: "transcript",
+								params: { id: row.id },
+							})}
+							onClick={(event) =>
+								handleRouteAnchorClick(
+									event,
+									{ page: "transcript", params: { id: row.id } },
+									navigate,
+								)
+							}
 						>
 							{row.title}
-						</button>
+						</a>
 						{row.is_partial ? <span className="chip warn">partial</span> : null}
 					</div>
 					<p className="feed-excerpt">{row.summary_excerpt}</p>
 					<RowMeta row={row} displayCurrency={displayCurrency} />
-					<TagList row={row} onTagClick={onTagClick} />
+					<TagList row={row} navigate={navigate} />
 					<RowLinks
 						row={row}
 						onDelete={onDelete}
@@ -714,15 +739,13 @@ function LibFeed({
 function LibCards({
 	rows,
 	displayCurrency,
-	onTagClick,
-	onOpen,
+	navigate,
 	onDelete,
 	deleteBusyId,
 }: {
 	rows: LibraryRow[];
 	displayCurrency: DisplayCurrency;
-	onTagClick: (tag: string) => void;
-	onOpen: (id: number) => void;
+	navigate: (route: Route) => void;
 	onDelete: (row: LibraryRow) => void;
 	deleteBusyId: number | null;
 }) {
@@ -731,17 +754,26 @@ function LibCards({
 			{rows.map((row) => (
 				<article className="card lib-card" key={row.id}>
 					<div>
-						<button
-							type="button"
+						<a
 							className="link-button feed-title"
-							onClick={() => onOpen(row.id)}
+							href={routeToHref({
+								page: "transcript",
+								params: { id: row.id },
+							})}
+							onClick={(event) =>
+								handleRouteAnchorClick(
+									event,
+									{ page: "transcript", params: { id: row.id } },
+									navigate,
+								)
+							}
 						>
 							{row.title}
-						</button>
+						</a>
 						{row.is_partial ? <span className="chip warn">partial</span> : null}
 					</div>
 					<p className="feed-excerpt">{row.summary_excerpt}</p>
-					<TagList row={row} onTagClick={onTagClick} />
+					<TagList row={row} navigate={navigate} />
 					<RowMeta row={row} displayCurrency={displayCurrency} />
 					<RowLinks
 						row={row}
@@ -756,26 +788,31 @@ function LibCards({
 
 function TagList({
 	row,
-	onTagClick,
+	navigate,
 }: {
 	row: LibraryRow;
-	onTagClick: (tag: string) => void;
+	navigate: (route: Route) => void;
 }) {
 	if (row.tags === null || row.tags.length === 0) {
 		return <span className="muted">untagged</span>;
 	}
 	return (
 		<div className="detail-tags">
-			{row.tags.map((tag) => (
-				<button
-					type="button"
-					className="tag tag-button"
-					key={tag}
-					onClick={() => onTagClick(tag)}
-				>
-					{tag}
-				</button>
-			))}
+			{row.tags.map((tag) => {
+				const tagRoute: Route = { page: "library", params: { tag } };
+				return (
+					<a
+						className="tag tag-button"
+						key={tag}
+						href={routeToHref(tagRoute)}
+						onClick={(event) =>
+							handleRouteAnchorClick(event, tagRoute, navigate)
+						}
+					>
+						{tag}
+					</a>
+				);
+			})}
 		</div>
 	);
 }
@@ -811,12 +848,10 @@ function RowLinks({
 			{row.source_url !== null ? (
 				<a href={row.source_url}>{row.source_label ?? "Source"}</a>
 			) : null}
-			{row.summary_shortlink !== null ? (
-				<a href={row.summary_shortlink}>Summary</a>
+			{!row.is_partial ? (
+				<a href={`/transcripts/${row.id}/summary.md`}>Summary</a>
 			) : null}
-			{row.transcript_shortlink !== null ? (
-				<a href={row.transcript_shortlink}>Transcript</a>
-			) : null}
+			<a href={`/transcripts/${row.id}/transcript.md`}>Transcript</a>
 			<button
 				type="button"
 				className="link-button danger-link"

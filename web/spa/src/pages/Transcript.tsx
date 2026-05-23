@@ -2,6 +2,11 @@ import React from "react";
 
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useAuth } from "../hooks/useAuth";
+import {
+	type Route,
+	handleRouteAnchorClick,
+	routeToHref,
+} from "../hooks/useRoute";
 import type { DisplayCurrency } from "../lib/currency";
 import { formatUsdCost } from "../lib/currency";
 
@@ -12,8 +17,6 @@ type TranscriptRecord = {
 	tags?: string[] | null;
 	duration_seconds?: number | null;
 	lang?: string | null;
-	summary_shortlink?: string | null;
-	transcript_shortlink?: string | null;
 	source_url?: string | null;
 	source_label?: string | null;
 	created_at: string;
@@ -26,10 +29,7 @@ type TranscriptRecord = {
 type TranscriptProps = {
 	id?: number;
 	displayCurrency: DisplayCurrency;
-	navigate: (route: {
-		page: "library" | "transcript" | "queue" | "job" | "ops" | "settings";
-		params: { id?: number; tag?: string };
-	}) => void;
+	navigate: (route: Route) => void;
 };
 
 type MarkdownBlock =
@@ -504,13 +504,19 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 				<div className="failure-row">
 					<p className="err-title">Transcript unavailable</p>
 					<p className="err-msg">{error ?? "No transcript loaded."}</p>
-					<button
+					<a
 						className="btn"
-						type="button"
-						onClick={() => navigate({ page: "library", params: {} })}
+						href={routeToHref({ page: "library", params: {} })}
+						onClick={(event) =>
+							handleRouteAnchorClick(
+								event,
+								{ page: "library", params: {} },
+								navigate,
+							)
+						}
 					>
 						Back to library
-					</button>
+					</a>
 				</div>
 			</section>
 		);
@@ -539,9 +545,6 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 						<a href={`/transcripts/${record.id}/transcript.md`}>
 							transcript.md
 						</a>
-						{record.summary_shortlink ? (
-							<a href={record.summary_shortlink}>shortlink</a>
-						) : null}
 					</div>
 				</div>
 				<button
@@ -556,16 +559,21 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 
 			{record.tags && record.tags.length > 0 ? (
 				<nav className="detail-tags" aria-label="Transcript tags">
-					{record.tags.map((tag) => (
-						<button
-							className="tag"
-							key={tag}
-							type="button"
-							onClick={() => navigate({ page: "library", params: { tag } })}
-						>
-							{tag}
-						</button>
-					))}
+					{record.tags.map((tag) => {
+						const tagRoute: Route = { page: "library", params: { tag } };
+						return (
+							<a
+								className="tag"
+								key={tag}
+								href={routeToHref(tagRoute)}
+								onClick={(event) =>
+									handleRouteAnchorClick(event, tagRoute, navigate)
+								}
+							>
+								{tag}
+							</a>
+						);
+					})}
 				</nav>
 			) : null}
 

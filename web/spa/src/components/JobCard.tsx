@@ -1,3 +1,8 @@
+import {
+	type Route,
+	handleRouteAnchorClick,
+	routeToHref,
+} from "../hooks/useRoute";
 import { PipelineDiagram, type StageMap } from "./PipelineDiagram";
 import { StatusChip } from "./StatusChip";
 
@@ -14,7 +19,7 @@ export type JobCardJob = {
 
 type JobCardProps = {
 	job: JobCardJob;
-	onOpen: (id: number) => void;
+	navigate: (route: Route) => void;
 	onCancel?: (id: number) => void;
 	cancelBusy?: boolean;
 	cancelDisabled?: boolean;
@@ -28,17 +33,18 @@ function formatElapsed(seconds: number) {
 
 export function JobCard({
 	job,
-	onOpen,
+	navigate,
 	onCancel,
 	cancelBusy = false,
 	cancelDisabled = false,
 }: JobCardProps) {
+	const jobRoute: Route = { page: "job", params: { id: job.id } };
 	return (
 		<div className="job-card">
-			<button
-				type="button"
+			<a
 				className="job-card-open"
-				onClick={() => onOpen(job.id)}
+				href={routeToHref(jobRoute)}
+				onClick={(event) => handleRouteAnchorClick(event, jobRoute, navigate)}
 			>
 				<div className="job-card-top">
 					<div>
@@ -52,7 +58,7 @@ export function JobCard({
 					<StatusChip status={job.status} />
 				</div>
 				<PipelineDiagram stages={job.stages} compact />
-			</button>
+			</a>
 			{onCancel ? (
 				<div className="job-card-actions">
 					<button

@@ -57,7 +57,7 @@ function routeFromHash(hash: string): Route {
 	}
 }
 
-function routeToHash(route: Route): string {
+export function routeToHref(route: Route): string {
 	const parts: string[] = [route.page];
 	if (route.page === "job") {
 		parts[0] = "jobs";
@@ -79,6 +79,25 @@ function routeToHash(route: Route): string {
 	return `#/${parts.join("/")}${query ? `?${query}` : ""}`;
 }
 
+export function handleRouteAnchorClick(
+	event: React.MouseEvent<HTMLAnchorElement>,
+	route: Route,
+	navigate: (route: Route) => void,
+): void {
+	if (
+		event.defaultPrevented ||
+		event.button !== 0 ||
+		event.metaKey ||
+		event.ctrlKey ||
+		event.altKey ||
+		event.shiftKey
+	) {
+		return;
+	}
+	event.preventDefault();
+	navigate(route);
+}
+
 export function useRoute() {
 	const [route, dispatch] = React.useReducer(routeReducer, DEFAULT_ROUTE, () =>
 		routeFromHash(window.location.hash),
@@ -92,7 +111,7 @@ export function useRoute() {
 	}, []);
 
 	const navigate = React.useCallback((next: Route) => {
-		const hash = routeToHash(next);
+		const hash = routeToHref(next);
 		if (window.location.hash === hash) {
 			dispatch({ type: "navigate", route: next });
 			return;
