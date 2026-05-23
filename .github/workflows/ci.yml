@@ -51,8 +51,12 @@ jobs:
         uses: oven-sh/setup-bun@v2
 
       - name: Build SPA
-        working-directory: web/spa
         run: |
+          bash scripts/check-design-tokens.sh
+          bash scripts/check-design-recipes.sh
+          bash scripts/check-design-nesting.sh
+          bash scripts/check-forbidden-primitives.sh
+          cd web/spa
           bun install --frozen-lockfile
           bun run build
 

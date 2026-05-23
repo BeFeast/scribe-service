@@ -32,9 +32,13 @@ TOKENS = (
     "--info",
     "--link",
     "--font-display",
+    "--font-sans",
     "--font-mono",
+    "--radius-sm",
     "--radius",
     "--radius-lg",
+    "--shadow-sm",
+    "--shadow",
     "--rule",
     "--row-y",
     "--row-gap",
@@ -44,9 +48,11 @@ TOKENS = (
 
 CLASSES = (
     ".btn",
+    ".ds-button",
     ".btn.primary",
     ".btn.ghost",
     ".iconbtn",
+    ".ds-icon-button",
     ".chip",
     ".chip.ok",
     ".chip.warn",
@@ -55,6 +61,8 @@ CLASSES = (
     ".chip.run",
     ".tag",
     ".kbd",
+    ".divider",
+    ".rule",
     ".spinner",
     ".live-dot",
     ".bar-track",
@@ -68,14 +76,17 @@ CLASSES = (
     ".pane-sub",
     ".section-label",
     ".metric",
+    ".metric-card",
     ".metric-grid",
     ".lib-table",
+    ".ds-table",
     ".lib-feed",
     ".feed-item",
     ".feed-title",
     ".feed-excerpt",
     ".lib-cards",
     ".card",
+    ".ds-card",
     ".detail-h1",
     ".detail-meta",
     ".detail-tags",
@@ -95,6 +106,11 @@ CLASSES = (
     ".spark",
     ".settings-group",
     ".settings-row",
+    ".share-sheet",
+    ".access-row",
+    ".loading-state",
+    ".empty-state",
+    ".error-state",
     ".row-label",
     ".row-control",
     ".hint",
@@ -113,27 +129,40 @@ def test_spa_css_is_imported_once() -> None:
 def test_design_tokens_exist_for_all_variant_theme_combos() -> None:
     css = STYLES.read_text(encoding="utf-8")
 
-    for variant in ("paper", "terminal", "console"):
-        for theme in ("light", "dark"):
-            assert f'[data-variant="{variant}"][data-theme="{theme}"]' in css
-            start = css.index(f'[data-variant="{variant}"][data-theme="{theme}"]')
-            end = css.index("}", start)
-            block = css[start:end]
-            for token in TOKENS:
-                assert f"{token}:" in block
+    assert '[data-variant="field"][data-theme="light"][data-density="compact"]' in css
+    start = css.index(":root")
+    end = css.index("}", start)
+    block = css[start:end]
+    for token in TOKENS:
+        assert f"{token}:" in block
+    for value in (
+        "#eceef2",
+        "#d1d5de",
+        "#f5f6f9",
+        "#1c2018",
+        "#3a4234",
+        "#837569",
+        "#b7b6c2",
+        "#c8ccd3",
+        "#657153",
+        "#d8dfcd",
+        "#a08254",
+        "#8a4a3a",
+        "#5d7088",
+    ):
+        assert value in block
 
 
 def test_density_modulates_only_spacing_and_base_size() -> None:
     css = STYLES.read_text(encoding="utf-8")
 
-    for density in ("compact", "cozy", "comfy"):
-        start = css.rindex(f'[data-density="{density}"]')
-        end = css.index("}", start)
-        block = css[start:end]
-        assert "--row-y:" in block
-        assert "--row-gap:" in block
-        assert "--pane-pad:" in block
-        assert "--fs-base:" in block
+    start = css.index(":root")
+    end = css.index("}", start)
+    block = css[start:end]
+    assert "--row-y: 9px" in block
+    assert "--row-gap: 8px" in block
+    assert "--pane-pad: 24px" in block
+    assert "--fs-base: 13px" in block
 
 
 def test_shared_component_classes_are_present() -> None:
@@ -152,7 +181,7 @@ def test_playground_route_and_font_links_are_wired() -> None:
     assert 'data-variant={variant}' in playground
     assert 'data-theme={theme}' in playground
     assert 'data-density={density}' in playground
-    for family in ("Newsreader", "Inter", "JetBrains+Mono", "Geist", "Geist+Mono"):
+    for family in ("Inter", "JetBrains+Mono", "Geist", "Geist+Mono"):
         assert family in template
 
     client = TestClient(app)

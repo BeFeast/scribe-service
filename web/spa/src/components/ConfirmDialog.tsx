@@ -31,7 +31,11 @@ export function ConfirmDialog({
 
 	return (
 		<div className="modal-backdrop" role="presentation">
-			<dialog className="settings-modal compact confirm-dialog" aria-modal="true" open>
+			<dialog
+				className="settings-modal compact confirm-dialog"
+				aria-modal="true"
+				open
+			>
 				<header>
 					<strong>{title}</strong>
 				</header>

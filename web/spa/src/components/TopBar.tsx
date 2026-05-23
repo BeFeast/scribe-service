@@ -19,7 +19,10 @@ export function TopBar({ theme, onThemeChange }: TopBarProps) {
 		<header className="topbar">
 			<a className="brand" href="#/library" aria-label="Scribe library">
 				<span className="brand-mark" aria-hidden="true">
-					S
+					<svg viewBox="0 0 32 32" focusable="false" aria-hidden="true">
+						<path d="M7 6.5h18v3H10v5h12v3H10v5h15v3H7z" />
+						<path d="M13 12.5h12v3H13z" />
+					</svg>
 				</span>
 				<span className="brand-copy">
 					<strong>Scribe</strong>

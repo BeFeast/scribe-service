@@ -44,6 +44,7 @@ export function LogTail({ jobId, status, error }: LogTailProps) {
 	const [lines, setLines] = React.useState<WorkerLogLine[]>([]);
 	const terminal = TERMINAL.has(status);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: jobId changes reset the stream buffer.
 	React.useEffect(() => {
 		setLines([]);
 	}, [jobId]);
@@ -66,7 +67,10 @@ export function LogTail({ jobId, status, error }: LogTailProps) {
 					{
 						ts: null,
 						stage: status,
-						msg: status === "failed" ? (error ?? "job failed") : "waiting for worker logs",
+						msg:
+							status === "failed"
+								? (error ?? "job failed")
+								: "waiting for worker logs",
 					},
 				];
 

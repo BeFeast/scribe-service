@@ -3,13 +3,7 @@ import React from "react";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Markdown } from "../components/Markdown";
 import { useAuth } from "../hooks/useAuth";
-import type {
-	LibraryLayout,
-	ScribeDensity,
-	ScribeTheme,
-	ScribeVariant,
-	Tweaks,
-} from "../hooks/useTweaks";
+import type { LibraryLayout, ScribeTheme, Tweaks } from "../hooks/useTweaks";
 import { isAuthStatus } from "../lib/auth";
 import type { DisplayCurrency } from "../lib/currency";
 import { displayCurrencies } from "../lib/currency";
@@ -726,15 +720,6 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 						onChange={(value) => setTheme(value as ScribeTheme)}
 					/>
 					<SegRow
-						label="Variant"
-						hint="Design-system skin for the app shell."
-						value={tweaks.variant}
-						options={["paper", "terminal", "console"]}
-						onChange={(value) =>
-							replaceTweaks({ ...tweaks, variant: value as ScribeVariant })
-						}
-					/>
-					<SegRow
 						label="Library layout"
 						hint="Default layout for transcript browsing."
 						value={tweaks.libraryLayout}
@@ -744,15 +729,6 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 								...tweaks,
 								libraryLayout: value as LibraryLayout,
 							})
-						}
-					/>
-					<SegRow
-						label="Density"
-						hint="Spacing and type scale for data-heavy screens."
-						value={tweaks.density}
-						options={["compact", "cozy", "comfy"]}
-						onChange={(value) =>
-							replaceTweaks({ ...tweaks, density: value as ScribeDensity })
 						}
 					/>
 				</section>
@@ -827,7 +803,10 @@ export function AccessSection({
 	onRefresh: () => void;
 }) {
 	const signedOut =
-		currentUser === null && !loading && error === null && auth.authBlockedMessage === null;
+		currentUser === null &&
+		!loading &&
+		error === null &&
+		auth.authBlockedMessage === null;
 	const adminControlsEnabled =
 		currentUser !== null && canManageUsers(currentUser) && !adminRequired;
 
