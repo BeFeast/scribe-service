@@ -402,7 +402,7 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 			}
 			setLoading(true);
 			setError(null);
-			const response = await fetch(`/transcripts/${id}`, {
+			const response = await auth.protectedFetch(`/transcripts/${id}`, {
 				headers: { Accept: "application/json" },
 				cache: "no-store",
 				signal,
@@ -413,7 +413,7 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 			setRecord((await response.json()) as TranscriptRecord);
 			setLoading(false);
 		},
-		[id],
+		[auth, id],
 	);
 
 	React.useEffect(() => {

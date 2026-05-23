@@ -39,6 +39,9 @@ def test_auth_config_remains_public_from_external_ip(monkeypatch):
         "/admin/daily-report",
         "/jobs/1",
         "/transcripts",
+        "/transcripts/1",
+        "/transcripts/1/summary.md",
+        "/transcripts/1/transcript.md",
     ],
 )
 def test_external_unauthenticated_app_reads_are_401(monkeypatch, path):
