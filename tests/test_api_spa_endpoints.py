@@ -11,26 +11,35 @@ from sqlalchemy import delete, select
 
 from scribe.api import routes as routes_module
 from scribe.config import settings
-from scribe.db.models import Job, JobStageEvent, JobStatus, Transcript
+from scribe.db.models import Job, JobStageEvent, JobStatus, Owner, Transcript, TranscriptShareLink, User
 from scribe.main import app
 from scribe.obs.live_logs import job_log_buffer
 
 
 @pytest.fixture(autouse=True)
 def clean_tables(db_session):
+    db_session.execute(delete(TranscriptShareLink))
     db_session.execute(delete(Job))
+    db_session.execute(delete(User))
+    db_session.execute(delete(Owner))
     db_session.commit()
     yield
+    db_session.execute(delete(TranscriptShareLink))
     db_session.execute(delete(Job))
+    db_session.execute(delete(User))
+    db_session.execute(delete(Owner))
     db_session.commit()
 
 
 @pytest.fixture()
 def client(db_session):
+    old_token = settings.config_api_bearer_token
+    settings.config_api_bearer_token = ""
     app.dependency_overrides[routes_module.get_session] = lambda: db_session
     with TestClient(app) as tc:
         yield tc
     app.dependency_overrides.pop(routes_module.get_session, None)
+    settings.config_api_bearer_token = old_token
 
 
 def _seed_transcript(
@@ -675,3 +684,172 @@ def test_api_ops_happy_path(client, db_session, tmp_path, monkeypatch):
     assert body["backup"]["stale"] is False
     assert body["recent_failures"][0]["id"] == failed.id
     assert body["recent_failures"][0]["error"] == "codex exited 1"
+
+
+def _auth_headers(subject: str, email: str | None = None) -> dict[str, str]:
+    return {
+        "x-scribe-test-clerk-sub": subject,
+        "x-scribe-test-email": email or f"{subject}@example.test",
+    }
+
+
+def _seed_user(session, *, subject: str, email: str | None = None, role: str = "user") -> User:
+    normalized_email = email or f"{subject}@example.test"
+    owner = Owner(display_name=normalized_email)
+    user = User(
+        owner=owner,
+        clerk_subject=subject,
+        primary_email=normalized_email,
+        display_name=normalized_email,
+        role=role,
+    )
+    session.add(user)
+    session.commit()
+    return user
+
+
+def test_direct_transcript_endpoints_require_auth(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "trusted_cidrs", "10.10.0.0/16")
+    _, transcript = _seed_transcript(
+        db_session,
+        video_id="private1111",
+        title="Private",
+        summary_md="private summary",
+    )
+    remote_headers = {"x-forwarded-for": "203.0.113.10"}
+
+    detail = client.get(f"/transcripts/{transcript.id}", headers=remote_headers)
+    summary = client.get(f"/transcripts/{transcript.id}/summary.md", headers=remote_headers)
+    raw = client.get(f"/transcripts/{transcript.id}/transcript.md", headers=remote_headers)
+
+    assert detail.status_code == 401
+    assert summary.status_code == 401
+    assert raw.status_code == 401
+    assert "private summary" not in detail.text
+    assert "private summary" not in summary.text
+    assert "transcript body" not in raw.text
+
+
+def test_share_token_serves_summary_without_direct_auth(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "auth_test_mode", True)
+    monkeypatch.setattr(settings, "trusted_cidrs", "10.10.0.0/16")
+    _seed_user(db_session, subject="user_a")
+    _, transcript = _seed_transcript(
+        db_session,
+        video_id="share111111",
+        title="Shared",
+        summary_md="shared summary",
+        owner_subject="user_a",
+        owner_email="user_a@example.test",
+    )
+
+    created = client.post(
+        f"/api/transcripts/{transcript.id}/share-links",
+        headers=_auth_headers("user_a"),
+        json={"target_kind": "summary_markdown", "label": "reader"},
+    )
+    assert created.status_code == 201, created.text
+    share_url = created.json()["share_url"]
+    token = created.json()["token"]
+    assert f"/transcripts/{transcript.id}" not in share_url
+
+    direct = client.get(
+        f"/transcripts/{transcript.id}/summary.md",
+        headers={"x-forwarded-for": "203.0.113.10"},
+    )
+    shared = client.get(f"/share/{token}")
+
+    assert direct.status_code == 401
+    assert shared.status_code == 200
+    assert shared.headers["content-type"].startswith("text/markdown")
+    assert shared.text == "shared summary"
+
+
+def test_revoked_share_token_returns_410_without_content(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "auth_test_mode", True)
+    _seed_user(db_session, subject="user_a")
+    _, transcript = _seed_transcript(
+        db_session,
+        video_id="share222222",
+        title="Revoked",
+        summary_md="revoked summary",
+        owner_subject="user_a",
+        owner_email="user_a@example.test",
+    )
+    created = client.post(
+        f"/api/transcripts/{transcript.id}/share-links",
+        headers=_auth_headers("user_a"),
+        json={"target_kind": "transcript_markdown"},
+    ).json()
+
+    revoked = client.post(
+        f"/api/share-links/{created['id']}/revoke",
+        headers=_auth_headers("user_a"),
+    )
+    denied = client.get(f"/share/{created['token']}")
+
+    assert revoked.status_code == 200
+    assert denied.status_code == 410
+    assert "transcript body" not in denied.text
+
+
+def test_expired_share_token_returns_410_without_content(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "auth_test_mode", True)
+    _seed_user(db_session, subject="user_a")
+    _, transcript = _seed_transcript(
+        db_session,
+        video_id="shareexpired",
+        title="Expired",
+        summary_md="expired summary",
+        owner_subject="user_a",
+        owner_email="user_a@example.test",
+    )
+    created = client.post(
+        f"/api/transcripts/{transcript.id}/share-links",
+        headers=_auth_headers("user_a"),
+        json={
+            "target_kind": "summary_markdown",
+            "expires_at": (dt.datetime.now(dt.UTC) - dt.timedelta(minutes=1)).isoformat(),
+        },
+    ).json()
+
+    denied = client.get(f"/share/{created['token']}")
+
+    assert denied.status_code == 410
+    assert "expired summary" not in denied.text
+
+
+def test_share_link_owner_isolation(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "auth_test_mode", True)
+    _seed_user(db_session, subject="user_a")
+    _seed_user(db_session, subject="user_b")
+    _, transcript = _seed_transcript(
+        db_session,
+        video_id="share333333",
+        title="Owned",
+        summary_md="owned summary",
+        owner_subject="user_a",
+        owner_email="user_a@example.test",
+    )
+    created = client.post(
+        f"/api/transcripts/{transcript.id}/share-links",
+        headers=_auth_headers("user_a"),
+        json={"target_kind": "page"},
+    ).json()
+
+    owner_list = client.get(
+        f"/api/transcripts/{transcript.id}/share-links",
+        headers=_auth_headers("user_a"),
+    )
+    other_list = client.get(
+        f"/api/transcripts/{transcript.id}/share-links",
+        headers=_auth_headers("user_b"),
+    )
+    other_revoke = client.post(
+        f"/api/share-links/{created['id']}/revoke",
+        headers=_auth_headers("user_b"),
+    )
+
+    assert len(owner_list.json()) == 1
+    assert other_list.status_code == 404
+    assert other_revoke.status_code == 404

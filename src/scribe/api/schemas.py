@@ -83,6 +83,32 @@ class JobStageView(BaseModel):
     note: str | None = None
 
 
+class ShareLinkCreate(BaseModel):
+    target_kind: str = "page"
+    expires_at: dt.datetime | None = None
+    label: str | None = None
+    recipient_note: str | None = None
+
+
+class ShareLinkView(BaseModel):
+    id: int
+    transcript_id: int
+    target_kind: str
+    created_by: str
+    created_at: dt.datetime
+    expires_at: dt.datetime | None = None
+    revoked_at: dt.datetime | None = None
+    label: str | None = None
+    recipient_note: str | None = None
+    token_hint: str
+    share_url: str | None = None
+
+
+class ShareLinkCreated(ShareLinkView):
+    token: str
+    share_url: str
+
+
 class JobView(BaseModel):
     job_id: int
     url: str

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import html
 import importlib.metadata
 import json
 import logging
@@ -16,8 +17,9 @@ import secrets
 from collections.abc import Iterator
 from urllib.parse import quote
 
+import markdown as md
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Query, Request, Response
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
@@ -58,6 +60,9 @@ from scribe.api.schemas import (
     PromptWrite,
     RecentFailureSnapshot,
     RecentFailuresResponse,
+    ShareLinkCreate,
+    ShareLinkCreated,
+    ShareLinkView,
     SystemSnapshot,
     TranscriptBrief,
     TranscriptFull,
@@ -71,13 +76,24 @@ from scribe.config import (
     serialize_runtime_config_value,
     settings,
 )
-from scribe.db.models import AppConfig, ExtensionToken, Job, JobStageEvent, JobStatus, Owner, Transcript, User
+from scribe.db.models import (
+    AppConfig,
+    ExtensionToken,
+    Job,
+    JobStageEvent,
+    JobStatus,
+    Owner,
+    ShareTargetKind,
+    Transcript,
+    TranscriptShareLink,
+    User,
+)
 from scribe.db.query import escape_like
 from scribe.db.session import SessionLocal
 from scribe.obs import metrics
 from scribe.obs import ops as ops_helpers
 from scribe.obs.live_logs import job_log_buffer
-from scribe.pipeline import prompts, shortlinks, summarizer
+from scribe.pipeline import prompts, summarizer
 from scribe.pipeline.downloader import initial_video_key
 from scribe.source_links import source_link_for_url
 
@@ -167,6 +183,40 @@ def _full(t: Transcript) -> TranscriptFull:
         summary_md=t.summary_md,
         vast_cost=t.vast_cost,
     )
+
+
+def _share_token_hash(token: str) -> str:
+    return token_hash(token)
+
+
+def _share_url(token: str) -> str:
+    return f"{settings.public_base_url.rstrip('/')}/share/{token}"
+
+
+def _share_link_view(link: TranscriptShareLink, *, token: str | None = None) -> ShareLinkView:
+    base = dict(
+        id=link.id,
+        transcript_id=link.transcript_id,
+        target_kind=link.target_kind.value,
+        created_by=link.created_by,
+        created_at=link.created_at,
+        expires_at=link.expires_at,
+        revoked_at=link.revoked_at,
+        label=link.label,
+        recipient_note=link.recipient_note,
+        token_hint=link.token_hint,
+    )
+    if token is None:
+        return ShareLinkView(**base)
+    return ShareLinkCreated(**base, token=token, share_url=_share_url(token))
+
+
+def _share_created_by(actor: Actor) -> str:
+    if actor.subject:
+        return actor.subject
+    if actor.owner_id is not None:
+        return f"owner:{actor.owner_id}"
+    return actor.kind
 
 
 def _no_store(response: Response) -> None:
@@ -748,7 +798,7 @@ def get_transcript_detail(
 ):
     if _accepts_html(request):
         return RedirectResponse(url=f"/#/transcript/{transcript_id}", status_code=307)
-    return _full(_require_transcript_for_actor(transcript_id, session, actor))
+    return _full(_require_owned_transcript(transcript_id, session, actor))
 
 
 @router.delete("/admin/transcripts/{transcript_id}", status_code=204)
@@ -972,7 +1022,7 @@ def _require_transcript(transcript_id: int, session: Session) -> Transcript:
     return t
 
 
-def _require_transcript_for_actor(transcript_id: int, session: Session, actor: Actor) -> Transcript:
+def _require_owned_transcript(transcript_id: int, session: Session, actor: Actor) -> Transcript:
     t = _require_transcript(transcript_id, session)
     if actor.is_admin:
         return t
@@ -981,6 +1031,121 @@ def _require_transcript_for_actor(transcript_id: int, session: Session, actor: A
     if actor.subject is not None and t.owner_subject == actor.subject:
         return t
     raise HTTPException(status_code=404, detail=f"transcript {transcript_id} not found")
+
+
+def _parse_share_target_kind(value: str) -> ShareTargetKind:
+    try:
+        return ShareTargetKind(value)
+    except ValueError as exc:
+        allowed = ", ".join(kind.value for kind in ShareTargetKind)
+        raise HTTPException(status_code=422, detail=f"target_kind must be one of: {allowed}") from exc
+
+
+@router.get("/api/transcripts/{transcript_id}/share-links", response_model=list[ShareLinkView])
+def list_share_links(
+    transcript_id: int,
+    session: Session = Depends(get_session),
+    actor: Actor = Depends(require_actor),
+) -> list[ShareLinkView]:
+    _require_owned_transcript(transcript_id, session, actor)
+    stmt = (
+        select(TranscriptShareLink)
+        .where(TranscriptShareLink.transcript_id == transcript_id)
+        .order_by(TranscriptShareLink.created_at.desc(), TranscriptShareLink.id.desc())
+    )
+    return [_share_link_view(link) for link in session.scalars(stmt).all()]
+
+
+@router.post("/api/transcripts/{transcript_id}/share-links", response_model=ShareLinkCreated, status_code=201)
+def create_share_link(
+    transcript_id: int,
+    body: ShareLinkCreate,
+    request: Request,
+    session: Session = Depends(get_session),
+    actor: Actor = Depends(require_actor),
+) -> ShareLinkCreated:
+    transcript = _require_owned_transcript(transcript_id, session, actor)
+    target_kind = _parse_share_target_kind(body.target_kind)
+    if target_kind == ShareTargetKind.summary_markdown and transcript.summary_md is None:
+        raise HTTPException(status_code=409, detail=f"transcript {transcript_id} is partial (no summary yet)")
+    token = secrets.token_urlsafe(32)
+    link = TranscriptShareLink(
+        token_hash=_share_token_hash(token),
+        token_hint=token[-8:],
+        transcript_id=transcript_id,
+        target_kind=target_kind,
+        created_by=_share_created_by(actor),
+        expires_at=body.expires_at,
+        label=body.label,
+        recipient_note=body.recipient_note,
+    )
+    session.add(link)
+    session.commit()
+    session.refresh(link)
+    if settings.public_base_url.rstrip("/") == "http://localhost:8000":
+        return ShareLinkCreated(
+            **_share_link_view(link, token=token).model_dump(exclude={"share_url"}),
+            share_url=str(request.url_for("resolve_share_token", token=token)),
+        )
+    return _share_link_view(link, token=token)
+
+
+@router.post("/api/share-links/{share_link_id}/revoke", response_model=ShareLinkView)
+def revoke_share_link(
+    share_link_id: int,
+    session: Session = Depends(get_session),
+    actor: Actor = Depends(require_actor),
+) -> ShareLinkView:
+    link = session.get(TranscriptShareLink, share_link_id)
+    if link is None:
+        raise HTTPException(status_code=404, detail="share link not found")
+    _require_owned_transcript(link.transcript_id, session, actor)
+    if link.revoked_at is None:
+        link.revoked_at = dt.datetime.now(dt.UTC)
+        session.commit()
+        session.refresh(link)
+    return _share_link_view(link)
+
+
+def _valid_share_link(token: str, session: Session) -> TranscriptShareLink:
+    link = session.scalar(
+        select(TranscriptShareLink).where(TranscriptShareLink.token_hash == _share_token_hash(token))
+    )
+    if link is None:
+        raise HTTPException(status_code=404, detail="share link not found")
+    if link.revoked_at is not None:
+        raise HTTPException(status_code=410, detail="share link revoked")
+    now = dt.datetime.now(dt.UTC)
+    if link.expires_at is not None and link.expires_at <= now:
+        raise HTTPException(status_code=410, detail="share link expired")
+    return link
+
+
+@router.get("/share/{token}", name="resolve_share_token")
+def resolve_share_token(
+    token: str,
+    session: Session = Depends(get_session),
+) -> Response:
+    link = _valid_share_link(token, session)
+    transcript = link.transcript
+    if link.target_kind == ShareTargetKind.transcript_markdown:
+        return Response(content=transcript.transcript_md, media_type="text/markdown; charset=utf-8")
+    if link.target_kind == ShareTargetKind.summary_markdown:
+        if transcript.summary_md is None:
+            raise HTTPException(status_code=409, detail=f"transcript {transcript.id} is partial (no summary yet)")
+        return Response(content=transcript.summary_md, media_type="text/markdown; charset=utf-8")
+
+    summary = md.markdown(transcript.summary_md or "", extensions=["extra", "sane_lists", "nl2br"])
+    body = (
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        f"<title>{html.escape(transcript.title)} - scribe share</title>"
+        "</head><body>"
+        f"<main><h1>{html.escape(transcript.title)}</h1>"
+        f"<p><a href=\"https://youtu.be/{html.escape(transcript.video_id)}\">YouTube</a></p>"
+        f"<section>{summary}</section>"
+        "</main></body></html>"
+    )
+    return HTMLResponse(content=body)
 
 
 def _prompt_error(exc: prompts.PromptError) -> HTTPException:
@@ -1108,7 +1273,7 @@ def get_transcript_md(
     session: Session = Depends(get_session),
     actor: Actor = Depends(require_actor),
 ) -> Response:
-    t = _require_transcript_for_actor(transcript_id, session, actor)
+    t = _require_owned_transcript(transcript_id, session, actor)
     return Response(content=t.transcript_md, media_type="text/markdown; charset=utf-8")
 
 
@@ -1118,7 +1283,7 @@ def get_summary_md(
     session: Session = Depends(get_session),
     actor: Actor = Depends(require_actor),
 ) -> Response:
-    t = _require_transcript_for_actor(transcript_id, session, actor)
+    t = _require_owned_transcript(transcript_id, session, actor)
     if t.summary_md is None:
         raise HTTPException(
             status_code=409,
@@ -1225,13 +1390,6 @@ async def resummarize(
     t.summary_md = result.summary_md
     t.short_description = result.short_description
     t.tags = result.tags or None
-    base = settings.public_base_url.rstrip("/")
-    if not t.summary_shortlink:
-        t.summary_shortlink = shortlinks.make_shortlink(f"{base}/transcripts/{t.id}", verify=False)
-    if not t.transcript_shortlink:
-        t.transcript_shortlink = shortlinks.make_shortlink(
-            f"{base}/transcripts/{t.id}/transcript.md", verify=False
-        )
 
     if was_partial:
         # Promote the owning job from failed to done so dedup (POST /jobs) and

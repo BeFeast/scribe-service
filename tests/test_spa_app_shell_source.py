@@ -418,24 +418,26 @@ def test_spa_internal_navigation_uses_real_relative_anchors() -> None:
     assert "go.oklabs.uk" not in source + route
 
 
-def test_private_share_target_helper_uses_exact_relative_routes() -> None:
+def test_private_share_target_helper_uses_managed_target_kinds() -> None:
     source = read("shareTargets.ts")
 
-    assert 'href: `/#/transcript/${id}`' in source
-    assert 'href: `/transcripts/${id}/summary.md`' in source
-    assert 'href: `/transcripts/${id}/transcript.md`' in source
-    assert "new URL(relativePath, window.location.origin).toString()" in source
+    assert '{ kind: "page", label: "Page" }' in source
+    assert 'kind: "summary"' in source
+    assert 'kind: "transcript"' in source
+    assert "/transcripts/${id}" not in source
 
 
-def test_transcript_and_library_share_ui_use_relative_hrefs_and_copy_absolute_urls() -> None:
+def test_transcript_and_library_share_ui_use_managed_share_links() -> None:
     share = read("components/PrivateShareLinks.tsx")
     library = read("pages/Library.tsx")
     transcript = read("pages/Transcript.tsx")
     source = share + library + transcript
 
     assert "transcriptShareTargets(id)" in source
-    assert "href={target.href}" in source
-    assert "navigator.clipboard.writeText(absoluteSameOriginUrl(target.href))" in source
+    assert "`/api/transcripts/${id}/share-links`" in share
+    assert "`/api/share-links/${link.id}/revoke`" in share
+    assert "navigator.clipboard.writeText(created.share_url)" in share
+    assert "href={target.href}" not in source
     assert 'const pageCopyKinds = new Set<ShareTarget["kind"]>(["page"]);' in library
     assert "copyKinds={pageCopyKinds}" in library
     assert 'const partialShareTargetKinds = new Set<ShareTarget["kind"]>([' in library

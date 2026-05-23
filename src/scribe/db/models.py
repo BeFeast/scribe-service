@@ -22,6 +22,12 @@ class JobStatus(StrEnum):
     failed = "failed"
 
 
+class ShareTargetKind(StrEnum):
+    page = "page"
+    summary_markdown = "summary_markdown"
+    transcript_markdown = "transcript_markdown"
+
+
 class AppConfig(Base):
     """Runtime config overlay. Values are stored as text and parsed by Settings."""
 
@@ -191,6 +197,36 @@ class Transcript(Base):
 
     job: Mapped[Job] = relationship(back_populates="transcript")
     owner: Mapped[Owner | None] = relationship(back_populates="transcripts")
+    share_links: Mapped[list[TranscriptShareLink]] = relationship(
+        back_populates="transcript", cascade="all, delete-orphan"
+    )
+
+
+class TranscriptShareLink(Base):
+    """Managed, revocable public access token for transcript-derived content."""
+
+    __tablename__ = "transcript_share_links"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True, index=True)
+    token_hint: Mapped[str] = mapped_column(Text, nullable=False)
+    transcript_id: Mapped[int] = mapped_column(
+        ForeignKey("transcripts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    target_kind: Mapped[ShareTargetKind] = mapped_column(
+        Enum(ShareTargetKind, name="share_target_kind"),
+        nullable=False,
+    )
+    created_by: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recipient_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    transcript: Mapped[Transcript] = relationship(back_populates="share_links")
 
 
 class JobStageEvent(Base):

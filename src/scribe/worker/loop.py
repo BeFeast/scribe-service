@@ -3,7 +3,7 @@
 Per job:
   download (residential IP) -> ffmpeg 16k mono -> Vast whisper ->
   PERSIST transcript (summary_md=NULL) ->
-  codex summary -> UPDATE transcript -> shortlinks -> mark Job done.
+  codex summary -> UPDATE transcript -> mark Job done.
 
 The transcript row is committed **between whisper and summary** so a
 summarizer failure (token revoked, prompt too long, …) does not discard the
@@ -35,7 +35,7 @@ from scribe.config import settings
 from scribe.db.models import Job, JobStatus, Transcript
 from scribe.db.session import SessionLocal
 from scribe.obs import metrics
-from scribe.pipeline import downloader, ffmpeg, shortlinks, summarizer, whisper_client
+from scribe.pipeline import downloader, ffmpeg, summarizer, whisper_client
 
 log = logging.getLogger("scribe.worker")
 
@@ -229,31 +229,15 @@ def _find_done_transcript(
     return session.scalar(stmt.order_by(Transcript.id.desc()))
 
 
-def _mint_shortlinks(transcript: Transcript) -> None:
-    """Idempotently mint scribe-web-UI shortlinks. Skips fields that are
-    already set so re-runs (resume path) don't churn Chhoto."""
-    base = settings.public_base_url.rstrip("/")
-    if not transcript.summary_shortlink:
-        transcript.summary_shortlink = shortlinks.make_shortlink(
-            f"{base}/transcripts/{transcript.id}", verify=False
-        )
-    if not transcript.transcript_shortlink:
-        transcript.transcript_shortlink = shortlinks.make_shortlink(
-            f"{base}/transcripts/{transcript.id}/transcript.md", verify=False
-        )
-
-
 def _summarize_and_finalize(session, job: Job, transcript: Transcript, title: str, *, promoted: bool) -> None:
     """Run summarizer against an already-persisted transcript_md, update the
-    row with summary + tags + shortlinks, mark the job done."""
+    row with summary + tags, mark the job done."""
     _set_job_status(session, job, JobStatus.summarizing)
     with _time_stage("summary"):
         summary = summarizer.summarize(transcript.transcript_md, title=title)
     transcript.summary_md = summary.summary_md
     transcript.short_description = summary.short_description
     transcript.tags = summary.tags or None
-    session.flush()
-    _mint_shortlinks(transcript)
     _set_job_status(session, job, JobStatus.done)
     metrics.transcripts_total.labels(kind="promoted" if promoted else "full").inc()
     metrics.last_success_timestamp.set(time.time())

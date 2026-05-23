@@ -136,6 +136,10 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
         assert "owners" in tables, f"upgrade head did not create owners (got {tables})"
         assert "users" in tables, f"upgrade head did not create users (got {tables})"
         assert "extension_tokens" in tables, f"upgrade head did not create extension_tokens (got {tables})"
+        assert "transcript_share_links" in tables, (
+            "upgrade head did not create transcript_share_links — "
+            "revision f2a3b4c5d602 likely silent-noop'd"
+        )
 
         app_config_cols = _column_names(eng, "app_config")
         assert {"key", "value", "updated_at"}.issubset(app_config_cols), (
@@ -208,6 +212,22 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
         assert {"job_id", "stage", "started_at", "finished_at"} <= stage_cols, (
             "job_stage_events missing expected columns — "
             "revision e4f5a6b7c801 likely silent-noop'd"
+        )
+
+        share_cols = _column_names(eng, "transcript_share_links")
+        assert {
+            "token_hash",
+            "token_hint",
+            "transcript_id",
+            "target_kind",
+            "created_by",
+            "expires_at",
+            "revoked_at",
+            "label",
+            "recipient_note",
+        } <= share_cols, (
+            "transcript_share_links missing expected columns — "
+            "revision f2a3b4c5d602 likely silent-noop'd"
         )
 
         command.downgrade(cfg, "base")
