@@ -744,10 +744,11 @@ def get_transcript_detail(
     transcript_id: int,
     request: Request,
     session: Session = Depends(get_session),
+    actor: Actor = Depends(require_actor),
 ):
     if _accepts_html(request):
         return RedirectResponse(url=f"/#/transcript/{transcript_id}", status_code=307)
-    return _full(_require_transcript(transcript_id, session))
+    return _full(_require_transcript_for_actor(transcript_id, session, actor))
 
 
 @router.delete("/admin/transcripts/{transcript_id}", status_code=204)
@@ -971,6 +972,17 @@ def _require_transcript(transcript_id: int, session: Session) -> Transcript:
     return t
 
 
+def _require_transcript_for_actor(transcript_id: int, session: Session, actor: Actor) -> Transcript:
+    t = _require_transcript(transcript_id, session)
+    if actor.is_admin:
+        return t
+    if actor.owner_id is not None and t.owner_id == actor.owner_id:
+        return t
+    if actor.subject is not None and t.owner_subject == actor.subject:
+        return t
+    raise HTTPException(status_code=404, detail=f"transcript {transcript_id} not found")
+
+
 def _prompt_error(exc: prompts.PromptError) -> HTTPException:
     if isinstance(exc, prompts.PromptNotFoundError):
         return HTTPException(status_code=404, detail=str(exc))
@@ -1091,14 +1103,22 @@ def write_prompt_version(
 
 
 @router.get("/transcripts/{transcript_id}/transcript.md")
-def get_transcript_md(transcript_id: int, session: Session = Depends(get_session)) -> Response:
-    t = _require_transcript(transcript_id, session)
+def get_transcript_md(
+    transcript_id: int,
+    session: Session = Depends(get_session),
+    actor: Actor = Depends(require_actor),
+) -> Response:
+    t = _require_transcript_for_actor(transcript_id, session, actor)
     return Response(content=t.transcript_md, media_type="text/markdown; charset=utf-8")
 
 
 @router.get("/transcripts/{transcript_id}/summary.md")
-def get_summary_md(transcript_id: int, session: Session = Depends(get_session)) -> Response:
-    t = _require_transcript(transcript_id, session)
+def get_summary_md(
+    transcript_id: int,
+    session: Session = Depends(get_session),
+    actor: Actor = Depends(require_actor),
+) -> Response:
+    t = _require_transcript_for_actor(transcript_id, session, actor)
     if t.summary_md is None:
         raise HTTPException(
             status_code=409,

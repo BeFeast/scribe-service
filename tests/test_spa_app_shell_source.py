@@ -63,8 +63,7 @@ def test_confirm_dialog_is_in_app_not_browser_prompt() -> None:
 def test_transcript_page_fetches_json_and_renders_markdown_locally() -> None:
     source = read("pages/Transcript.tsx")
 
-    assert 'fetch(`/transcripts/${id}`' in source
-    assert "auth.protectedFetch" in source
+    assert 'auth.protectedFetch(`/transcripts/${id}`' in source
     assert "`/transcripts/${id}/resummarize`" in source
     assert "`/admin/transcripts/${record.id}`" in source
     assert 'headers: { Accept: "application/json" }' in source
