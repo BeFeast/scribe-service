@@ -15,7 +15,8 @@ import logging
 import re
 import secrets
 from collections.abc import Iterator
-from urllib.parse import quote
+from html.parser import HTMLParser
+from urllib.parse import quote, urlparse
 
 import markdown as md
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Query, Request, Response
@@ -96,6 +97,78 @@ from scribe.obs.live_logs import job_log_buffer
 from scribe.pipeline import prompts, summarizer
 from scribe.pipeline.downloader import initial_video_key
 from scribe.source_links import source_link_for_url
+
+_SHARE_HTML_TAGS = {
+    "a",
+    "blockquote",
+    "br",
+    "code",
+    "em",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "hr",
+    "li",
+    "ol",
+    "p",
+    "pre",
+    "strong",
+    "table",
+    "tbody",
+    "td",
+    "th",
+    "thead",
+    "tr",
+    "ul",
+}
+_SHARE_HTML_ATTRS = {"a": {"href", "title"}}
+_SHARE_URL_SCHEMES = {"", "http", "https", "mailto"}
+
+
+class _ShareHtmlSanitizer(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self._append_start_tag(tag, attrs)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag not in _SHARE_HTML_TAGS:
+            return
+        if tag in {"br", "hr"}:
+            self._append_start_tag(tag, attrs)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in _SHARE_HTML_TAGS and tag not in {"br", "hr"}:
+            self.parts.append(f"</{tag}>")
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(html.escape(data))
+
+    def _append_start_tag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag not in _SHARE_HTML_TAGS:
+            return
+        clean_attrs = []
+        allowed_attrs = _SHARE_HTML_ATTRS.get(tag, set())
+        for name, value in attrs:
+            if name not in allowed_attrs or value is None:
+                continue
+            if name == "href" and urlparse(value).scheme.lower() not in _SHARE_URL_SCHEMES:
+                continue
+            clean_attrs.append(f' {name}="{html.escape(value, quote=True)}"')
+        self.parts.append(f"<{tag}{''.join(clean_attrs)}>")
+
+
+def _sanitize_share_html(value: str) -> str:
+    sanitizer = _ShareHtmlSanitizer()
+    sanitizer.feed(value)
+    sanitizer.close()
+    return "".join(sanitizer.parts)
+
 
 router = APIRouter()
 log = logging.getLogger("scribe.api")
@@ -1134,8 +1207,10 @@ def resolve_share_token(
         if transcript.summary_md is None:
             raise HTTPException(status_code=409, detail=f"transcript {transcript.id} is partial (no summary yet)")
         return Response(content=transcript.summary_md, media_type="text/markdown; charset=utf-8")
+    if link.target_kind != ShareTargetKind.page:
+        raise HTTPException(status_code=500, detail=f"unhandled share target kind: {link.target_kind}")
 
-    summary = md.markdown(transcript.summary_md or "", extensions=["extra", "sane_lists", "nl2br"])
+    summary = _sanitize_share_html(md.markdown(transcript.summary_md or "", extensions=["extra", "sane_lists", "nl2br"]))
     body = (
         "<!doctype html><html><head><meta charset=\"utf-8\">"
         f"<title>{html.escape(transcript.title)} - scribe share</title>"
@@ -1145,7 +1220,10 @@ def resolve_share_token(
         f"<section>{summary}</section>"
         "</main></body></html>"
     )
-    return HTMLResponse(content=body)
+    return HTMLResponse(
+        content=body,
+        headers={"Content-Security-Policy": "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"},
+    )
 
 
 def _prompt_error(exc: prompts.PromptError) -> HTTPException:

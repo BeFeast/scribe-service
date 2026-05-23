@@ -1,10 +1,7 @@
 import React from "react";
 
-import {
-	type ShareTarget,
-	transcriptShareTargets,
-} from "../shareTargets";
 import { useAuth } from "../hooks/useAuth";
+import { type ShareTarget, transcriptShareTargets } from "../shareTargets";
 
 type CopyState = {
 	key: string;
@@ -94,9 +91,9 @@ export function PrivateShareLinks({
 			const created = (await response.json()) as ManagedShareLink & {
 				share_url: string;
 			};
+			await loadLinks();
 			await navigator.clipboard.writeText(created.share_url);
 			setCopyState({ key: target.kind, status: "copied" });
-			await loadLinks();
 		} catch {
 			setCopyState({ key: target.kind, status: "error" });
 		} finally {
@@ -115,6 +112,8 @@ export function PrivateShareLinks({
 				throw new Error(`HTTP ${response.status}`);
 			}
 			await loadLinks();
+		} catch {
+			setCopyState({ key: `revoke:${link.id}`, status: "error" });
 		} finally {
 			setBusyKind(null);
 		}
@@ -164,6 +163,10 @@ export function PrivateShareLinks({
 						>
 							{busyKind === `revoke:${link.id}` ? "Revoking" : "Revoke"}
 						</button>
+						{copyState?.key === `revoke:${link.id}` &&
+						copyState.status === "error" ? (
+							<span className="copy-state err">Revoke failed</span>
+						) : null}
 					</div>
 				))}
 		</div>

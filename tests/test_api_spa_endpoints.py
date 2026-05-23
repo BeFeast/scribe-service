@@ -765,6 +765,40 @@ def test_share_token_serves_summary_without_direct_auth(client, db_session, monk
     assert shared.text == "shared summary"
 
 
+def test_share_page_sanitizes_rendered_summary_html(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "auth_test_mode", True)
+    _seed_user(db_session, subject="user_a")
+    _, transcript = _seed_transcript(
+        db_session,
+        video_id="sharexss111",
+        title="Shared <Title>",
+        summary_md=(
+            "Safe **summary**\n\n"
+            "<script>alert('xss')</script>\n\n"
+            "<img src=x onerror=alert(1)>\n\n"
+            "[bad](javascript:alert(1))"
+        ),
+        owner_subject="user_a",
+        owner_email="user_a@example.test",
+    )
+    created = client.post(
+        f"/api/transcripts/{transcript.id}/share-links",
+        headers=_auth_headers("user_a"),
+        json={"target_kind": "page"},
+    ).json()
+
+    shared = client.get(f"/share/{created['token']}")
+
+    assert shared.status_code == 200
+    assert shared.headers["content-security-policy"].startswith("default-src 'none'")
+    assert "<strong>summary</strong>" in shared.text
+    assert "<script" not in shared.text
+    assert "<img" not in shared.text
+    assert "onerror" not in shared.text
+    assert "javascript:" not in shared.text
+    assert "&lt;Title&gt;" in shared.text
+
+
 def test_revoked_share_token_returns_410_without_content(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "auth_test_mode", True)
     _seed_user(db_session, subject="user_a")
