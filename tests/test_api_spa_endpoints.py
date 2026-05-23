@@ -853,6 +853,31 @@ def test_expired_share_token_returns_410_without_content(client, db_session, mon
     assert "expired summary" not in denied.text
 
 
+def test_share_link_rejects_naive_expires_at(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "auth_test_mode", True)
+    _seed_user(db_session, subject="user_a")
+    _, transcript = _seed_transcript(
+        db_session,
+        video_id="sharenaive",
+        title="Naive Expiry",
+        summary_md="summary",
+        owner_subject="user_a",
+        owner_email="user_a@example.test",
+    )
+
+    created = client.post(
+        f"/api/transcripts/{transcript.id}/share-links",
+        headers=_auth_headers("user_a"),
+        json={
+            "target_kind": "summary_markdown",
+            "expires_at": "2026-06-01T00:00:00",
+        },
+    )
+
+    assert created.status_code == 422
+    assert db_session.scalars(select(TranscriptShareLink)).all() == []
+
+
 def test_share_link_owner_isolation(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "auth_test_mode", True)
     _seed_user(db_session, subject="user_a")

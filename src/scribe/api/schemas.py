@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from pydantic import AnyHttpUrl, BaseModel
+from pydantic import AnyHttpUrl, AwareDatetime, BaseModel
 
 
 class JobCreate(BaseModel):
@@ -85,7 +85,7 @@ class JobStageView(BaseModel):
 
 class ShareLinkCreate(BaseModel):
     target_kind: str = "page"
-    expires_at: dt.datetime | None = None
+    expires_at: AwareDatetime | None = None
     label: str | None = None
     recipient_note: str | None = None
 
