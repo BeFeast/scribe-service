@@ -81,12 +81,14 @@ export function PrivateShareLinks({
 	targetKinds,
 }: PrivateShareLinksProps) {
 	const auth = useAuth();
+	const panelRef = React.useRef<HTMLDetailsElement>(null);
 	const [copyState, setCopyState] = React.useState<CopyState | null>(null);
 	const [links, setLinks] = React.useState<ManagedShareLink[]>([]);
 	const [busyKind, setBusyKind] = React.useState<string | null>(null);
 	const targets = transcriptShareTargets(id).filter(
 		(target) => targetKinds === undefined || targetKinds.has(target.kind),
 	);
+	const activeLinks = links.filter((link) => link.revoked_at == null);
 
 	const loadLinks = React.useCallback(async () => {
 		const response = await auth.protectedFetch(
@@ -110,6 +112,18 @@ export function PrivateShareLinks({
 		return () => window.clearTimeout(timeout);
 	}, [copyState]);
 
+	React.useEffect(() => {
+		function closeOnOutsideClick(event: MouseEvent) {
+			const panel = panelRef.current;
+			if (panel !== null && !panel.contains(event.target as Node)) {
+				panel.removeAttribute("open");
+			}
+		}
+
+		document.addEventListener("click", closeOnOutsideClick);
+		return () => document.removeEventListener("click", closeOnOutsideClick);
+	}, []);
+
 	async function createAndCopy(target: ShareTarget) {
 		setBusyKind(target.kind);
 		try {
@@ -130,7 +144,6 @@ export function PrivateShareLinks({
 			const created = (await response.json()) as ManagedShareLink & {
 				share_url: string;
 			};
-			await loadLinks();
 			const copied = await copyTextToClipboard(created.share_url);
 			if (copied) {
 				setCopyState({
@@ -145,6 +158,7 @@ export function PrivateShareLinks({
 					status: "error",
 				});
 			}
+			await loadLinks();
 		} catch {
 			setCopyState({
 				key: target.kind,
@@ -179,7 +193,7 @@ export function PrivateShareLinks({
 	}
 
 	return (
-		<details className="private-share">
+		<details className="private-share" ref={panelRef}>
 			<summary className="btn ghost">Share</summary>
 			<div className="private-share-panel">
 				<div className="share-menu-section">
@@ -216,33 +230,29 @@ export function PrivateShareLinks({
 				</div>
 				<div className="share-menu-section">
 					<span className="share-menu-heading">Active links</span>
-					{links.filter((link) => link.revoked_at == null).length === 0 ? (
+					{activeLinks.length === 0 ? (
 						<span className="copy-state">None yet</span>
 					) : null}
-					{links
-						.filter((link) => link.revoked_at == null)
-						.map((link) => (
-							<div className="share-menu-row active-link" key={link.id}>
-								<span className="copy-state">
-									{link.label ?? labelForTargetKind(link.target_kind)} ...
-									{link.token_hint}
-								</span>
-								<button
-									type="button"
-									className="btn ghost"
-									onClick={() => void revoke(link)}
-									disabled={busyKind !== null}
-								>
-									{busyKind === `revoke:${link.id}` ? "Revoking" : "Revoke"}
-								</button>
-								{copyState?.key === `revoke:${link.id}` &&
-								copyState.status === "error" ? (
-									<output className="copy-state err">
-										{copyState.message}
-									</output>
-								) : null}
-							</div>
-						))}
+					{activeLinks.map((link) => (
+						<div className="share-menu-row active-link" key={link.id}>
+							<span className="copy-state">
+								{link.label ?? labelForTargetKind(link.target_kind)} ...
+								{link.token_hint}
+							</span>
+							<button
+								type="button"
+								className="btn ghost"
+								onClick={() => void revoke(link)}
+								disabled={busyKind !== null}
+							>
+								{busyKind === `revoke:${link.id}` ? "Revoking" : "Revoke"}
+							</button>
+							{copyState?.key === `revoke:${link.id}` &&
+							copyState.status === "error" ? (
+								<output className="copy-state err">{copyState.message}</output>
+							) : null}
+						</div>
+					))}
 				</div>
 			</div>
 		</details>
