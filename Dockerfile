@@ -55,13 +55,15 @@ COPY src ./src
 COPY --from=spa-builder /app/src/scribe/web/static/spa ./src/scribe/web/static/spa
 COPY migrations ./migrations
 COPY alembic.ini ./alembic.ini
+COPY docker/entrypoint.sh ./docker/entrypoint.sh
 RUN uv sync --frozen 2>/dev/null || uv sync
 
 # scribe expects SCRIBE_TEMP_DIR (default /data/tmp) to exist. The compose
 # file mounts a volume here so big audio files don't fill the container fs.
-RUN mkdir -p /data/tmp
+RUN mkdir -p /data/tmp && chmod +x /app/docker/entrypoint.sh
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -fsS http://localhost:8000/healthz || exit 1
+ENTRYPOINT ["/app/docker/entrypoint.sh"]
 CMD ["uv", "run", "uvicorn", "scribe.main:app", "--host", "0.0.0.0", "--port", "8000"]
