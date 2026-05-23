@@ -1939,6 +1939,12 @@ a {
 	justify-self: start;
 }
 
+.auth-choice-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+}
+
 .empty-note {
 	margin: 0;
 	color: var(--muted);

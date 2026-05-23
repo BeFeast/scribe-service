@@ -21,12 +21,17 @@ def read(relative: str) -> str:
 def test_use_auth_exposes_clerk_sign_in_with_loop_protection() -> None:
     source = read("hooks/useAuth.tsx")
 
-    # Clerk is the production sign-in path; the helper must call into the
-    # browser SDK rather than a generic redirect.
-    assert "window.Clerk?.openSignIn()" in source
+    # Clerk is the production sign-in path; issue #131 keeps it redirect-only
+    # so extensions cannot close competing popups/modals.
+    assert "redirectToSignIn" in source
+    assert "redirectToSignUp" in source
+    assert "openSignIn" not in source
+    assert "openSignUp" not in source
     # Once-per-session guard so a rejected/failed sign-in cannot spam modals.
     assert "sessionStorage" in source
     assert "maybeAutoSignIn" in source
+    assert "authRedirectInFlight" in source
+    assert "Authentication resources were blocked" in source
 
 
 def test_library_handles_auth_required_without_raw_401_copy() -> None:
@@ -41,11 +46,12 @@ def test_library_handles_auth_required_without_raw_401_copy() -> None:
     assert "Sign in required" in source
     assert "Service temporarily unavailable" in source
 
-    # 401/403 routes through the typed auth state and triggers Clerk.
+    # 401/403 routes through the typed auth state and shows a stable Clerk CTA.
     assert "isAuthStatus" in source
     assert 'kind: "auth"' in source
     assert "auth.maybeAutoSignIn()" in source
     assert "auth.signIn" in source
+    assert "auth.signUp" in source
 
     # Submit URL / search must not look usable in the signed-out protected
     # state — the inputs are disabled until the user signs in.
@@ -86,6 +92,7 @@ def test_top_bar_signin_button_remains_wired_for_clerk() -> None:
     # The Read-only banner already shipped via #106; #129 keeps the Sign in
     # button as the explicit user-action entry point into Clerk.
     assert "auth.signIn" in source
+    assert "auth.authRedirectInFlight" in source
     assert "Sign in" in source
 
 
