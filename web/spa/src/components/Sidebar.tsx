@@ -1,7 +1,12 @@
 import React from "react";
 
 import { useAuth } from "../hooks/useAuth";
-import type { Route, RoutePage } from "../hooks/useRoute";
+import {
+	type Route,
+	type RoutePage,
+	handleRouteAnchorClick,
+	routeToHref,
+} from "../hooks/useRoute";
 import { isAuthStatus } from "../lib/auth";
 
 type SidebarProps = {
@@ -123,18 +128,23 @@ export function Sidebar({ route, navigate }: SidebarProps) {
 			<section className="sidebar-section">
 				<h2>Browse</h2>
 				<div className="nav-list">
-					{navItems.map((item) => (
-						<button
-							type="button"
-							key={item.page}
-							className={
-								route.page === item.page ? "nav-item active" : "nav-item"
-							}
-							onClick={() => navigate({ page: item.page, params: {} })}
-						>
-							{item.label}
-						</button>
-					))}
+					{navItems.map((item) => {
+						const nextRoute: Route = { page: item.page, params: {} };
+						return (
+							<a
+								key={item.page}
+								href={routeToHref(nextRoute)}
+								className={
+									route.page === item.page ? "nav-item active" : "nav-item"
+								}
+								onClick={(event) =>
+									handleRouteAnchorClick(event, nextRoute, navigate)
+								}
+							>
+								{item.label}
+							</a>
+						);
+					})}
 				</div>
 			</section>
 			<section className="sidebar-section">
@@ -150,23 +160,29 @@ export function Sidebar({ route, navigate }: SidebarProps) {
 				>
 					{tags.length > 0 ? (
 						<div className="tag-list">
-							{tags.map((item) => (
-								<button
-									type="button"
-									key={item.tag}
-									className={
-										route.params.tag === item.tag
-											? "tag-pill active"
-											: "tag-pill"
-									}
-									onClick={() =>
-										navigate({ page: "library", params: { tag: item.tag } })
-									}
-								>
-									<span>{item.tag}</span>
-									<span className="tnum">{item.count}</span>
-								</button>
-							))}
+							{tags.map((item) => {
+								const nextRoute: Route = {
+									page: "library",
+									params: { tag: item.tag },
+								};
+								return (
+									<a
+										key={item.tag}
+										href={routeToHref(nextRoute)}
+										className={
+											route.params.tag === item.tag
+												? "tag-pill active"
+												: "tag-pill"
+										}
+										onClick={(event) =>
+											handleRouteAnchorClick(event, nextRoute, navigate)
+										}
+									>
+										<span>{item.tag}</span>
+										<span className="tnum">{item.count}</span>
+									</a>
+								);
+							})}
 						</div>
 					) : (
 						<p className="empty-note">No tags yet</p>

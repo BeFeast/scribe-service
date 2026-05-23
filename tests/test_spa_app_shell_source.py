@@ -362,3 +362,35 @@ def test_route_hook_uses_typed_hash_routes() -> None:
     assert "type RouteAction" in source
     assert 'case "jobs":' in source
     assert 'parts[0] = "jobs";' in source
+    assert "export function routeToHref" in source
+    assert "export function handleRouteAnchorClick" in source
+
+
+def test_spa_internal_navigation_uses_real_relative_anchors() -> None:
+    sidebar = read("components/Sidebar.tsx")
+    tweaks = read("components/TweaksPanel.tsx")
+    library = read("pages/Library.tsx")
+    transcript = read("pages/Transcript.tsx")
+    job_card = read("components/JobCard.tsx")
+    failure_row = read("components/FailureRow.tsx")
+    job_detail = read("pages/JobDetail.tsx")
+    route = read("hooks/useRoute.ts")
+    source = sidebar + tweaks + library + transcript + job_card + failure_row + job_detail
+
+    assert 'href={routeToHref(nextRoute)}' in sidebar
+    assert 'href={routeToHref(item.route)}' in tweaks
+    assert 'className="job-card-open"' in job_card
+    assert 'className="failure-action"' in failure_row
+    assert "row.summary_shortlink" not in library
+    assert "row.transcript_shortlink" not in library
+    assert "record.summary_shortlink" not in transcript
+    assert 'href={`/transcripts/${row.id}/summary.md`}' in library
+    assert 'href={`/transcripts/${row.id}/transcript.md`}' in library
+    assert 'href={`/transcripts/${record.id}/summary.md`}' in transcript
+    assert 'href={`/transcripts/${record.id}/transcript.md`}' in transcript
+    assert "handleRouteAnchorClick" in source
+    assert "metaKey" in route
+    assert "ctrlKey" in route
+    assert "event.button !== 0" in route
+    assert 'return `#/${parts.join("/")}${query ? `?${query}` : ""}`;' in route
+    assert "go.oklabs.uk" not in source + route

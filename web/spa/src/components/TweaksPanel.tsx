@@ -1,6 +1,10 @@
 import type React from "react";
 
-import type { Route } from "../hooks/useRoute";
+import {
+	type Route,
+	handleRouteAnchorClick,
+	routeToHref,
+} from "../hooks/useRoute";
 import type {
 	LibraryLayout,
 	ScribeDensity,
@@ -22,6 +26,11 @@ const variantOptions: ScribeVariant[] = ["paper", "terminal", "console"];
 const themeOptions: ScribeTheme[] = ["light", "dark"];
 const densityOptions: ScribeDensity[] = ["compact", "cozy", "comfy"];
 const layoutOptions: LibraryLayout[] = ["feed", "table", "cards"];
+const jumpRoutes: Array<{ label: string; route: Route }> = [
+	{ label: "Library", route: { page: "library", params: {} } },
+	{ label: "Queue", route: { page: "queue", params: {} } },
+	{ label: "Ops", route: { page: "ops", params: {} } },
+];
 
 export function TweaksPanel({
 	tweaks,
@@ -86,27 +95,18 @@ export function TweaksPanel({
 				))}
 			</TweakRow>
 			<div className="jump-row">
-				<button
-					type="button"
-					className="jump-button"
-					onClick={() => navigate({ page: "library", params: {} })}
-				>
-					Library
-				</button>
-				<button
-					type="button"
-					className="jump-button"
-					onClick={() => navigate({ page: "queue", params: {} })}
-				>
-					Queue
-				</button>
-				<button
-					type="button"
-					className="jump-button"
-					onClick={() => navigate({ page: "ops", params: {} })}
-				>
-					Ops
-				</button>
+				{jumpRoutes.map((item) => (
+					<a
+						key={item.label}
+						className="jump-button"
+						href={routeToHref(item.route)}
+						onClick={(event) =>
+							handleRouteAnchorClick(event, item.route, navigate)
+						}
+					>
+						{item.label}
+					</a>
+				))}
 			</div>
 		</aside>
 	);

@@ -99,10 +99,6 @@ export function Queue({ navigate }: QueueProps) {
 
 	usePoll(load, 2000);
 
-	const openJob = React.useCallback(
-		(id: number) => navigate({ page: "job", params: { id } }),
-		[navigate],
-	);
 	const clearFailure = React.useCallback(
 		async (id: number) => {
 			if (clearingId !== null) {
@@ -200,7 +196,7 @@ export function Queue({ navigate }: QueueProps) {
 							<JobCard
 								key={job.id}
 								job={job}
-								onOpen={openJob}
+								navigate={navigate}
 								onCancel={requestCancel}
 								cancelBusy={cancelBusyId === job.id}
 								cancelDisabled={
@@ -222,7 +218,7 @@ export function Queue({ navigate }: QueueProps) {
 							<FailureRow
 								key={job.id}
 								job={job}
-								onOpen={openJob}
+								navigate={navigate}
 								onDismiss={clearFailure}
 								busy={clearingId === job.id}
 							/>

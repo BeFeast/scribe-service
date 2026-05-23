@@ -1896,6 +1896,7 @@ a {
 	background: var(--bg-card);
 	color: var(--fg-soft);
 	text-align: left;
+	text-decoration: none;
 }
 
 .nav-item {
@@ -2344,6 +2345,7 @@ a {
 	border-radius: var(--radius);
 	background: var(--bg);
 	color: var(--fg-soft);
+	text-decoration: none;
 }
 
 .seg.active {
