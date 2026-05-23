@@ -180,6 +180,9 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 	}
 
 	const linkedTranscript = job?.transcript ?? null;
+	const transcriptRoute: Route | null = linkedTranscript
+		? { page: "transcript", params: { id: linkedTranscript.id } }
+		: null;
 
 	return (
 		<section className="pane job-detail-page">
@@ -187,21 +190,11 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 				<div>
 					<p className="eyebrow">Job {id}</p>
 					<h1 className="pane-h1">
-						{linkedTranscript ? (
+						{transcriptRoute && linkedTranscript ? (
 							<a
-								href={routeToHref({
-									page: "transcript",
-									params: { id: linkedTranscript.id },
-								})}
+								href={routeToHref(transcriptRoute)}
 								onClick={(event) =>
-									handleRouteAnchorClick(
-										event,
-										{
-											page: "transcript",
-											params: { id: linkedTranscript.id },
-										},
-										navigate,
-									)
+									handleRouteAnchorClick(event, transcriptRoute, navigate)
 								}
 							>
 								{linkedTranscript.title}

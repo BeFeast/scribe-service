@@ -384,6 +384,7 @@ def test_spa_internal_navigation_uses_real_relative_anchors() -> None:
     assert "row.summary_shortlink" not in library
     assert "row.transcript_shortlink" not in library
     assert "record.summary_shortlink" not in transcript
+    assert "{!row.is_partial ? (" in library
     assert 'href={`/transcripts/${row.id}/summary.md`}' in library
     assert 'href={`/transcripts/${row.id}/transcript.md`}' in library
     assert 'href={`/transcripts/${record.id}/summary.md`}' in transcript

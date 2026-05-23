@@ -832,7 +832,9 @@ function RowLinks({
 			{row.source_url !== null ? (
 				<a href={row.source_url}>{row.source_label ?? "Source"}</a>
 			) : null}
-			<a href={`/transcripts/${row.id}/summary.md`}>Summary</a>
+			{!row.is_partial ? (
+				<a href={`/transcripts/${row.id}/summary.md`}>Summary</a>
+			) : null}
 			<a href={`/transcripts/${row.id}/transcript.md`}>Transcript</a>
 			<button
 				type="button"
