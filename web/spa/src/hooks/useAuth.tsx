@@ -50,6 +50,7 @@ type AuthContextValue = {
 const AUTO_SIGN_IN_KEY = "scribe.signInAttempted";
 const AUTH_REDIRECT_INTENT_KEY = "scribe.auth.redirect-intent";
 const AUTH_REDIRECT_INTENT_TTL_MS = 90_000;
+const REDIRECT_NAVIGATION_GRACE_MS = 1_200;
 
 const AuthContext = React.createContext<AuthContextValue | null>(null);
 
@@ -60,6 +61,27 @@ type ClerkRedirectOptions = {
 	signUpForceRedirectUrl?: string;
 	signUpFallbackRedirectUrl?: string;
 };
+
+export function clerkRedirectOptions(
+	mode: "sign-in" | "sign-up",
+	redirectUrl: string,
+): ClerkRedirectOptions {
+	return mode === "sign-in"
+		? {
+				redirectUrl,
+				signInForceRedirectUrl: redirectUrl,
+				signInFallbackRedirectUrl: redirectUrl,
+				signUpForceRedirectUrl: redirectUrl,
+				signUpFallbackRedirectUrl: redirectUrl,
+			}
+		: {
+				redirectUrl,
+				signInForceRedirectUrl: redirectUrl,
+				signInFallbackRedirectUrl: redirectUrl,
+				signUpForceRedirectUrl: redirectUrl,
+				signUpFallbackRedirectUrl: redirectUrl,
+			};
+}
 
 function clerkFrontendHost(config: AuthConfig): string {
 	if (config.clerk_frontend_api.trim()) {
@@ -133,24 +155,53 @@ function writeRedirectIntent(mode: "sign-in" | "sign-up"): void {
 	}
 }
 
-function hasFreshRedirectIntent(): boolean {
+export function parseFreshRedirectIntent(
+	raw: string | null,
+	now: number,
+): { startedAt: number } | null {
 	try {
-		const raw = window.sessionStorage.getItem(AUTH_REDIRECT_INTENT_KEY);
 		if (raw === null) {
-			return false;
+			return null;
 		}
 		const parsed = JSON.parse(raw) as { startedAt?: number };
 		if (
 			typeof parsed.startedAt === "number" &&
-			Date.now() - parsed.startedAt <= AUTH_REDIRECT_INTENT_TTL_MS
+			now - parsed.startedAt <= AUTH_REDIRECT_INTENT_TTL_MS
 		) {
-			return true;
+			return { startedAt: parsed.startedAt };
 		}
-		window.sessionStorage.removeItem(AUTH_REDIRECT_INTENT_KEY);
-		return false;
+		return null;
 	} catch {
-		return false;
+		return null;
 	}
+}
+
+function readRedirectIntent(): { startedAt: number } | null {
+	try {
+		const raw = window.sessionStorage.getItem(AUTH_REDIRECT_INTENT_KEY);
+		const intent = parseFreshRedirectIntent(raw, Date.now());
+		if (raw !== null && intent === null) {
+			window.sessionStorage.removeItem(AUTH_REDIRECT_INTENT_KEY);
+		}
+		return intent;
+	} catch {
+		return null;
+	}
+}
+
+function hasFreshRedirectIntent(): boolean {
+	return readRedirectIntent() !== null;
+}
+
+function redirectIntentExpiresInMs(): number | null {
+	const intent = readRedirectIntent();
+	if (intent === null) {
+		return null;
+	}
+	return Math.max(
+		0,
+		AUTH_REDIRECT_INTENT_TTL_MS - (Date.now() - intent.startedAt),
+	);
 }
 
 function clearRedirectIntent(): void {
@@ -174,9 +225,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 	const [authRedirectInFlight, setAuthRedirectInFlight] = React.useState(() =>
 		hasFreshRedirectIntent(),
 	);
+	const navigationStartedRef = React.useRef(false);
 	const syncSignedIn = React.useCallback(() => {
 		setSignedIn(Boolean(window.Clerk?.session));
 	}, []);
+
+	React.useEffect(() => {
+		const markNavigationStarted = () => {
+			navigationStartedRef.current = true;
+		};
+		const markHiddenNavigation = () => {
+			if (document.hidden) {
+				markNavigationStarted();
+			}
+		};
+		window.addEventListener("beforeunload", markNavigationStarted);
+		window.addEventListener("pagehide", markNavigationStarted);
+		document.addEventListener("visibilitychange", markHiddenNavigation);
+		return () => {
+			window.removeEventListener("beforeunload", markNavigationStarted);
+			window.removeEventListener("pagehide", markNavigationStarted);
+			document.removeEventListener("visibilitychange", markHiddenNavigation);
+		};
+	}, []);
+
+	React.useEffect(() => {
+		if (!authRedirectInFlight || signedIn) {
+			return;
+		}
+		const expiresInMs = redirectIntentExpiresInMs();
+		if (expiresInMs === null) {
+			setAuthRedirectInFlight(false);
+			return;
+		}
+		const timeout = window.setTimeout(() => {
+			if (!window.Clerk?.session) {
+				clearRedirectIntent();
+				setAuthRedirectInFlight(false);
+			}
+		}, expiresInMs);
+		return () => {
+			window.clearTimeout(timeout);
+		};
+	}, [authRedirectInFlight, signedIn]);
 
 	React.useEffect(() => {
 		const abort = new AbortController();
@@ -198,10 +289,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			setAuthBlocked(null);
 			setClerkReady(true);
 			syncSignedIn();
-			if (window.Clerk?.session) {
-				clearRedirectIntent();
-				setAuthRedirectInFlight(false);
-			}
+			clearRedirectIntent();
+			setAuthRedirectInFlight(false);
 			unsubscribe = window.Clerk?.addListener?.(({ session }) => {
 				setSignedIn(Boolean(session));
 				if (session) {
@@ -215,6 +304,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			if (!abort.signal.aborted) {
 				console.warn(error);
 				setAuthBlocked(authBlockedMessage(error));
+				clearRedirectIntent();
+				setAuthRedirectInFlight(false);
 				setConfig(
 					(current) =>
 						current ?? {
@@ -245,32 +336,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			if (!window.Clerk || authRedirectInFlight) {
 				return;
 			}
+			navigationStartedRef.current = false;
 			setAuthBlocked(null);
 			setAuthRedirectInFlight(true);
 			writeRedirectIntent(mode);
 			const redirectUrl = currentAppUrl();
 			try {
 				if (mode === "sign-in") {
-					await window.Clerk.redirectToSignIn({
-						redirectUrl,
-						signInForceRedirectUrl: redirectUrl,
-						signInFallbackRedirectUrl: redirectUrl,
-						signUpFallbackRedirectUrl: redirectUrl,
-					});
+					await window.Clerk.redirectToSignIn(
+						clerkRedirectOptions(mode, redirectUrl),
+					);
 				} else {
-					await window.Clerk.redirectToSignUp({
-						redirectUrl,
-						signUpForceRedirectUrl: redirectUrl,
-						signUpFallbackRedirectUrl: redirectUrl,
-						signInFallbackRedirectUrl: redirectUrl,
-					});
+					await window.Clerk.redirectToSignUp(
+						clerkRedirectOptions(mode, redirectUrl),
+					);
+				}
+				await new Promise((resolve) =>
+					window.setTimeout(resolve, REDIRECT_NAVIGATION_GRACE_MS),
+				);
+				if (navigationStartedRef.current || document.hidden) {
+					return;
 				}
 				setAuthBlocked(
 					"The browser did not leave for Clerk sign-in. Check extension settings, then retry.",
 				);
+				clearRedirectIntent();
+				setAuthRedirectInFlight(false);
 			} catch (error) {
+				if (navigationStartedRef.current || document.hidden) {
+					return;
+				}
 				setAuthBlocked(authBlockedMessage(error));
-			} finally {
 				clearRedirectIntent();
 				setAuthRedirectInFlight(false);
 			}
