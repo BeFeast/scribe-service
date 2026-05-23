@@ -244,6 +244,21 @@ def test_settings_creates_extension_tokens_without_browser_prompts() -> None:
     assert "Rotate API token" not in settings
 
 
+def test_settings_access_section_wires_current_user_and_admin_users() -> None:
+    settings = read("pages/Settings.tsx")
+
+    assert "AccessSection" in settings
+    assert 'auth.protectedFetch("/api/auth/me")' in settings
+    assert 'auth.protectedFetch("/api/admin/users")' in settings
+    assert "Admin role required to manage Scribe users." in settings
+    assert "Add or update user" in settings
+    assert "`/api/admin/users/${disableTarget.id}/disable`" in settings
+    assert "ConfirmDialog" in settings
+    assert "window.alert" not in settings
+    assert "window.confirm" not in settings
+    assert "window.prompt" not in settings
+
+
 def test_global_shell_shows_access_status_and_operator_auth() -> None:
     settings_source = read("pages/Settings.tsx")
     topbar = read("components/TopBar.tsx")

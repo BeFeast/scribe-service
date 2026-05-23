@@ -1403,6 +1403,74 @@ a {
 .settings-auth-actions {
 	display: flex;
 	justify-content: flex-end;
+	gap: 0.45rem;
+}
+
+.access-group {
+	gap: 0.75rem;
+}
+
+.access-card {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.75rem;
+	padding-block: var(--row-y);
+	border-bottom: 1px solid var(--border-soft);
+}
+
+.access-facts,
+.access-form {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 0.45rem;
+}
+
+.access-form[aria-disabled="true"] {
+	opacity: 0.72;
+}
+
+.access-table-wrap {
+	overflow: auto;
+	border: var(--rule);
+	border-radius: var(--radius);
+}
+
+.access-table {
+	width: 100%;
+	min-width: 48rem;
+	border-collapse: collapse;
+	font-size: 0.9rem;
+}
+
+.access-table th,
+.access-table td {
+	padding: 0.55rem 0.65rem;
+	border-bottom: 1px solid var(--border-soft);
+	text-align: left;
+	vertical-align: middle;
+}
+
+.access-table th {
+	color: var(--muted);
+	font-size: 0.75rem;
+	text-transform: uppercase;
+}
+
+.access-table tr:last-child td {
+	border-bottom: 0;
+}
+
+.access-table td:last-child {
+	text-align: right;
+}
+
+.access-subject {
+	font-family: var(--font-mono);
+	font-size: 0.78rem;
+	color: var(--muted);
 }
 
 .settings-row {

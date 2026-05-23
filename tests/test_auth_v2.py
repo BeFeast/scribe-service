@@ -317,6 +317,74 @@ def test_machine_bearer_token_can_submit_outside_lan(db_session, monkeypatch):
     assert resp.status_code == 201, resp.text
 
 
+def test_admin_user_apis_require_admin_role(db_session, monkeypatch):
+    _clear_auth(db_session)
+    monkeypatch.setattr(settings, "auth_test_mode", True)
+    _seed_user(db_session, email="user@example.test", subject="user_regular", role="user")
+
+    headers = _external_headers(
+        {
+            "X-Scribe-Test-Clerk-Sub": "user_regular",
+            "X-Scribe-Test-Email": "user@example.test",
+        }
+    )
+    with _client(db_session) as client:
+        list_resp = client.get("/api/admin/users", headers=headers)
+        add_resp = client.post(
+            "/api/admin/users",
+            json={"email": "new@example.test", "role": "user"},
+            headers=headers,
+        )
+        disable_resp = client.post("/api/admin/users/1/disable", headers=headers)
+    app.dependency_overrides.pop(routes_module.get_session, None)
+
+    assert list_resp.status_code == 403
+    assert add_resp.status_code == 403
+    assert disable_resp.status_code == 403
+    assert list_resp.json()["detail"] == "admin role required"
+
+
+def test_admin_user_apis_list_add_update_and_disable(db_session, monkeypatch):
+    _clear_auth(db_session)
+    monkeypatch.setattr(settings, "auth_test_mode", True)
+    admin = _seed_user(db_session, email="admin@example.test", subject="user_admin", role="admin")
+    target = _seed_user(db_session, email="target@example.test", subject="user_target", role="user")
+
+    headers = _external_headers(
+        {
+            "X-Scribe-Test-Clerk-Sub": "user_admin",
+            "X-Scribe-Test-Email": "admin@example.test",
+        }
+    )
+    with _client(db_session) as client:
+        list_resp = client.get("/api/admin/users", headers=headers)
+        create_resp = client.post(
+            "/api/admin/users",
+            json={"email": "new@example.test", "display_name": "New User", "role": "user"},
+            headers=headers,
+        )
+        update_resp = client.post(
+            "/api/admin/users",
+            json={"email": "target@example.test", "display_name": "Target Admin", "role": "admin"},
+            headers=headers,
+        )
+        disable_resp = client.post(f"/api/admin/users/{target.id}/disable", headers=headers)
+    app.dependency_overrides.pop(routes_module.get_session, None)
+
+    assert list_resp.status_code == 200, list_resp.text
+    listed = {row["primary_email"]: row for row in list_resp.json()}
+    assert listed["admin@example.test"]["role"] == "admin"
+    assert create_resp.status_code == 201, create_resp.text
+    assert create_resp.json()["primary_email"] == "new@example.test"
+    assert create_resp.json()["display_name"] == "New User"
+    assert update_resp.status_code == 201, update_resp.text
+    assert update_resp.json()["role"] == "admin"
+    assert update_resp.json()["display_name"] == "Target Admin"
+    assert disable_resp.status_code == 200, disable_resp.text
+    assert disable_resp.json()["disabled"] is True
+    assert admin.id != target.id
+
+
 def test_library_is_owner_scoped_for_users_and_broad_for_admin(db_session, monkeypatch):
     _clear_auth(db_session)
     monkeypatch.setattr(settings, "auth_test_mode", True)

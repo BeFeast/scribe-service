@@ -1,5 +1,6 @@
 import React from "react";
 
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Markdown } from "../components/Markdown";
 import { useAuth } from "../hooks/useAuth";
 import type {
@@ -9,6 +10,7 @@ import type {
 	ScribeVariant,
 	Tweaks,
 } from "../hooks/useTweaks";
+import { isAuthStatus } from "../lib/auth";
 import type { DisplayCurrency } from "../lib/currency";
 import { displayCurrencies } from "../lib/currency";
 
@@ -42,6 +44,30 @@ type ExtensionTokenResponse = {
 	token: string;
 	token_type: string;
 };
+
+type CurrentUser = {
+	authenticated: boolean;
+	kind: string;
+	role: string;
+	user_id: number | null;
+	owner_id: number | null;
+	email: string | null;
+	display_name: string | null;
+};
+
+type AdminUser = {
+	id: number;
+	owner_id: number;
+	clerk_subject: string | null;
+	primary_email: string;
+	display_name: string | null;
+	role: "admin" | "user" | string;
+	disabled: boolean;
+	created_at: string;
+	updated_at: string;
+};
+
+type UserRole = "user" | "admin";
 
 type PromptVersionId = "v1" | "v2" | "v3";
 type ConfigKey =
@@ -114,6 +140,21 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 	const [creatingExtensionToken, setCreatingExtensionToken] =
 		React.useState(false);
 	const [showExtensionToken, setShowExtensionToken] = React.useState(false);
+	const [currentUser, setCurrentUser] = React.useState<CurrentUser | null>(
+		null,
+	);
+	const [adminUsers, setAdminUsers] = React.useState<AdminUser[]>([]);
+	const [accessLoading, setAccessLoading] = React.useState(true);
+	const [accessError, setAccessError] = React.useState<string | null>(null);
+	const [adminRequired, setAdminRequired] = React.useState(false);
+	const [userEmail, setUserEmail] = React.useState("");
+	const [userDisplayName, setUserDisplayName] = React.useState("");
+	const [userRole, setUserRole] = React.useState<UserRole>("user");
+	const [savingUser, setSavingUser] = React.useState(false);
+	const [disableTarget, setDisableTarget] = React.useState<AdminUser | null>(
+		null,
+	);
+	const [disablingUser, setDisablingUser] = React.useState(false);
 
 	const promptDirty =
 		promptBody !== savedPromptBody || promptVersion !== savedPromptVersion;
@@ -130,9 +171,15 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 				auth.protectedFetch("/api/prompts"),
 			]);
 			if (!configResponse.ok) {
+				if (isAuthStatus(configResponse.status)) {
+					throw new Error("Sign in required to load operator settings.");
+				}
 				throw new Error(await responseMessage(configResponse));
 			}
 			if (!promptsResponse.ok) {
+				if (isAuthStatus(promptsResponse.status)) {
+					throw new Error("Sign in required to load operator settings.");
+				}
 				throw new Error(await responseMessage(promptsResponse));
 			}
 			const configBody = (await configResponse.json()) as ConfigResponse;
@@ -167,6 +214,52 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 	React.useEffect(() => {
 		void loadSettings();
 	}, [loadSettings]);
+
+	const loadAccess = React.useCallback(async () => {
+		setAccessLoading(true);
+		setAccessError(null);
+		setAdminRequired(false);
+		try {
+			const meResponse = await auth.protectedFetch("/api/auth/me");
+			if (!meResponse.ok) {
+				if (isAuthStatus(meResponse.status)) {
+					setCurrentUser(null);
+					setAdminUsers([]);
+					return false;
+				}
+				throw new Error(await responseMessage(meResponse));
+			}
+			const me = (await meResponse.json()) as CurrentUser;
+			setCurrentUser(me);
+			if (!canManageUsers(me)) {
+				setAdminUsers([]);
+				setAdminRequired(true);
+				return true;
+			}
+			const usersResponse = await auth.protectedFetch("/api/admin/users");
+			if (!usersResponse.ok) {
+				if (usersResponse.status === 403) {
+					setAdminUsers([]);
+					setAdminRequired(true);
+					return true;
+				}
+				throw new Error(await responseMessage(usersResponse));
+			}
+			setAdminUsers((await usersResponse.json()) as AdminUser[]);
+			return true;
+		} catch (loadError) {
+			setAccessError(
+				loadError instanceof Error ? loadError.message : "access load failed",
+			);
+			return false;
+		} finally {
+			setAccessLoading(false);
+		}
+	}, [auth]);
+
+	React.useEffect(() => {
+		void loadAccess();
+	}, [loadAccess]);
 
 	async function selectPromptVersion(next: string) {
 		const version = next as PromptVersionId;
@@ -344,6 +437,79 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 		}
 	}
 
+	async function saveUser() {
+		const email = userEmail.trim();
+		if (!email) {
+			setAccessError("Email is required.");
+			return;
+		}
+		setSavingUser(true);
+		setAccessError(null);
+		setStatus(null);
+		try {
+			const response = await auth.protectedFetch("/api/admin/users", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					email,
+					display_name: userDisplayName.trim() || null,
+					role: userRole,
+				}),
+			});
+			if (!response.ok) {
+				if (response.status === 403) {
+					setAdminRequired(true);
+					throw new Error("Admin role required to manage Scribe users.");
+				}
+				throw new Error(await responseMessage(response));
+			}
+			setUserEmail("");
+			setUserDisplayName("");
+			setUserRole("user");
+			await loadAccess();
+			setStatus("User saved");
+		} catch (saveError) {
+			setAccessError(
+				saveError instanceof Error ? saveError.message : "user save failed",
+			);
+		} finally {
+			setSavingUser(false);
+		}
+	}
+
+	async function disableUser() {
+		if (disableTarget === null) {
+			return;
+		}
+		setDisablingUser(true);
+		setAccessError(null);
+		setStatus(null);
+		try {
+			const response = await auth.protectedFetch(
+				`/api/admin/users/${disableTarget.id}/disable`,
+				{ method: "POST" },
+			);
+			if (!response.ok) {
+				if (response.status === 403) {
+					setAdminRequired(true);
+					throw new Error("Admin role required to manage Scribe users.");
+				}
+				throw new Error(await responseMessage(response));
+			}
+			setDisableTarget(null);
+			await loadAccess();
+			setStatus("User disabled");
+		} catch (disableError) {
+			setAccessError(
+				disableError instanceof Error
+					? disableError.message
+					: "user disable failed",
+			);
+		} finally {
+			setDisablingUser(false);
+		}
+	}
+
 	return (
 		<section className="settings-page pane">
 			<header className="pane-header">
@@ -416,6 +582,25 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 			) : null}
 
 			<div className="settings-layout" aria-busy={loading}>
+				<AccessSection
+					currentUser={currentUser}
+					users={adminUsers}
+					loading={accessLoading}
+					error={accessError ?? auth.authBlockedMessage}
+					adminRequired={adminRequired}
+					auth={auth}
+					email={userEmail}
+					displayName={userDisplayName}
+					role={userRole}
+					savingUser={savingUser}
+					onEmail={setUserEmail}
+					onDisplayName={setUserDisplayName}
+					onRole={setUserRole}
+					onSaveUser={saveUser}
+					onDisableRequest={setDisableTarget}
+					onRefresh={loadAccess}
+				/>
+
 				<section className="settings-group">
 					<h2 className="section-label">API access</h2>
 					<TokenRow
@@ -576,6 +761,213 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 					</dialog>
 				</div>
 			) : null}
+			{disableTarget !== null ? (
+				<ConfirmDialog
+					title="Disable user"
+					body={`Disable ${userLabel(disableTarget)}? They will lose Scribe access until an admin adds them again.`}
+					confirmLabel="Disable"
+					busyLabel="Disabling"
+					busy={disablingUser}
+					onCancel={() => setDisableTarget(null)}
+					onConfirm={disableUser}
+				/>
+			) : null}
+		</section>
+	);
+}
+
+export function AccessSection({
+	currentUser,
+	users,
+	loading,
+	error,
+	adminRequired,
+	auth,
+	email,
+	displayName,
+	role,
+	savingUser,
+	onEmail,
+	onDisplayName,
+	onRole,
+	onSaveUser,
+	onDisableRequest,
+	onRefresh,
+}: {
+	currentUser: CurrentUser | null;
+	users: AdminUser[];
+	loading: boolean;
+	error: string | null;
+	adminRequired: boolean;
+	auth: ReturnType<typeof useAuth>;
+	email: string;
+	displayName: string;
+	role: UserRole;
+	savingUser: boolean;
+	onEmail: (value: string) => void;
+	onDisplayName: (value: string) => void;
+	onRole: (value: UserRole) => void;
+	onSaveUser: () => void;
+	onDisableRequest: (user: AdminUser) => void;
+	onRefresh: () => void;
+}) {
+	const signedOut = currentUser === null && !loading;
+	const adminControlsEnabled =
+		currentUser !== null && canManageUsers(currentUser) && !adminRequired;
+
+	return (
+		<section className="settings-group access-group">
+			<div className="prompt-head">
+				<h2 className="section-label">Access</h2>
+				<button className="btn ghost" type="button" onClick={onRefresh}>
+					Refresh access
+				</button>
+			</div>
+
+			<div className="access-card">
+				<div>
+					<div className="row-label">
+						{currentUser !== null ? userIdentity(currentUser) : "Not signed in"}
+					</div>
+					<div className="hint">
+						{currentUser !== null
+							? "Current Scribe auth state from /api/auth/me."
+							: "Sign in to see your Scribe role and access details."}
+					</div>
+				</div>
+				<div className="access-facts">
+					<span className="chip info">role {currentUser?.role ?? "none"}</span>
+					<span className="chip">kind {currentUser?.kind ?? "signed-out"}</span>
+					<span className="chip">
+						{auth.trustedNetwork ? "trusted network" : auth.accessStatus}
+					</span>
+				</div>
+			</div>
+
+			{error !== null ? (
+				<div className="settings-banner err" role="alert">
+					<span>{error}</span>
+					<button
+						className="btn ghost"
+						type="button"
+						onClick={() => void auth.signIn()}
+						disabled={!auth.clerkReady || auth.authRedirectInFlight}
+					>
+						Retry sign in
+					</button>
+				</div>
+			) : null}
+
+			{signedOut ? (
+				<div className="settings-banner warn">
+					<span>Sign in required to manage Scribe access.</span>
+					<div className="settings-auth-actions">
+						<button
+							className="btn"
+							type="button"
+							onClick={() => void auth.signUp()}
+							disabled={!auth.clerkReady || auth.authRedirectInFlight}
+						>
+							Sign up
+						</button>
+						<button
+							className="btn ghost"
+							type="button"
+							onClick={() => void auth.signIn()}
+							disabled={!auth.clerkReady || auth.authRedirectInFlight}
+						>
+							Sign in
+						</button>
+					</div>
+				</div>
+			) : null}
+
+			{adminRequired ? (
+				<div className="settings-banner warn">
+					Admin role required to manage Scribe users.
+				</div>
+			) : null}
+
+			<div className="access-form" aria-disabled={!adminControlsEnabled}>
+				<input
+					className="settings-input"
+					type="email"
+					value={email}
+					placeholder="user@example.test"
+					disabled={!adminControlsEnabled || savingUser}
+					onChange={(event) => onEmail(event.currentTarget.value)}
+				/>
+				<input
+					className="settings-input"
+					value={displayName}
+					placeholder="Display name"
+					disabled={!adminControlsEnabled || savingUser}
+					onChange={(event) => onDisplayName(event.currentTarget.value)}
+				/>
+				<select
+					className="settings-input"
+					value={role}
+					disabled={!adminControlsEnabled || savingUser}
+					onChange={(event) => onRole(event.currentTarget.value as UserRole)}
+				>
+					<option value="user">user</option>
+					<option value="admin">admin</option>
+				</select>
+				<button
+					className="btn primary"
+					type="button"
+					disabled={!adminControlsEnabled || savingUser}
+					onClick={onSaveUser}
+				>
+					{savingUser ? "Saving user" : "Add or update user"}
+				</button>
+			</div>
+
+			<div className="access-table-wrap">
+				<table className="access-table">
+					<thead>
+						<tr>
+							<th>Email</th>
+							<th>Name</th>
+							<th>Role</th>
+							<th>State</th>
+							<th>Clerk subject</th>
+							<th>Action</th>
+						</tr>
+					</thead>
+					<tbody>
+						{users.length > 0 ? (
+							users.map((user) => (
+								<tr key={user.id}>
+									<td>{user.primary_email}</td>
+									<td>{user.display_name || "—"}</td>
+									<td>{user.role}</td>
+									<td>{user.disabled ? "disabled" : "active"}</td>
+									<td className="access-subject">
+										{user.clerk_subject || "not linked"}
+									</td>
+									<td>
+										<button
+											className="btn ghost"
+											type="button"
+											disabled={!adminControlsEnabled || user.disabled}
+											onClick={() => onDisableRequest(user)}
+										>
+											Disable
+										</button>
+									</td>
+								</tr>
+							))
+						) : (
+							<tr>
+								<td colSpan={6}>
+									{loading ? "Loading users" : "No users to display"}
+								</td>
+							</tr>
+						)}
+					</tbody>
+				</table>
+			</div>
 		</section>
 	);
 }
@@ -965,6 +1357,20 @@ function numberDraft(value: ConfigValue | undefined): number {
 
 function booleanDraft(value: ConfigValue | undefined): boolean {
 	return typeof value === "boolean" ? value : false;
+}
+
+function canManageUsers(user: CurrentUser): boolean {
+	return (
+		user.role === "admin" || user.role === "lan" || user.role === "machine"
+	);
+}
+
+function userIdentity(user: CurrentUser): string {
+	return user.display_name || user.email || user.kind;
+}
+
+function userLabel(user: AdminUser): string {
+	return user.display_name || user.primary_email;
 }
 
 function tweaksEqual(left: Tweaks, right: Tweaks): boolean {
