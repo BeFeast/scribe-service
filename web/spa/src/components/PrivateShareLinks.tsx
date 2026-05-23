@@ -14,6 +14,7 @@ type CopyState = {
 type PrivateShareLinksProps = {
 	id: number;
 	copyKinds?: Set<ShareTarget["kind"]>;
+	targetKinds?: Set<ShareTarget["kind"]>;
 };
 
 async function copyShareTarget(
@@ -28,9 +29,15 @@ async function copyShareTarget(
 	}
 }
 
-export function PrivateShareLinks({ id, copyKinds }: PrivateShareLinksProps) {
+export function PrivateShareLinks({
+	id,
+	copyKinds,
+	targetKinds,
+}: PrivateShareLinksProps) {
 	const [copyState, setCopyState] = React.useState<CopyState | null>(null);
-	const targets = transcriptShareTargets(id);
+	const targets = transcriptShareTargets(id).filter(
+		(target) => targetKinds === undefined || targetKinds.has(target.kind),
+	);
 
 	return (
 		<div className="share-targets">

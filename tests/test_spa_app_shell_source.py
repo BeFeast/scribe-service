@@ -422,6 +422,9 @@ def test_transcript_and_library_share_ui_use_relative_hrefs_and_copy_absolute_ur
     assert "navigator.clipboard.writeText(absoluteSameOriginUrl(target.href))" in source
     assert 'const pageCopyKinds = new Set<ShareTarget["kind"]>(["page"]);' in library
     assert "copyKinds={pageCopyKinds}" in library
+    assert 'const partialShareTargetKinds = new Set<ShareTarget["kind"]>([' in library
+    assert "row.is_partial ? partialShareTargetKinds : completeShareTargetKinds" in library
+    assert "targetKinds" in share
     assert "row.source_url" in library
     assert "record.source_url" in transcript
     assert "PrivateShareLinks id={record.id}" in transcript

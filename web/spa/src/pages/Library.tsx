@@ -82,6 +82,15 @@ const terminalStatuses = new Set(["done", "failed", "cancelled", "canceled"]);
 const stageLabels = ["queued", "downloading", "transcribing", "summarizing"];
 const libraryPageSize = 50;
 const pageCopyKinds = new Set<ShareTarget["kind"]>(["page"]);
+const completeShareTargetKinds = new Set<ShareTarget["kind"]>([
+	"page",
+	"summary",
+	"transcript",
+]);
+const partialShareTargetKinds = new Set<ShareTarget["kind"]>([
+	"page",
+	"transcript",
+]);
 
 function formatDate(value: string): string {
 	const date = new Date(value);
@@ -853,7 +862,13 @@ function RowLinks({
 					{row.source_label ?? "Source"}
 				</a>
 			) : null}
-			<PrivateShareLinks id={row.id} copyKinds={pageCopyKinds} />
+			<PrivateShareLinks
+				id={row.id}
+				copyKinds={pageCopyKinds}
+				targetKinds={
+					row.is_partial ? partialShareTargetKinds : completeShareTargetKinds
+				}
+			/>
 			<button
 				type="button"
 				className="link-button danger-link"
