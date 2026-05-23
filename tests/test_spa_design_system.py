@@ -126,10 +126,15 @@ def test_spa_css_is_imported_once() -> None:
     assert source.count('import "./styles.css";') == 1
 
 
-def test_design_tokens_exist_for_all_variant_theme_combos() -> None:
+def test_design_tokens_are_defined_in_root() -> None:
     css = STYLES.read_text(encoding="utf-8")
 
-    assert '[data-variant="field"][data-theme="light"][data-density="compact"]' in css
+    selector = '[data-variant="field"][data-theme="light"][data-density="compact"]'
+    assert selector in css
+    selector_start = css.index(selector)
+    selector_block = css[selector_start : css.index("}", selector_start)]
+    assert "color-scheme: light" in selector_block
+
     start = css.index(":root")
     end = css.index("}", start)
     block = css[start:end]

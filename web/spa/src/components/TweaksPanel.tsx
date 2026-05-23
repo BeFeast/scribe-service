@@ -23,7 +23,7 @@ type TweaksPanelProps = {
 };
 
 const variantOptions: ScribeVariant[] = ["field"];
-const themeOptions: ScribeTheme[] = ["light", "dark"];
+const themeOptions: ScribeTheme[] = ["light"];
 const densityOptions: ScribeDensity[] = ["compact"];
 const layoutOptions: LibraryLayout[] = ["feed", "table", "cards"];
 const jumpRoutes: Array<{ label: string; route: Route }> = [

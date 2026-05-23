@@ -22,7 +22,7 @@ const CONFIG_SAVED_EVENT = "scribe-config-saved";
 
 function App() {
 	const { route, navigate } = useRoute();
-	const { tweaks, setTheme, replaceTweaks } = useTweaks();
+	const { tweaks, replaceTweaks } = useTweaks();
 	const auth = useAuth();
 	const [displayCurrency, setDisplayCurrency] =
 		React.useState<DisplayCurrency>("USD");
@@ -57,7 +57,7 @@ function App() {
 
 	return (
 		<div className="app-shell">
-			<TopBar theme={tweaks.theme} onThemeChange={setTheme} />
+			<TopBar />
 			<div className="shell-body">
 				<Sidebar route={route} navigate={navigate} />
 				<main className="content-pane">
@@ -81,11 +81,7 @@ function App() {
 					) : route.page === "ops" ? (
 						<Ops displayCurrency={displayCurrency} navigate={navigate} />
 					) : route.page === "settings" ? (
-						<Settings
-							tweaks={tweaks}
-							setTheme={setTheme}
-							replaceTweaks={replaceTweaks}
-						/>
+						<Settings tweaks={tweaks} replaceTweaks={replaceTweaks} />
 					) : (
 						<Placeholder page={route.page} id={route.params.id} />
 					)}

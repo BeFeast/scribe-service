@@ -3,7 +3,7 @@ import React from "react";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Markdown } from "../components/Markdown";
 import { useAuth } from "../hooks/useAuth";
-import type { LibraryLayout, ScribeTheme, Tweaks } from "../hooks/useTweaks";
+import type { LibraryLayout, Tweaks } from "../hooks/useTweaks";
 import { isAuthStatus } from "../lib/auth";
 import type { DisplayCurrency } from "../lib/currency";
 import { displayCurrencies } from "../lib/currency";
@@ -76,7 +76,6 @@ type ConfigKey =
 
 type SettingsProps = {
 	tweaks: Tweaks;
-	setTheme: (value: ScribeTheme) => void;
 	replaceTweaks: (value: Tweaks) => void;
 };
 
@@ -101,7 +100,7 @@ const configKeys: ConfigKey[] = [
 ];
 const promptVersions: PromptVersionId[] = ["v1", "v2", "v3"];
 
-export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
+export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
 	const auth = useAuth();
 	const [config, setConfig] = React.useState<Record<string, ConfigEntry>>({});
 	const [draft, setDraft] = React.useState<Record<ConfigKey, ConfigValue>>(
@@ -712,13 +711,6 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 
 				<section className="settings-group">
 					<h2 className="section-label">Appearance</h2>
-					<SegRow
-						label="Theme"
-						hint="Global light or dark mode."
-						value={tweaks.theme}
-						options={["light", "dark"]}
-						onChange={(value) => setTheme(value as ScribeTheme)}
-					/>
 					<SegRow
 						label="Library layout"
 						hint="Default layout for transcript browsing."

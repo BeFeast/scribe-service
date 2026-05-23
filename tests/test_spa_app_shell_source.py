@@ -369,6 +369,18 @@ def test_appearance_settings_do_not_expose_debug_variant_or_density_controls() -
     assert '"comfy"' not in settings
 
 
+def test_field_light_foundation_does_not_expose_theme_toggle() -> None:
+    hooks = read("hooks/useTweaks.ts")
+    topbar = read("components/TopBar.tsx")
+    settings = read("pages/Settings.tsx")
+    source = hooks + topbar + settings
+
+    assert 'export type ScribeTheme = "light";' in hooks
+    assert '"dark"' not in source
+    assert "onThemeChange" not in topbar
+    assert 'label="Theme"' not in settings
+
+
 def test_sidebar_routes_protected_fetch_without_mock_fallback() -> None:
     """Per #129, the sidebar must not paper over auth failures with mock data
     or `[mock]` badges. Auth failures route into a Sign-in CTA, generic
