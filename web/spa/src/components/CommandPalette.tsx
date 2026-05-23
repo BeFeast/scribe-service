@@ -1,544 +1,176 @@
-import React from "react";
+// Command palette — ⌘K. Detects YouTube URLs and offers a one-key submit.
+// Falls through to a fuzzy-ish title search + a fixed list of commands.
 
-import { CMDK_OPEN_EVENT } from "../constants";
-import { useAuth } from "../hooks/useAuth";
-import type { Route, RoutePage } from "../hooks/useRoute";
+const YT_RE = /(?:youtube\.com\/(?:watch\?v=|shorts\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/;
 
-type Navigate = (route: Route) => void;
+function CommandPalette({ open, onClose, navigate }) {
+  const [q, setQ] = React.useState("");
+  const [sel, setSel] = React.useState(0);
+  const [submitted, setSubmitted] = React.useState(null);
+  const inputRef = React.useRef(null);
 
-type CommandPaletteProps = {
-	navigate: Navigate;
-};
+  React.useEffect(() => {
+    if (open) {
+      setTimeout(() => inputRef.current && inputRef.current.focus(), 30);
+      setQ(""); setSel(0); setSubmitted(null);
+    }
+  }, [open]);
 
-type LibraryRow = {
-	id: number;
-	video_id: string;
-	title: string;
-	tags: string[] | null;
-	created_at: string;
-};
+  const ytMatch = q.match(YT_RE);
+  const ytId = ytMatch ? ytMatch[1] : null;
 
-type LibraryResponse = {
-	rows: LibraryRow[];
-};
+  const items = React.useMemo(() => {
+    const list = [];
+    if (!q || !ytId) {
+      const lower = q.toLowerCase();
+      const matched = TRANSCRIPTS
+        .filter(t => !lower || t.title.toLowerCase().includes(lower) || (t.tags||[]).some(tg => tg.includes(lower)))
+        .slice(0, 6)
+        .map(t => ({
+          type: "transcript",
+          key: "t" + t.id,
+          title: t.title,
+          hint: `#${t.id} · ${fmtDuration(t.duration_seconds)} · ${fmtRelative(t.created_at)}`,
+          onPick: () => { navigate("transcript", { id: t.id }); onClose(); },
+        }));
+      list.push({ section: "Transcripts" });
+      list.push(...matched);
 
-type ActiveJob = {
-	id: number;
-	video_id: string;
-	url: string;
-	title?: string | null;
-	status: string;
-	source?: string | null;
-};
+      const matchedJobs = ACTIVE_JOBS
+        .filter(j => !lower || j.title.toLowerCase().includes(lower))
+        .map(j => ({
+          type: "job",
+          key: "j" + j.id,
+          title: j.title,
+          hint: `job ${j.id} · ${j.status}`,
+          live: true,
+          onPick: () => { navigate("job", { id: j.id }); onClose(); },
+        }));
+      if (matchedJobs.length) {
+        list.push({ section: "In flight" });
+        list.push(...matchedJobs);
+      }
 
-type ActiveJobsResponse = {
-	jobs: ActiveJob[];
-};
+      list.push({ section: "Navigate" });
+      [
+        { key: "go-lib", title: "Go to library", glyph: "L", onPick: () => { navigate("library"); onClose(); }, hint: "G L" },
+        { key: "go-queue", title: "Go to queue", glyph: "Q", onPick: () => { navigate("queue"); onClose(); }, hint: "G Q" },
+        { key: "go-ops", title: "Go to ops dashboard", glyph: "O", onPick: () => { navigate("ops"); onClose(); }, hint: "G O" },
+        { key: "go-settings", title: "Go to settings", glyph: "S", onPick: () => { navigate("settings"); onClose(); }, hint: "G S" },
+      ].forEach(c => list.push({ type: "cmd", ...c }));
 
-type OpsResponse = {
-	vast_spend_24h?: number;
-	daily_spend_cap_usd?: number;
-};
+      list.push({ section: "Recent submissions" });
+      [
+        { key: "r1", title: "Linus Torvalds on Git — Google Tech Talk", hint: "submitted 4m ago · telegram · transcribing 26%", onPick: () => { navigate("job", { id: 218 }); onClose(); }, type: "recent" },
+        { key: "r2", title: "Rich Hickey — Simple Made Easy", hint: "submitted ~3h ago · #142 · done", onPick: () => { navigate("transcript", { id: 142 }); onClose(); }, type: "recent" },
+        { key: "r3", title: "Bryan Cantrill — I Have Come to Bury the Andon Cord", hint: "submitted ~5h ago · #141 · done", onPick: () => { navigate("transcript", { id: 141 }); onClose(); }, type: "recent" },
+      ].forEach(c => list.push(c));
+    }
+    return list;
+  }, [q, ytId]);
 
-type JobView = {
-	job_id: number;
-	video_id: string;
-	status: string;
-	deduplicated?: boolean;
-};
+  // Selectable item indices (skip section headers)
+  const selectable = items.map((it, i) => ({ it, i })).filter(x => !x.it.section);
+  const safeSel = Math.min(sel, Math.max(0, selectable.length - 1));
 
-type RecentSubmission = {
-	jobId: number;
-	videoId: string;
-	title: string;
-	createdAt: string;
-};
+  function onKey(e) {
+    if (e.key === "Escape") { onClose(); return; }
+    if (ytId && !submitted && (e.key === "Enter" || (e.metaKey && e.key === "Enter"))) {
+      e.preventDefault();
+      setSubmitted({ id: 219, video_id: ytId, status: "queued" });
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setSel(s => (s + 1) % selectable.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setSel(s => (s - 1 + selectable.length) % selectable.length);
+    } else if (e.key === "Enter" && selectable[safeSel]) {
+      e.preventDefault();
+      selectable[safeSel].it.onPick && selectable[safeSel].it.onPick();
+    }
+  }
 
-type PaletteItem = {
-	id: string;
-	label: string;
-	meta: string;
-	kind: "navigate" | "transcript" | "job" | "recent";
-	route: Route;
-	keywords: string;
-};
+  if (!open) return null;
+  return (
+    <div className="cmdk-overlay" onClick={onClose}>
+      <div className="cmdk-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="cmdk-input-row">
+          <IconSearch size={16}/>
+          <input ref={inputRef} placeholder="Paste a YouTube URL · or search transcripts, jobs, commands…"
+                 value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onKey}/>
+          <span className="kbd">esc</span>
+        </div>
 
-type SubmitState =
-	| { state: "idle" }
-	| { state: "submitting" }
-	| { state: "success"; job: JobView }
-	| { state: "error"; message: string };
+        {ytId && !submitted && (
+          <div className="cmdk-submit">
+            <IconPlus size={18}/>
+            <div className="label">
+              <div style={{fontWeight: 600, color: "var(--accent)"}}>Submit job</div>
+              <div style={{fontSize: 12, color: "var(--fg-soft)", fontFamily: "var(--font-mono)", marginTop: 2}}>
+                video_id <span className="tnum">{ytId}</span> · source=manual · cap remaining {fmtUsd(STATS.daily_spend_cap_usd - STATS.vast_spend_24h)}
+              </div>
+            </div>
+            <button className="btn" onClick={() => setSubmitted({ id: 219, video_id: ytId, status: "queued" })}>
+              Submit <span className="kbd" style={{marginLeft: 6}}>↵</span>
+            </button>
+          </div>
+        )}
 
-const RECENTS_KEY = "scribe.cmdk.recentSubmissions";
-const MAX_RECENTS = 5;
+        {submitted && (
+          <div style={{
+            margin: 6, padding: "14px 16px",
+            border: "1px solid color-mix(in oklab, var(--ok) 32%, transparent)",
+            borderRadius: "var(--radius)",
+            background: "color-mix(in oklab, var(--ok) 10%, var(--bg))",
+            display: "flex", alignItems: "center", gap: 12, fontSize: 14,
+          }}>
+            <IconCheck size={18} style={{color: "var(--ok)"}}/>
+            <div style={{flex: 1}}>
+              <div style={{fontWeight: 600}}>Queued as job #{submitted.id}</div>
+              <div className="mono muted" style={{fontSize: 12, marginTop: 2}}>
+                video_id {submitted.video_id} · est. ~6 min · webhook will fire on done|failed
+              </div>
+            </div>
+            <button className="btn primary" onClick={() => { navigate("job", { id: 218 }); onClose(); }}>
+              Watch pipeline <IconArrow size={12}/>
+            </button>
+          </div>
+        )}
 
-const NAV_ITEMS: Array<{
-	page: RoutePage;
-	label: string;
-	meta: string;
-	keywords: string;
-}> = [
-	{
-		page: "library",
-		label: "Library",
-		meta: "Browse transcripts",
-		keywords: "library transcripts notes",
-	},
-	{
-		page: "queue",
-		label: "Queue",
-		meta: "Active pipeline",
-		keywords: "queue jobs pipeline",
-	},
-	{
-		page: "ops",
-		label: "Ops",
-		meta: "Spend and workers",
-		keywords: "ops metrics spend workers",
-	},
-	{
-		page: "settings",
-		label: "Settings",
-		meta: "Runtime controls",
-		keywords: "settings config preferences",
-	},
-];
+        <div className="cmdk-list">
+          {items.map((it, idx) => {
+            if (it.section) return <div key={"s" + idx} className="cmdk-section-label">{it.section}</div>;
+            const myIdx = selectable.findIndex(x => x.i === idx);
+            const isSel = myIdx === safeSel;
+            return (
+              <div key={it.key} className={"cmdk-item " + (isSel ? "sel" : "")}
+                   onClick={it.onPick} onMouseEnter={() => setSel(myIdx)}>
+                <div className="cmdk-glyph">
+                  {it.type === "transcript" ? <IconWave size={13}/>
+                   : it.type === "job"      ? <span className="live-dot" style={{margin: 0}}/>
+                   : it.type === "cmd"      ? <span style={{fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 600}}>{it.glyph}</span>
+                   : it.type === "recent"   ? <IconClock size={13}/>
+                   : <IconArrow size={13}/>}
+                </div>
+                <div className="cmdk-title">{it.title}</div>
+                <div className="cmdk-hint">{it.hint}</div>
+              </div>
+            );
+          })}
+        </div>
 
-function route(page: RoutePage, id?: number): Route {
-	return { page, params: id === undefined ? {} : { id } };
+        <div className="cmdk-foot">
+          <span><span className="kbd">↑↓</span> navigate</span>
+          <span><span className="kbd">↵</span> open</span>
+          <span><span className="kbd">esc</span> close</span>
+          <div className="grow"/>
+          <span className="muted">tip: paste any youtube URL for instant submit</span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function parseVideoUrl(value: string): string | null {
-	const trimmed = value.trim();
-	if (trimmed.length === 0) {
-		return null;
-	}
-
-	try {
-		const candidate = /^https?:\/\//i.test(trimmed)
-			? trimmed
-			: `https://${trimmed}`;
-		const url = new URL(candidate);
-		return url.protocol === "http:" || url.protocol === "https:"
-			? url.href
-			: null;
-	} catch {
-		return null;
-	}
-}
-
-function readRecents(): RecentSubmission[] {
-	try {
-		const raw = localStorage.getItem(RECENTS_KEY);
-		if (!raw) {
-			return [];
-		}
-		const parsed = JSON.parse(raw);
-		if (!Array.isArray(parsed)) {
-			return [];
-		}
-		return parsed.filter(isRecentSubmission).slice(0, MAX_RECENTS);
-	} catch {
-		return [];
-	}
-}
-
-function writeRecents(recents: RecentSubmission[]): void {
-	try {
-		localStorage.setItem(
-			RECENTS_KEY,
-			JSON.stringify(recents.slice(0, MAX_RECENTS)),
-		);
-	} catch {
-		// Recents are a convenience cache; job submission success should not depend on storage.
-	}
-}
-
-function isRecentSubmission(value: unknown): value is RecentSubmission {
-	if (typeof value !== "object" || value === null) {
-		return false;
-	}
-	const candidate = value as Partial<RecentSubmission>;
-	return (
-		typeof candidate.jobId === "number" &&
-		typeof candidate.videoId === "string" &&
-		typeof candidate.title === "string" &&
-		typeof candidate.createdAt === "string"
-	);
-}
-
-function normalize(value: string): string {
-	return value.toLowerCase().trim();
-}
-
-function fuzzyMatch(text: string, query: string): boolean {
-	const haystack = normalize(text);
-	const needle = normalize(query);
-	if (needle.length === 0) {
-		return true;
-	}
-	if (haystack.includes(needle)) {
-		return true;
-	}
-	let index = 0;
-	for (const char of haystack) {
-		if (char === needle[index]) {
-			index += 1;
-			if (index === needle.length) {
-				return true;
-			}
-		}
-	}
-	return false;
-}
-
-function errorMessage(status: number, body: unknown): string {
-	const detail =
-		typeof body === "object" && body !== null && "detail" in body
-			? (body as { detail?: unknown }).detail
-			: undefined;
-	if (typeof detail === "string") {
-		return detail;
-	}
-	if (status === 422) {
-		return "Bad video URL.";
-	}
-	if (status === 429) {
-		return "Daily spend cap reached.";
-	}
-	return "Could not submit job.";
-}
-
-function capRemainingLabel(ops: OpsResponse | null): string {
-	if (
-		!ops ||
-		ops.daily_spend_cap_usd === undefined ||
-		ops.daily_spend_cap_usd <= 0
-	) {
-		return "Cap not enforced";
-	}
-	const spent = ops.vast_spend_24h ?? 0;
-	const remaining = Math.max(0, ops.daily_spend_cap_usd - spent);
-	return `$${remaining.toFixed(2)} cap remaining`;
-}
-
-export function useCommandPalette() {
-	const [isOpen, setIsOpen] = React.useState(false);
-
-	React.useEffect(() => {
-		const open = () => setIsOpen(true);
-		const keydown = (event: KeyboardEvent) => {
-			if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-				event.preventDefault();
-				setIsOpen(true);
-			}
-		};
-		document.addEventListener(CMDK_OPEN_EVENT, open);
-		document.addEventListener("keydown", keydown);
-		return () => {
-			document.removeEventListener(CMDK_OPEN_EVENT, open);
-			document.removeEventListener("keydown", keydown);
-		};
-	}, []);
-
-	return {
-		isOpen,
-		open: React.useCallback(() => setIsOpen(true), []),
-		close: React.useCallback(() => setIsOpen(false), []),
-	};
-}
-
-export function CommandPalette({ navigate }: CommandPaletteProps) {
-	const auth = useAuth();
-	const { isOpen, close } = useCommandPalette();
-	const [query, setQuery] = React.useState("");
-	const [library, setLibrary] = React.useState<LibraryRow[]>([]);
-	const [jobs, setJobs] = React.useState<ActiveJob[]>([]);
-	const [ops, setOps] = React.useState<OpsResponse | null>(null);
-	const [recents, setRecents] = React.useState<RecentSubmission[]>([]);
-	const [selectedIndex, setSelectedIndex] = React.useState(0);
-	const [submitState, setSubmitState] = React.useState<SubmitState>({
-		state: "idle",
-	});
-	const inputRef = React.useRef<HTMLInputElement>(null);
-	const dialogRef = React.useRef<HTMLDialogElement>(null);
-	const videoUrl = parseVideoUrl(query);
-
-	React.useEffect(() => {
-		if (!isOpen) {
-			return;
-		}
-		const controller = new AbortController();
-		setQuery("");
-		setRecents(readRecents());
-		setSubmitState({ state: "idle" });
-		setSelectedIndex(0);
-		window.setTimeout(() => inputRef.current?.focus(), 0);
-		void Promise.all([
-			auth
-				.protectedFetch("/api/library?limit=100", {
-					signal: controller.signal,
-				})
-				.then((response) => response.json() as Promise<LibraryResponse>),
-			auth
-				.protectedFetch("/api/jobs/active", { signal: controller.signal })
-				.then((response) => response.json() as Promise<ActiveJobsResponse>),
-			auth
-				.protectedFetch("/api/ops", { signal: controller.signal })
-				.then((response) => response.json() as Promise<OpsResponse>),
-		])
-			.then(([libraryBody, jobsBody, opsBody]) => {
-				setLibrary(libraryBody.rows ?? []);
-				setJobs(jobsBody.jobs ?? []);
-				setOps(opsBody);
-			})
-			.catch((error: unknown) => {
-				if (error instanceof DOMException && error.name === "AbortError") {
-					return;
-				}
-				setLibrary([]);
-				setJobs([]);
-				setOps(null);
-			});
-		return () => controller.abort();
-	}, [auth, isOpen]);
-
-	const items = React.useMemo<PaletteItem[]>(() => {
-		const navigation = NAV_ITEMS.map((item) => ({
-			id: `nav:${item.page}`,
-			label: item.label,
-			meta: item.meta,
-			kind: "navigate" as const,
-			route: route(item.page),
-			keywords: `${item.label} ${item.meta} ${item.keywords}`,
-		}));
-		const transcriptItems = library.map((item) => ({
-			id: `transcript:${item.id}`,
-			label: item.title,
-			meta: `Transcript · ${item.tags?.join(", ") || item.video_id}`,
-			kind: "transcript" as const,
-			route: route("transcript", item.id),
-			keywords: `${item.title} ${item.video_id} ${(item.tags ?? []).join(" ")}`,
-		}));
-		const jobItems = jobs.map((job) => ({
-			id: `job:${job.id}`,
-			label: job.title || job.video_id,
-			meta: `Job · ${job.status}`,
-			kind: "job" as const,
-			route: route("job", job.id),
-			keywords: `${job.title ?? ""} ${job.video_id} ${job.status} ${job.source ?? ""}`,
-		}));
-		const recentItems = recents.map((recent) => ({
-			id: `recent:${recent.jobId}`,
-			label: recent.title,
-			meta: `Recent submission · job #${recent.jobId}`,
-			kind: "recent" as const,
-			route: route("job", recent.jobId),
-			keywords: `${recent.title} ${recent.videoId} job ${recent.jobId}`,
-		}));
-		const allItems = [
-			...navigation,
-			...recentItems,
-			...jobItems,
-			...transcriptItems,
-		];
-		if (videoUrl !== null) {
-			return allItems;
-		}
-		return allItems.filter((item) => fuzzyMatch(item.keywords, query));
-	}, [jobs, library, query, recents, videoUrl]);
-
-	const submitUrl = async () => {
-		if (
-			videoUrl === null ||
-			submitState.state === "submitting" ||
-			submitState.state === "success"
-		) {
-			return;
-		}
-		setSubmitState({ state: "submitting" });
-		try {
-			const response = await auth.protectedFetch("/jobs", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ url: videoUrl, source: "manual" }),
-			});
-			const body = (await response.json()) as unknown;
-			if (!response.ok) {
-				setSubmitState({
-					state: "error",
-					message: errorMessage(response.status, body),
-				});
-				return;
-			}
-			const job = body as JobView;
-			const nextRecent: RecentSubmission = {
-				jobId: job.job_id,
-				videoId: job.video_id,
-				title: `Queued as job #${job.job_id}`,
-				createdAt: new Date().toISOString(),
-			};
-			const nextRecents = [
-				nextRecent,
-				...recents.filter((recent) => recent.jobId !== job.job_id),
-			].slice(0, MAX_RECENTS);
-			setRecents(nextRecents);
-			writeRecents(nextRecents);
-			setSubmitState({ state: "success", job });
-		} catch {
-			setSubmitState({ state: "error", message: "Could not submit job." });
-		}
-	};
-
-	const onQueryChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-		setQuery(event.target.value);
-		setSelectedIndex(0);
-		if (submitState.state !== "submitting") {
-			setSubmitState({ state: "idle" });
-		}
-	};
-
-	if (!isOpen) {
-		return null;
-	}
-
-	const openItem = (item: PaletteItem | undefined) => {
-		if (!item) {
-			return;
-		}
-		navigate(item.route);
-		close();
-	};
-
-	const watchPipeline = (jobId: number) => {
-		navigate(route("job", jobId));
-		close();
-	};
-	const urlModeOffset = videoUrl !== null ? 1 : 0;
-
-	const onKeyDown = (event: React.KeyboardEvent<HTMLDialogElement>) => {
-		if (event.key === "Escape") {
-			event.preventDefault();
-			close();
-			return;
-		}
-		if (event.key === "Tab") {
-			const focusable = Array.from(
-				dialogRef.current?.querySelectorAll<HTMLElement>(
-					'button, [href], input, [tabindex]:not([tabindex="-1"])',
-				) ?? [],
-			).filter((node) => !node.hasAttribute("disabled"));
-			if (focusable.length === 0) {
-				return;
-			}
-			const first = focusable[0];
-			const last = focusable[focusable.length - 1];
-			if (event.shiftKey && document.activeElement === first) {
-				event.preventDefault();
-				last.focus();
-			} else if (!event.shiftKey && document.activeElement === last) {
-				event.preventDefault();
-				first.focus();
-			}
-			return;
-		}
-		if (event.key === "ArrowDown") {
-			event.preventDefault();
-			setSelectedIndex((value) =>
-				Math.min(value + 1, Math.max(0, items.length - 1 + urlModeOffset)),
-			);
-			return;
-		}
-		if (event.key === "ArrowUp") {
-			event.preventDefault();
-			setSelectedIndex((value) => Math.max(0, value - 1));
-			return;
-		}
-		if (event.key === "Enter") {
-			event.preventDefault();
-			if (videoUrl !== null && selectedIndex === 0) {
-				void submitUrl();
-			} else {
-				openItem(items[selectedIndex - urlModeOffset]);
-			}
-		}
-	};
-
-	return (
-		<div className="cmdk-overlay" onMouseDown={close}>
-			<dialog
-				open
-				className="cmdk"
-				aria-modal="true"
-				aria-label="Command palette"
-				ref={dialogRef}
-				onKeyDown={onKeyDown}
-				onMouseDown={(event) => event.stopPropagation()}
-			>
-				<input
-					ref={inputRef}
-					className="cmdk-input"
-					value={query}
-					onChange={onQueryChange}
-					placeholder="Search, jump, or paste a video URL"
-					aria-label="Search commands and transcripts"
-				/>
-				{videoUrl !== null ? (
-					<div className="cmdk-submit">
-						<div>
-							<span className="cmdk-label">Submit job</span>
-							<strong>{videoUrl}</strong>
-							<small>source manual · {capRemainingLabel(ops)}</small>
-						</div>
-						<button
-							type="button"
-							className="primary-button"
-							onClick={() => void submitUrl()}
-							disabled={
-								submitState.state === "submitting" ||
-								submitState.state === "success"
-							}
-						>
-							{submitState.state === "submitting" ? "Submitting" : "Submit"}
-						</button>
-					</div>
-				) : null}
-				{submitState.state === "error" ? (
-					<p className="cmdk-error" role="alert">
-						{submitState.message}
-					</p>
-				) : null}
-				{submitState.state === "success" ? (
-					<output className="cmdk-success">
-						<span>Queued as job #{submitState.job.job_id}</span>
-						<button
-							type="button"
-							onClick={() => watchPipeline(submitState.job.job_id)}
-						>
-							Watch pipeline →
-						</button>
-					</output>
-				) : null}
-				<div className="cmdk-list" aria-label="Command results">
-					{items.map((item, index) => (
-						<button
-							type="button"
-							className="cmdk-item"
-							key={item.id}
-							aria-selected={index + urlModeOffset === selectedIndex}
-							onMouseEnter={() => setSelectedIndex(index + urlModeOffset)}
-							onClick={() => openItem(item)}
-						>
-							<span>
-								<strong>{item.label}</strong>
-								<small>{item.meta}</small>
-							</span>
-							<em>{item.kind}</em>
-						</button>
-					))}
-					{items.length === 0 ? <p className="cmdk-empty">No matches</p> : null}
-				</div>
-			</dialog>
-		</div>
-	);
-}
+Object.assign(window, { CommandPalette });
