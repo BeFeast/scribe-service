@@ -63,17 +63,18 @@ compose.yaml     reference deployment (env_file: .env, codex bind-mount, named-v
 cp .env.example .env  # edit values
 docker compose up -d --build
 
-# 2. Apply migrations
-docker exec scribe alembic upgrade head
-
-# 3. Submit a job
+# 2. Submit a job
 curl -X POST http://localhost:13120/jobs \
   -H 'Content-Type: application/json' \
   -d '{"url":"https://youtu.be/jNQXAC9IVRw","source":"manual"}'
 
-# 4. Poll until done
+# 3. Poll until done
 curl http://localhost:13120/jobs/1
 ```
+
+The service image runs `uv run alembic upgrade head` in its entrypoint before
+starting Uvicorn. If migrations fail, the container exits instead of serving
+traffic against a stale schema.
 
 ## HTTP API (excerpt)
 
