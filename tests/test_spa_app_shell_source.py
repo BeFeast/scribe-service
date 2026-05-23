@@ -215,9 +215,11 @@ def test_spa_auth_config_and_protected_fetch_are_wired() -> None:
     assert "clerk_publishable_key" in source
     assert "clerk_frontend_api" in source
     assert "trusted_network" in source
-    assert "@clerk/ui@1/dist/ui.browser.js" in source
+    assert "@clerk/ui@1/dist/ui.browser.js" not in source
     assert "@clerk/clerk-js@6/dist/clerk.browser.js" in source
-    assert "__internal_ClerkUICtor" in source
+    assert "__internal_ClerkUICtor" not in source
+    assert "redirectToSignIn" in source
+    assert "redirectToSignUp" in source
     assert "addListener" in source
     assert "setSignedIn(Boolean(window.Clerk?.session))" in source
     assert "setSignedIn(Boolean(session))" in source
@@ -251,9 +253,11 @@ def test_global_shell_shows_access_status_and_operator_auth() -> None:
         assert label in read("hooks/useAuth.tsx")
     assert "auth.accessStatus" in settings_source
     assert "auth.signIn" in settings_source
+    assert "auth.signUp" in settings_source
     assert "auth.signOut" in settings_source
     assert "auth.accessStatus" in topbar
     assert "auth.signIn" in topbar
+    assert "auth.signUp" in topbar
     assert "auth.signOut" in topbar
     assert 'route.page === "settings"' in main
 

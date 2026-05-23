@@ -38,15 +38,34 @@ export function TopBar({ theme, onThemeChange }: TopBarProps) {
 			<nav className="topbar-actions" aria-label="Global">
 				<span className="topbar-access-status">{auth.accessStatus}</span>
 				{!auth.canWrite && auth.clerkConfigured ? (
-					<button
-						type="button"
-						className="auth-button"
-						onClick={auth.signIn}
-						disabled={!auth.clerkReady}
-						title={auth.clerkReady ? "Sign in with Google" : "Sign in loading"}
-					>
-						Sign in
-					</button>
+					<>
+						<button
+							type="button"
+							className="auth-button"
+							onClick={() => void auth.signUp()}
+							disabled={!auth.clerkReady || auth.authRedirectInFlight}
+							title={
+								auth.authBlockedMessage ??
+								(auth.clerkReady
+									? "Create account with Clerk"
+									: "Sign in loading")
+							}
+						>
+							Sign up
+						</button>
+						<button
+							type="button"
+							className="auth-button ghost"
+							onClick={() => void auth.signIn()}
+							disabled={!auth.clerkReady || auth.authRedirectInFlight}
+							title={
+								auth.authBlockedMessage ??
+								(auth.clerkReady ? "Sign in with Clerk" : "Sign in loading")
+							}
+						>
+							Sign in
+						</button>
+					</>
 				) : null}
 				{auth.accessStatus === "Signed in" ? (
 					<button

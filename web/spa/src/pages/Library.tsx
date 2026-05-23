@@ -394,17 +394,33 @@ export function Library({
 					<span className="chip info">Sign in required</span>
 					<p className="feed-title">Your library is signed-in only</p>
 					<p className="feed-excerpt">
-						Library entries are owner-scoped. Sign in with your Scribe account
-						to see your transcripts.
+						{auth.authBlockedMessage ??
+							"Library entries are owner-scoped. Sign in with your Scribe account to see your transcripts."}
 					</p>
-					<button
-						type="button"
-						className="btn primary"
-						onClick={auth.signIn}
-						disabled={auth.clerkConfigured && !auth.clerkReady}
-					>
-						Sign in
-					</button>
+					<div className="auth-choice-row">
+						<button
+							type="button"
+							className="btn primary"
+							onClick={() => void auth.signUp()}
+							disabled={
+								auth.clerkConfigured &&
+								(!auth.clerkReady || auth.authRedirectInFlight)
+							}
+						>
+							Sign up
+						</button>
+						<button
+							type="button"
+							className="btn ghost"
+							onClick={() => void auth.signIn()}
+							disabled={
+								auth.clerkConfigured &&
+								(!auth.clerkReady || auth.authRedirectInFlight)
+							}
+						>
+							Sign in
+						</button>
+					</div>
 				</div>
 			) : null}
 

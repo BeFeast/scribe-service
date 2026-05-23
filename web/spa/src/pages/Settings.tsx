@@ -358,14 +358,26 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 				<div className="settings-actions">
 					<span className="access-status">{auth.accessStatus}</span>
 					{!auth.canWrite && auth.clerkConfigured ? (
-						<button
-							className="btn"
-							type="button"
-							onClick={auth.signIn}
-							disabled={!auth.clerkReady}
-						>
-							Sign in
-						</button>
+						<>
+							<button
+								className="btn"
+								type="button"
+								onClick={() => void auth.signUp()}
+								disabled={!auth.clerkReady || auth.authRedirectInFlight}
+								title={auth.authBlockedMessage ?? undefined}
+							>
+								Sign up
+							</button>
+							<button
+								className="btn ghost"
+								type="button"
+								onClick={() => void auth.signIn()}
+								disabled={!auth.clerkReady || auth.authRedirectInFlight}
+								title={auth.authBlockedMessage ?? undefined}
+							>
+								Sign in
+							</button>
+						</>
 					) : null}
 					{auth.accessStatus === "Signed in" ? (
 						<button className="btn ghost" type="button" onClick={auth.signOut}>

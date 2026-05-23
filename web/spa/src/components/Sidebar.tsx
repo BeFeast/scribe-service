@@ -144,7 +144,11 @@ export function Sidebar({ route, navigate }: SidebarProps) {
 				<SidebarPanel
 					status={status}
 					onSignIn={auth.signIn}
-					signInDisabled={auth.clerkConfigured && !auth.clerkReady}
+					signInDisabled={
+						auth.clerkConfigured &&
+						(!auth.clerkReady || auth.authRedirectInFlight)
+					}
+					authBlockedMessage={auth.authBlockedMessage}
 					unavailableLabel="Tags unavailable — retry shortly."
 					authPrompt="Sign in to see your tags."
 				>
@@ -180,7 +184,11 @@ export function Sidebar({ route, navigate }: SidebarProps) {
 				<SidebarPanel
 					status={status}
 					onSignIn={auth.signIn}
-					signInDisabled={auth.clerkConfigured && !auth.clerkReady}
+					signInDisabled={
+						auth.clerkConfigured &&
+						(!auth.clerkReady || auth.authRedirectInFlight)
+					}
+					authBlockedMessage={auth.authBlockedMessage}
 					unavailableLabel="Pipeline unavailable — retry shortly."
 					authPrompt="Sign in to see pipeline status."
 				>
@@ -216,13 +224,15 @@ function SidebarPanel({
 	status,
 	onSignIn,
 	signInDisabled,
+	authBlockedMessage,
 	unavailableLabel,
 	authPrompt,
 	children,
 }: {
 	status: SidebarStatus;
-	onSignIn: () => void;
+	onSignIn: () => Promise<void>;
 	signInDisabled: boolean;
+	authBlockedMessage: string | null;
 	unavailableLabel: string;
 	authPrompt: string;
 	children: React.ReactNode;
@@ -230,11 +240,11 @@ function SidebarPanel({
 	if (status === "auth-required") {
 		return (
 			<div className="sidebar-locked" data-state="auth-required">
-				<p className="empty-note">{authPrompt}</p>
+				<p className="empty-note">{authBlockedMessage ?? authPrompt}</p>
 				<button
 					type="button"
 					className="btn ghost sidebar-signin"
-					onClick={onSignIn}
+					onClick={() => void onSignIn()}
 					disabled={signInDisabled}
 				>
 					Sign in
