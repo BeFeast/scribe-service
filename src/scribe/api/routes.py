@@ -563,11 +563,21 @@ def add_user(
 def disable_user(
     user_id: int,
     session: Session = Depends(get_session),
-    _actor: Actor = Depends(require_admin_actor),
+    actor: Actor = Depends(require_admin_actor),
 ) -> UserAdminView:
     user = session.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail=f"user {user_id} not found")
+    if actor.user_id == user.id:
+        raise HTTPException(status_code=400, detail="cannot disable your own admin account")
+    if user.role == "admin" and not user.disabled:
+        active_admins = session.scalar(
+            select(func.count())
+            .select_from(User)
+            .where(User.role == "admin", User.disabled.is_(False))
+        )
+        if active_admins is not None and active_admins <= 1:
+            raise HTTPException(status_code=400, detail="cannot disable the last active admin account")
     user.disabled = True
     session.commit()
     session.refresh(user)

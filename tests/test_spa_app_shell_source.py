@@ -251,6 +251,8 @@ def test_settings_access_section_wires_current_user_and_admin_users() -> None:
     assert 'auth.protectedFetch("/api/auth/me")' in settings
     assert 'auth.protectedFetch("/api/admin/users")' in settings
     assert "Admin role required to manage Scribe users." in settings
+    assert "At least one active admin account is required." in settings
+    assert "auth.authBlockedMessage === null" in settings
     assert "Add or update user" in settings
     assert "`/api/admin/users/${disableTarget.id}/disable`" in settings
     assert "ConfirmDialog" in settings

@@ -385,6 +385,39 @@ def test_admin_user_apis_list_add_update_and_disable(db_session, monkeypatch):
     assert admin.id != target.id
 
 
+def test_admin_user_api_rejects_self_disable(db_session, monkeypatch):
+    _clear_auth(db_session)
+    monkeypatch.setattr(settings, "auth_test_mode", True)
+    admin = _seed_user(db_session, email="admin@example.test", subject="user_admin", role="admin")
+
+    headers = _external_headers(
+        {
+            "X-Scribe-Test-Clerk-Sub": "user_admin",
+            "X-Scribe-Test-Email": "admin@example.test",
+        }
+    )
+    with _client(db_session) as client:
+        disable_resp = client.post(f"/api/admin/users/{admin.id}/disable", headers=headers)
+    app.dependency_overrides.pop(routes_module.get_session, None)
+
+    assert disable_resp.status_code == 400
+    assert disable_resp.json()["detail"] == "cannot disable your own admin account"
+
+
+def test_admin_user_api_rejects_last_active_admin_disable(db_session, monkeypatch):
+    _clear_auth(db_session)
+    monkeypatch.setattr(settings, "machine_bearer_token", "machine-test-token")
+    admin = _seed_user(db_session, email="admin@example.test", subject="user_admin", role="admin")
+
+    headers = _external_headers({"Authorization": "Bearer machine-test-token"})
+    with _client(db_session) as client:
+        disable_resp = client.post(f"/api/admin/users/{admin.id}/disable", headers=headers)
+    app.dependency_overrides.pop(routes_module.get_session, None)
+
+    assert disable_resp.status_code == 400
+    assert disable_resp.json()["detail"] == "cannot disable the last active admin account"
+
+
 def test_library_is_owner_scoped_for_users_and_broad_for_admin(db_session, monkeypatch):
     _clear_auth(db_session)
     monkeypatch.setattr(settings, "auth_test_mode", True)

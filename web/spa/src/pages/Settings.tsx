@@ -477,8 +477,23 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 		}
 	}
 
+	function requestDisableUser(user: AdminUser) {
+		const reason = disableBlockedReason(user, currentUser, adminUsers);
+		if (reason !== null) {
+			setAccessError(reason);
+			return;
+		}
+		setDisableTarget(user);
+	}
+
 	async function disableUser() {
 		if (disableTarget === null) {
+			return;
+		}
+		const reason = disableBlockedReason(disableTarget, currentUser, adminUsers);
+		if (reason !== null) {
+			setDisableTarget(null);
+			setAccessError(reason);
 			return;
 		}
 		setDisablingUser(true);
@@ -597,7 +612,7 @@ export function Settings({ tweaks, setTheme, replaceTweaks }: SettingsProps) {
 					onDisplayName={setUserDisplayName}
 					onRole={setUserRole}
 					onSaveUser={saveUser}
-					onDisableRequest={setDisableTarget}
+					onDisableRequest={requestDisableUser}
 					onRefresh={loadAccess}
 				/>
 
@@ -811,7 +826,8 @@ export function AccessSection({
 	onDisableRequest: (user: AdminUser) => void;
 	onRefresh: () => void;
 }) {
-	const signedOut = currentUser === null && !loading;
+	const signedOut =
+		currentUser === null && !loading && error === null && auth.authBlockedMessage === null;
 	const adminControlsEnabled =
 		currentUser !== null && canManageUsers(currentUser) && !adminRequired;
 
@@ -847,14 +863,25 @@ export function AccessSection({
 			{error !== null ? (
 				<div className="settings-banner err" role="alert">
 					<span>{error}</span>
-					<button
-						className="btn ghost"
-						type="button"
-						onClick={() => void auth.signIn()}
-						disabled={!auth.clerkReady || auth.authRedirectInFlight}
-					>
-						Retry sign in
-					</button>
+					{auth.authBlockedMessage !== null ? (
+						<button
+							className="btn ghost"
+							type="button"
+							onClick={onRefresh}
+							disabled={loading}
+						>
+							Retry access
+						</button>
+					) : (
+						<button
+							className="btn ghost"
+							type="button"
+							onClick={() => void auth.signIn()}
+							disabled={!auth.clerkReady || auth.authRedirectInFlight}
+						>
+							Retry sign in
+						</button>
+					)}
 				</div>
 			) : null}
 
@@ -937,27 +964,39 @@ export function AccessSection({
 					</thead>
 					<tbody>
 						{users.length > 0 ? (
-							users.map((user) => (
-								<tr key={user.id}>
-									<td>{user.primary_email}</td>
-									<td>{user.display_name || "—"}</td>
-									<td>{user.role}</td>
-									<td>{user.disabled ? "disabled" : "active"}</td>
-									<td className="access-subject">
-										{user.clerk_subject || "not linked"}
-									</td>
-									<td>
-										<button
-											className="btn ghost"
-											type="button"
-											disabled={!adminControlsEnabled || user.disabled}
-											onClick={() => onDisableRequest(user)}
-										>
-											Disable
-										</button>
-									</td>
-								</tr>
-							))
+							users.map((user) => {
+								const blockReason = disableBlockedReason(
+									user,
+									currentUser,
+									users,
+								);
+								return (
+									<tr key={user.id}>
+										<td>{user.primary_email}</td>
+										<td>{user.display_name || "—"}</td>
+										<td>{user.role}</td>
+										<td>{user.disabled ? "disabled" : "active"}</td>
+										<td className="access-subject">
+											{user.clerk_subject || "not linked"}
+										</td>
+										<td>
+											<button
+												className="btn ghost"
+												type="button"
+												disabled={
+													!adminControlsEnabled ||
+													user.disabled ||
+													blockReason !== null
+												}
+												title={blockReason ?? undefined}
+												onClick={() => onDisableRequest(user)}
+											>
+												Disable
+											</button>
+										</td>
+									</tr>
+								);
+							})
 						) : (
 							<tr>
 								<td colSpan={6}>
@@ -1363,6 +1402,23 @@ function canManageUsers(user: CurrentUser): boolean {
 	return (
 		user.role === "admin" || user.role === "lan" || user.role === "machine"
 	);
+}
+
+function disableBlockedReason(
+	user: AdminUser,
+	currentUser: CurrentUser | null,
+	users: AdminUser[],
+): string | null {
+	if (currentUser?.user_id === user.id) {
+		return "You cannot disable your own admin account.";
+	}
+	const activeAdminCount = users.filter(
+		(candidate) => candidate.role === "admin" && !candidate.disabled,
+	).length;
+	if (user.role === "admin" && !user.disabled && activeAdminCount <= 1) {
+		return "At least one active admin account is required.";
+	}
+	return null;
 }
 
 function userIdentity(user: CurrentUser): string {
