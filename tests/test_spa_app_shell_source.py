@@ -23,8 +23,10 @@ def test_app_shell_files_exist() -> None:
         "hooks/useAuth.tsx",
         "hooks/useRoute.ts",
         "hooks/useTweaks.ts",
+        "components/PrivateShareLinks.tsx",
         "pages/Library.tsx",
         "pages/Transcript.tsx",
+        "shareTargets.ts",
     ):
         assert (SPA_SRC / path).is_file()
 
@@ -388,9 +390,8 @@ def test_spa_internal_navigation_uses_real_relative_anchors() -> None:
     assert "row.summary_shortlink" not in library
     assert "row.transcript_shortlink" not in library
     assert "record.summary_shortlink" not in transcript
-    assert "{!row.is_partial ? (" in library
-    assert 'href={`/transcripts/${row.id}/summary.md`}' in library
-    assert 'href={`/transcripts/${row.id}/transcript.md`}' in library
+    assert "PrivateShareLinks" in library
+    assert "PrivateShareLinks" in transcript
     assert 'href={`/transcripts/${record.id}/summary.md`}' in transcript
     assert 'href={`/transcripts/${record.id}/transcript.md`}' in transcript
     assert "handleRouteAnchorClick" in source
@@ -399,3 +400,42 @@ def test_spa_internal_navigation_uses_real_relative_anchors() -> None:
     assert "event.button !== 0" in route
     assert 'return `#/${parts.join("/")}${query ? `?${query}` : ""}`;' in route
     assert "go.oklabs.uk" not in source + route
+
+
+def test_private_share_target_helper_uses_exact_relative_routes() -> None:
+    source = read("shareTargets.ts")
+
+    assert 'href: `/#/transcript/${id}`' in source
+    assert 'href: `/transcripts/${id}/summary.md`' in source
+    assert 'href: `/transcripts/${id}/transcript.md`' in source
+    assert "new URL(relativePath, window.location.origin).toString()" in source
+
+
+def test_transcript_and_library_share_ui_use_relative_hrefs_and_copy_absolute_urls() -> None:
+    share = read("components/PrivateShareLinks.tsx")
+    library = read("pages/Library.tsx")
+    transcript = read("pages/Transcript.tsx")
+    source = share + library + transcript
+
+    assert "transcriptShareTargets(id)" in source
+    assert "href={target.href}" in source
+    assert "navigator.clipboard.writeText(absoluteSameOriginUrl(target.href))" in source
+    assert 'const pageCopyKinds = new Set<ShareTarget["kind"]>(["page"]);' in library
+    assert "copyKinds={pageCopyKinds}" in library
+    assert "row.source_url" in library
+    assert "record.source_url" in transcript
+    assert "PrivateShareLinks id={record.id}" in transcript
+
+
+def test_internal_share_ui_does_not_use_shortlinks() -> None:
+    source = (
+        read("components/PrivateShareLinks.tsx")
+        + read("pages/Library.tsx")
+        + read("pages/Transcript.tsx")
+        + read("shareTargets.ts")
+    )
+
+    assert "go.oklabs.uk" not in source
+    assert "summary_shortlink" not in source
+    assert "transcript_shortlink" not in source
+    assert "shortlink" not in source.lower()

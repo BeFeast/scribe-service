@@ -1,6 +1,7 @@
 import React from "react";
 
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { PrivateShareLinks } from "../components/PrivateShareLinks";
 import { useAuth } from "../hooks/useAuth";
 import {
 	type Route,
@@ -547,14 +548,20 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 						</a>
 					</div>
 				</div>
-				<button
-					type="button"
-					className="btn ghost danger-button"
-					onClick={() => setConfirmDeleteOpen(true)}
-					disabled={deleting}
-				>
-					{deleting ? "Deleting" : "Delete"}
-				</button>
+				<div className="transcript-actions">
+					<div className="share-control" aria-label="Private share links">
+						<span className="section-label">Share</span>
+						<PrivateShareLinks id={record.id} />
+					</div>
+					<button
+						type="button"
+						className="btn ghost danger-button"
+						onClick={() => setConfirmDeleteOpen(true)}
+						disabled={deleting}
+					>
+						{deleting ? "Deleting" : "Delete"}
+					</button>
+				</div>
 			</header>
 
 			{record.tags && record.tags.length > 0 ? (

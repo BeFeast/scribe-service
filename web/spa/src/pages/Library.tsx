@@ -1,6 +1,7 @@
 import React from "react";
 
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { PrivateShareLinks } from "../components/PrivateShareLinks";
 import { useAuth } from "../hooks/useAuth";
 import { usePoll } from "../hooks/usePoll";
 import {
@@ -12,6 +13,7 @@ import type { LibraryLayout } from "../hooks/useTweaks";
 import { isAuthStatus } from "../lib/auth";
 import type { DisplayCurrency } from "../lib/currency";
 import { formatUsdCost } from "../lib/currency";
+import type { ShareTarget } from "../shareTargets";
 
 type LibraryRow = {
 	id: number;
@@ -79,6 +81,7 @@ type LibraryProps = {
 const terminalStatuses = new Set(["done", "failed", "cancelled", "canceled"]);
 const stageLabels = ["queued", "downloading", "transcribing", "summarizing"];
 const libraryPageSize = 50;
+const pageCopyKinds = new Set<ShareTarget["kind"]>(["page"]);
 
 function formatDate(value: string): string {
 	const date = new Date(value);
@@ -846,12 +849,11 @@ function RowLinks({
 	return (
 		<div className="row-links">
 			{row.source_url !== null ? (
-				<a href={row.source_url}>{row.source_label ?? "Source"}</a>
+				<a href={row.source_url} target="_blank" rel="noreferrer">
+					{row.source_label ?? "Source"}
+				</a>
 			) : null}
-			{!row.is_partial ? (
-				<a href={`/transcripts/${row.id}/summary.md`}>Summary</a>
-			) : null}
-			<a href={`/transcripts/${row.id}/transcript.md`}>Transcript</a>
+			<PrivateShareLinks id={row.id} copyKinds={pageCopyKinds} />
 			<button
 				type="button"
 				className="link-button danger-link"
