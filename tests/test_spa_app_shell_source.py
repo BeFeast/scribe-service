@@ -436,7 +436,7 @@ def test_transcript_and_library_share_ui_use_managed_share_links() -> None:
     assert "transcriptShareTargets(id)" in source
     assert "`/api/transcripts/${id}/share-links`" in share
     assert "`/api/share-links/${link.id}/revoke`" in share
-    assert "navigator.clipboard.writeText(created.share_url)" in share
+    assert "copyTextToClipboard(created.share_url)" in share
     assert "href={target.href}" not in source
     assert 'const pageCopyKinds = new Set<ShareTarget["kind"]>(["page"]);' in library
     assert "copyKinds={pageCopyKinds}" in library
@@ -446,6 +446,27 @@ def test_transcript_and_library_share_ui_use_managed_share_links() -> None:
     assert "row.source_url" in library
     assert "record.source_url" in transcript
     assert "PrivateShareLinks id={record.id}" in transcript
+
+
+def test_private_share_links_are_compact_and_have_clipboard_fallback() -> None:
+    share = read("components/PrivateShareLinks.tsx")
+    styles = read("styles.css")
+
+    assert 'className="private-share"' in share
+    assert '<summary className="btn ghost">Share</summary>' in share
+    assert 'className="private-share-panel"' in share
+    assert 'className="share-menu-row"' in share
+    assert 'className="share-targets"' not in share
+    assert 'className="share-target"' not in share
+    assert "export async function copyTextToClipboard" in share
+    assert "navigator.clipboard?.writeText" in share
+    assert 'document.createElement("textarea")' in share
+    assert 'document.execCommand("copy")' in share
+    assert "Link created. Allow clipboard access, then try again." in share
+    assert "window.setTimeout(() => setCopyState(null), 4500)" in share
+    assert ".private-share-panel" in styles
+    assert "position: absolute;" in styles
+    assert ".row-links .private-share" in styles
 
 
 def test_internal_share_ui_does_not_use_shortlinks() -> None:
