@@ -5,6 +5,7 @@ import { type ShareTarget, transcriptShareTargets } from "../shareTargets";
 
 type CopyState = {
 	key: string;
+	message: string;
 	status: "copied" | "error";
 };
 
@@ -44,6 +45,36 @@ function labelForTargetKind(kind: ManagedShareLink["target_kind"]): string {
 	}
 }
 
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+	try {
+		if (navigator.clipboard?.writeText !== undefined) {
+			await navigator.clipboard.writeText(text);
+			return true;
+		}
+	} catch {
+		// Fall through to the textarea fallback for HTTP origins or denied permissions.
+	}
+
+	const textarea = document.createElement("textarea");
+	textarea.value = text;
+	textarea.setAttribute("readonly", "");
+	textarea.style.position = "fixed";
+	textarea.style.top = "0";
+	textarea.style.left = "0";
+	textarea.style.opacity = "0";
+	document.body.appendChild(textarea);
+	textarea.focus();
+	textarea.select();
+
+	try {
+		return document.execCommand("copy");
+	} catch {
+		return false;
+	} finally {
+		document.body.removeChild(textarea);
+	}
+}
+
 export function PrivateShareLinks({
 	id,
 	copyKinds,
@@ -71,6 +102,14 @@ export function PrivateShareLinks({
 		loadLinks().catch(() => setLinks([]));
 	}, [loadLinks]);
 
+	React.useEffect(() => {
+		if (copyState === null) {
+			return undefined;
+		}
+		const timeout = window.setTimeout(() => setCopyState(null), 4500);
+		return () => window.clearTimeout(timeout);
+	}, [copyState]);
+
 	async function createAndCopy(target: ShareTarget) {
 		setBusyKind(target.kind);
 		try {
@@ -92,10 +131,26 @@ export function PrivateShareLinks({
 				share_url: string;
 			};
 			await loadLinks();
-			await navigator.clipboard.writeText(created.share_url);
-			setCopyState({ key: target.kind, status: "copied" });
+			const copied = await copyTextToClipboard(created.share_url);
+			if (copied) {
+				setCopyState({
+					key: target.kind,
+					message: "Copied",
+					status: "copied",
+				});
+			} else {
+				setCopyState({
+					key: target.kind,
+					message: "Link created. Allow clipboard access, then try again.",
+					status: "error",
+				});
+			}
 		} catch {
-			setCopyState({ key: target.kind, status: "error" });
+			setCopyState({
+				key: target.kind,
+				message: "Could not create link. Try again.",
+				status: "error",
+			});
 		} finally {
 			setBusyKind(null);
 		}
@@ -113,62 +168,83 @@ export function PrivateShareLinks({
 			}
 			await loadLinks();
 		} catch {
-			setCopyState({ key: `revoke:${link.id}`, status: "error" });
+			setCopyState({
+				key: `revoke:${link.id}`,
+				message: "Revoke failed. Try again.",
+				status: "error",
+			});
 		} finally {
 			setBusyKind(null);
 		}
 	}
 
 	return (
-		<div className="share-targets">
-			{targets.map((target) => {
-				const canCopy = copyKinds === undefined || copyKinds.has(target.kind);
-				const state =
-					copyState?.key === target.kind ? copyState.status : undefined;
-				return (
-					<div className="share-target" key={target.kind}>
-						<button
-							type="button"
-							className="btn ghost"
-							onClick={() => void createAndCopy(target)}
-							disabled={!canCopy || busyKind !== null}
-						>
-							{busyKind === target.kind ? "Creating" : target.label}
-						</button>
-						{state !== undefined ? (
-							<span
-								className={
-									state === "copied" ? "copy-state ok" : "copy-state err"
-								}
-							>
-								{state === "copied" ? "Copied" : "Copy failed"}
-							</span>
-						) : null}
-					</div>
-				);
-			})}
-			{links
-				.filter((link) => link.revoked_at == null)
-				.map((link) => (
-					<div className="share-target" key={link.id}>
-						<span className="copy-state">
-							{link.label ?? labelForTargetKind(link.target_kind)} ...
-							{link.token_hint}
-						</span>
-						<button
-							type="button"
-							className="btn ghost"
-							onClick={() => void revoke(link)}
-							disabled={busyKind !== null}
-						>
-							{busyKind === `revoke:${link.id}` ? "Revoking" : "Revoke"}
-						</button>
-						{copyState?.key === `revoke:${link.id}` &&
-						copyState.status === "error" ? (
-							<span className="copy-state err">Revoke failed</span>
-						) : null}
-					</div>
-				))}
-		</div>
+		<details className="private-share">
+			<summary className="btn ghost">Share</summary>
+			<div className="private-share-panel">
+				<div className="share-menu-section">
+					<span className="share-menu-heading">Create link</span>
+					{targets.map((target) => {
+						const canCopy =
+							copyKinds === undefined || copyKinds.has(target.kind);
+						const state =
+							copyState?.key === target.kind ? copyState : undefined;
+						return (
+							<div className="share-menu-row" key={target.kind}>
+								<button
+									type="button"
+									className="btn ghost"
+									onClick={() => void createAndCopy(target)}
+									disabled={!canCopy || busyKind !== null}
+								>
+									{busyKind === target.kind ? "Creating" : target.label}
+								</button>
+								{state !== undefined ? (
+									<output
+										className={
+											state.status === "copied"
+												? "copy-state ok"
+												: "copy-state err"
+										}
+									>
+										{state.message}
+									</output>
+								) : null}
+							</div>
+						);
+					})}
+				</div>
+				<div className="share-menu-section">
+					<span className="share-menu-heading">Active links</span>
+					{links.filter((link) => link.revoked_at == null).length === 0 ? (
+						<span className="copy-state">None yet</span>
+					) : null}
+					{links
+						.filter((link) => link.revoked_at == null)
+						.map((link) => (
+							<div className="share-menu-row active-link" key={link.id}>
+								<span className="copy-state">
+									{link.label ?? labelForTargetKind(link.target_kind)} ...
+									{link.token_hint}
+								</span>
+								<button
+									type="button"
+									className="btn ghost"
+									onClick={() => void revoke(link)}
+									disabled={busyKind !== null}
+								>
+									{busyKind === `revoke:${link.id}` ? "Revoking" : "Revoke"}
+								</button>
+								{copyState?.key === `revoke:${link.id}` &&
+								copyState.status === "error" ? (
+									<output className="copy-state err">
+										{copyState.message}
+									</output>
+								) : null}
+							</div>
+						))}
+				</div>
+			</div>
+		</details>
 	);
 }
