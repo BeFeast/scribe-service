@@ -232,9 +232,9 @@ def test_usd_backed_spend_uses_shared_display_currency_conversion() -> None:
     settings = read("design-app/settings.jsx")
     source = production_sources()
 
-    assert "USD_DISPLAY_RATES" in data
+    assert "convertUsdToDisplayCurrency as convertUsdAmount" in data
     assert "export function convertUsdToDisplayCurrency" in data
-    assert "convertUsdToDisplayCurrency(Number(value), normalized)" in data
+    assert "convertUsdAmount(Number(value), normalized)" in data
     assert "usdDisplayRates" in currency
     assert "convertUsdToDisplayCurrency(value, currency)" in currency
     assert "It does not perform FX conversion" not in source

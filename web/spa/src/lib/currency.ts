@@ -9,9 +9,10 @@ export const usdDisplayRates: Record<DisplayCurrency, number> = {
 };
 
 export function parseDisplayCurrency(value: unknown): DisplayCurrency {
-	return typeof value === "string" &&
-		displayCurrencies.includes(value as DisplayCurrency)
-		? (value as DisplayCurrency)
+	if (typeof value !== "string") return "ILS";
+	const normalized = value.trim().toUpperCase();
+	return displayCurrencies.includes(normalized as DisplayCurrency)
+		? (normalized as DisplayCurrency)
 		: "ILS";
 }
 
@@ -30,7 +31,7 @@ export function formatUsdCost(
 		return "not billed";
 	}
 	const converted = convertUsdToDisplayCurrency(value, currency);
-	const fractionDigits = Math.abs(converted) < 0.01 ? 4 : 2;
+	const fractionDigits = Math.abs(converted) < 0.1 ? 4 : 2;
 	if (currency === "ILS") {
 		return `₪${converted.toFixed(fractionDigits)} ILS`;
 	}

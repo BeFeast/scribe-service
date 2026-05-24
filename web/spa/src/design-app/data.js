@@ -1,3 +1,8 @@
+import {
+	convertUsdToDisplayCurrency as convertUsdAmount,
+	parseDisplayCurrency,
+} from "../lib/currency";
+
 export const FALLBACK_STATS = {
 	window_days: 1,
 	jobs_by_status: {
@@ -39,12 +44,6 @@ export let CURRENT_JOB_STATE = { loading: false, error: null };
 export let CURRENT_JOB_LOG = { connected: false, error: null, lines: [] };
 export let DISPLAY_CURRENCY = "ILS";
 export let PUBLIC_BASE_URL = "";
-
-export const USD_DISPLAY_RATES = Object.freeze({
-	USD: 1,
-	ILS: 3.7,
-	EUR: 0.92,
-});
 
 export function setRuntimeData(next) {
 	TRANSCRIPTS = next.transcripts ?? TRANSCRIPTS;
@@ -160,14 +159,11 @@ export function convertUsdToDisplayCurrency(
 ) {
 	if (value == null || Number.isNaN(Number(value))) return Number.NaN;
 	const normalized = normalizeDisplayCurrency(currency);
-	return Number(value) * USD_DISPLAY_RATES[normalized];
+	return convertUsdAmount(Number(value), normalized);
 }
 
 export function normalizeDisplayCurrency(value) {
-	const normalized = String(value || "")
-		.trim()
-		.toUpperCase();
-	return ["ILS", "USD", "EUR"].includes(normalized) ? normalized : "ILS";
+	return parseDisplayCurrency(value);
 }
 
 export function publicBaseUrl() {
