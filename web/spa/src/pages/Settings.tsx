@@ -86,7 +86,6 @@ type SettingsRowProps = {
 	children: React.ReactNode;
 };
 
-const EXTENSION_TOKEN_KEY = "scribe.extensionToken";
 const CONFIG_SAVED_EVENT = "scribe-config-saved";
 const configKeys: ConfigKey[] = [
 	"daily_spend_cap_usd",
@@ -109,9 +108,7 @@ export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
 	const [savedTweaks, setSavedTweaks] = React.useState<Tweaks>(tweaks);
 	const [dirtyKeys, setDirtyKeys] = React.useState<Set<ConfigKey>>(new Set());
 	const [restartKeys, setRestartKeys] = React.useState<string[]>([]);
-	const [extensionToken, setExtensionToken] = React.useState(
-		readStoredExtensionToken,
-	);
+	const [extensionToken, setExtensionToken] = React.useState("");
 	const [promptList, setPromptList] = React.useState<PromptListResponse | null>(
 		null,
 	);
@@ -381,11 +378,7 @@ export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
 
 	function storeExtensionToken(nextToken: string) {
 		setExtensionToken(nextToken.trim());
-		try {
-			localStorage.setItem(EXTENSION_TOKEN_KEY, nextToken.trim());
-		} catch {
-			// Runtime use still works for this tab.
-		}
+		setShowExtensionToken(true);
 	}
 
 	async function copyExtensionToken() {
@@ -801,6 +794,13 @@ export function AccessSection({
 		auth.authBlockedMessage === null;
 	const adminControlsEnabled =
 		currentUser !== null && canManageUsers(currentUser) && !adminRequired;
+	const activeUsers = users.filter((user) => !user.disabled).length;
+	const adminUsers = users.filter(
+		(user) => user.role === "admin" && !user.disabled,
+	).length;
+	const linkedUsers = users.filter(
+		(user) => user.clerk_subject !== null,
+	).length;
 
 	return (
 		<section className="settings-group access-group">
@@ -830,6 +830,31 @@ export function AccessSection({
 					</span>
 				</div>
 			</div>
+
+			{currentUser !== null ? (
+				<div className="access-me">
+					<div className="avatar">{initialsOf(userIdentity(currentUser))}</div>
+					<div className="info">
+						<div className="name">
+							{userIdentity(currentUser)}
+							<span className={`role-chip ${currentUser.role}`}>
+								you · {currentUser.role}
+							</span>
+						</div>
+						<div className="email">
+							{currentUser.email !== null
+								? `${currentUser.email} · ${currentUser.kind}`
+								: currentUser.kind}
+						</div>
+					</div>
+					<div className="spacer" />
+					{auth.accessStatus === "Signed in" ? (
+						<button className="btn ghost" type="button" onClick={auth.signOut}>
+							Sign out
+						</button>
+					) : null}
+				</div>
+			) : null}
 
 			{error !== null ? (
 				<div className="settings-banner err" role="alert">
@@ -886,7 +911,25 @@ export function AccessSection({
 				</div>
 			) : null}
 
-			<div className="access-form" aria-disabled={!adminControlsEnabled}>
+			<div className="access-toolbar">
+				<span className="stat">
+					<strong>{activeUsers}</strong> active
+				</span>
+				<span className="stat">
+					<span className="dot" />
+					<strong>{adminUsers}</strong> admins
+				</span>
+				<span className="stat">
+					<span className="dot" />
+					<strong>{linkedUsers}</strong> Clerk-linked
+				</span>
+				<span className="stat">
+					<span className="dot" />
+					<strong>{users.length - activeUsers}</strong> disabled
+				</span>
+			</div>
+
+			<div className="add-user-form" aria-disabled={!adminControlsEnabled}>
 				<input
 					className="settings-input"
 					type="email"
@@ -922,14 +965,22 @@ export function AccessSection({
 			</div>
 
 			<div className="access-table-wrap">
-				<table className="access-table">
+				<table className="users-table">
+					<colgroup>
+						<col className="c-user" />
+						<col className="c-role" />
+						<col className="c-state" />
+						<col className="c-activity" />
+						<col className="c-clerk" />
+						<col className="c-act" />
+					</colgroup>
 					<thead>
 						<tr>
-							<th>Email</th>
-							<th>Name</th>
+							<th>User</th>
 							<th>Role</th>
-							<th>State</th>
-							<th>Clerk subject</th>
+							<th>Status</th>
+							<th>Updated</th>
+							<th>Clerk identity</th>
 							<th>Action</th>
 						</tr>
 					</thead>
@@ -942,28 +993,72 @@ export function AccessSection({
 									users,
 								);
 								return (
-									<tr key={user.id}>
-										<td>{user.primary_email}</td>
-										<td>{user.display_name || "—"}</td>
-										<td>{user.role}</td>
-										<td>{user.disabled ? "disabled" : "active"}</td>
-										<td className="access-subject">
-											{user.clerk_subject || "not linked"}
+									<tr
+										key={user.id}
+										className={user.disabled ? "disabled" : undefined}
+									>
+										<td>
+											<div
+												className={`u-id${currentUser?.user_id === user.id ? " me" : ""}`}
+											>
+												<div className="u-avatar">
+													{initialsOf(userLabel(user))}
+												</div>
+												<div className="u-copy">
+													<div className="u-name">
+														<span>{userLabel(user)}</span>
+														{currentUser?.user_id === user.id ? (
+															<span className="u-you">you</span>
+														) : null}
+													</div>
+													<div className="u-email">{user.primary_email}</div>
+												</div>
+											</div>
 										</td>
 										<td>
-											<button
-												className="btn ghost"
-												type="button"
-												disabled={
-													!adminControlsEnabled ||
-													user.disabled ||
-													blockReason !== null
-												}
-												title={blockReason ?? undefined}
-												onClick={() => onDisableRequest(user)}
+											<span className={`role-chip ${user.role}`}>
+												{user.role}
+											</span>
+										</td>
+										<td>
+											<span
+												className={`state-cell${user.disabled ? " disabled" : ""}`}
 											>
-												Disable
-											</button>
+												<span className="dot" />
+												{user.disabled ? "disabled" : "active"}
+											</span>
+										</td>
+										<td className="mono tnum">{formatDate(user.updated_at)}</td>
+										<td>
+											{user.clerk_subject !== null ? (
+												<span
+													className="u-subject linked"
+													title={user.clerk_subject}
+												>
+													{shortSubject(user.clerk_subject)}
+												</span>
+											) : (
+												<span className="u-subject-pending">
+													manual · link on sign-in
+												</span>
+											)}
+										</td>
+										<td>
+											<div className="row-actions">
+												<button
+													className="btn ghost"
+													type="button"
+													disabled={
+														!adminControlsEnabled ||
+														user.disabled ||
+														blockReason !== null
+													}
+													title={blockReason ?? undefined}
+													onClick={() => onDisableRequest(user)}
+												>
+													Disable
+												</button>
+											</div>
 										</td>
 									</tr>
 								);
@@ -1326,14 +1421,6 @@ export function TokenRow({
 	);
 }
 
-function readStoredExtensionToken(): string {
-	try {
-		return localStorage.getItem(EXTENSION_TOKEN_KEY) ?? "";
-	} catch {
-		return "";
-	}
-}
-
 async function writeClipboard(value: string): Promise<boolean> {
 	try {
 		await navigator.clipboard.writeText(value);
@@ -1398,6 +1485,29 @@ function userIdentity(user: CurrentUser): string {
 
 function userLabel(user: AdminUser): string {
 	return user.display_name || user.primary_email;
+}
+
+function initialsOf(name: string): string {
+	const parts = name.split(/[\s\-_.@]+/).filter(Boolean);
+	if (parts.length >= 2) {
+		return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+	}
+	return name.slice(0, 2).toUpperCase();
+}
+
+function shortSubject(subject: string): string {
+	return subject.length > 18 ? `${subject.slice(0, 18)}...` : subject;
+}
+
+function formatDate(value: string): string {
+	const timestamp = Date.parse(value);
+	if (!Number.isFinite(timestamp)) {
+		return value;
+	}
+	return new Intl.DateTimeFormat(undefined, {
+		dateStyle: "medium",
+		timeStyle: "short",
+	}).format(timestamp);
 }
 
 function tweaksEqual(left: Tweaks, right: Tweaks): boolean {
