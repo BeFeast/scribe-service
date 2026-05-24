@@ -102,7 +102,6 @@ def test_spa_sources_do_not_use_browser_native_dialogs() -> None:
         "main.tsx",
         "components/Sidebar.tsx",
         "components/TopBar.tsx",
-        "components/TweaksPanel.tsx",
         "components/CommandPalette.tsx",
         "components/ConfirmDialog.tsx",
         "components/FailureRow.tsx",

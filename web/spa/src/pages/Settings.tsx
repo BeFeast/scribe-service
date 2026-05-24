@@ -735,7 +735,7 @@ export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
 					/>
 					<SegRow
 						label="Visual variant"
-						hint="Three takes on the same product. They share data and layout - only the type system, palette, and chrome change."
+						hint="Four takes on the same product. They share data and layout - only the type system, palette, and chrome change."
 						value={tweaks.variant}
 						options={["paper", "terminal", "console", "field"]}
 						onChange={(value) =>

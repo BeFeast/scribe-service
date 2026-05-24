@@ -16,7 +16,6 @@ def test_app_shell_files_exist() -> None:
         "components/ConfirmDialog.tsx",
         "components/TopBar.tsx",
         "components/Sidebar.tsx",
-        "components/TweaksPanel.tsx",
         "constants.ts",
         "hooks/useEventSource.ts",
         "hooks/usePoll.ts",
@@ -47,6 +46,28 @@ def test_app_mounts_shell_and_placeholder_router() -> None:
     assert 'route.page === "library"' in source
     assert 'route.page === "transcript"' in source
     assert "<Transcript" in source
+
+
+def test_production_sources_do_not_ship_floating_tweaks_panel() -> None:
+    assert not (SPA_SRC / "components" / "TweaksPanel.tsx").exists()
+
+    main = read("main.tsx")
+    settings = read("pages/Settings.tsx")
+    styles = read("styles.css")
+    source = main + settings + styles
+
+    assert "TweaksPanel" not in source
+    for selector in (
+        ".tweaks-panel",
+        ".tweaks-head",
+        ".tweak-row",
+        ".seg-group",
+        ".jump-row",
+        ".jump-button",
+    ):
+        assert selector not in styles
+    assert "floating Tweaks panel" not in settings
+    assert "floating Tweaks panel" not in main
 
 
 def test_confirm_dialog_is_in_app_not_browser_prompt() -> None:
@@ -591,6 +612,8 @@ def test_settings_appearance_exposes_design_variant_theme_density_controls() -> 
     assert 'export type ScribeTheme = "light" | "dark";' in hooks
     for value in ('"paper"', '"terminal"', '"console"', '"field"'):
         assert value in settings
+    assert "Four takes on the same product" in settings
+    assert "Three takes on the same product" not in settings
     assert '"light"' in settings
     assert '"dark"' in settings
     assert '"compact", "cozy", "comfy"' in settings
@@ -654,17 +677,15 @@ def test_route_hook_uses_typed_hash_routes() -> None:
 
 def test_spa_internal_navigation_uses_real_relative_anchors() -> None:
     sidebar = read("components/Sidebar.tsx")
-    tweaks = read("components/TweaksPanel.tsx")
     library = read("pages/Library.tsx")
     transcript = read("pages/Transcript.tsx")
     job_card = read("components/JobCard.tsx")
     failure_row = read("components/FailureRow.tsx")
     job_detail = read("pages/JobDetail.tsx")
     route = read("hooks/useRoute.ts")
-    source = sidebar + tweaks + library + transcript + job_card + failure_row + job_detail
+    source = sidebar + library + transcript + job_card + failure_row + job_detail
 
     assert 'href={routeToHref(nextRoute)}' in sidebar
-    assert 'href={routeToHref(item.route)}' in tweaks
     assert 'className="job-card-open"' in job_card
     assert 'className="failure-action"' in failure_row
     assert "row.summary_shortlink" not in library
