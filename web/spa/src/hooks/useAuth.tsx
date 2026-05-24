@@ -34,12 +34,16 @@ type AccessStatus =
 	| "Sign in required"
 	| "Unauthorized";
 
+export type AuthBootstrap = "config" | "clerk" | "ready" | "error";
+
 type AuthContextValue = {
 	accessStatus: AccessStatus;
 	signedIn: boolean;
 	canWrite: boolean;
 	clerkReady: boolean;
 	clerkConfigured: boolean;
+	bootstrap: AuthBootstrap;
+	bootstrapError: string | null;
 	authBlockedMessage: string | null;
 	authRedirectInFlight: boolean;
 	authRequired: boolean;
@@ -48,6 +52,8 @@ type AuthContextValue = {
 	signUp: () => Promise<void>;
 	signOut: () => Promise<void>;
 	retryAuth: () => void;
+	retryBootstrap: () => void;
+	continueOffline: () => void;
 	maybeAutoSignIn: () => boolean;
 	protectedFetch: (
 		input: RequestInfo | URL,
@@ -247,6 +253,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 	const [authRequired, setAuthRequired] = React.useState(false);
 	const [authBlocked, setAuthBlocked] = React.useState<string | null>(null);
 	const [authReloadKey, setAuthReloadKey] = React.useState(0);
+	const [bootstrap, setBootstrap] = React.useState<AuthBootstrap>("config");
+	const [bootstrapError, setBootstrapError] = React.useState<string | null>(
+		null,
+	);
+	const [bootstrapAttempt, setBootstrapAttempt] = React.useState(0);
 	const [authRedirectInFlight, setAuthRedirectInFlight] = React.useState(() =>
 		hasFreshRedirectIntent(),
 	);
@@ -300,8 +311,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 	React.useEffect(() => {
 		void authReloadKey;
+		void bootstrapAttempt;
 		const abort = new AbortController();
 		let unsubscribe: (() => void) | undefined;
+
+		setBootstrap("config");
+		setBootstrapError(null);
+		setClerkReady(false);
+		setConfig(null);
 
 		async function loadAuth() {
 			setAuthBlocked(null);
@@ -315,11 +332,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			setConfig(body);
 			if (body.trusted_network || !body.clerk_publishable_key) {
 				setAuthRequired(false);
+				setBootstrap("ready");
 				return;
 			}
+			setBootstrap("clerk");
 			await loadClerk(body);
 			setAuthBlocked(null);
 			setClerkReady(true);
+			setBootstrap("ready");
 			syncSignedIn();
 			clearRedirectIntent();
 			setAuthRedirectInFlight(false);
@@ -336,25 +356,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 		loadAuth().catch((error) => {
 			if (!abort.signal.aborted) {
+				const message = error instanceof Error ? error.message : String(error);
 				console.warn(error);
 				setAuthBlocked(authBlockedMessage(error));
+				setBootstrap("error");
+				setBootstrapError(message);
 				clearRedirectIntent();
 				setAuthRedirectInFlight(false);
-				setConfig(
-					(current) =>
-						current ?? {
-							clerk_publishable_key: "",
-							clerk_frontend_api: "",
-							trusted_network: false,
-						},
-				);
 			}
 		});
 		return () => {
 			abort.abort();
 			unsubscribe?.();
 		};
-	}, [syncSignedIn, authReloadKey]);
+	}, [syncSignedIn, authReloadKey, bootstrapAttempt]);
+
+	const retryBootstrap = React.useCallback(() => {
+		setBootstrapAttempt((value) => value + 1);
+	}, []);
+
+	const continueOffline = React.useCallback(() => {
+		setConfig({
+			clerk_publishable_key: "",
+			clerk_frontend_api: "",
+			trusted_network: false,
+		});
+		setAuthBlocked(null);
+		setAuthRequired(false);
+		setBootstrap("ready");
+		setBootstrapError(null);
+	}, []);
 
 	const trustedNetwork = config?.trusted_network === true;
 	const clerkConfigured = Boolean(config?.clerk_publishable_key);
@@ -490,6 +521,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			canWrite,
 			clerkReady,
 			clerkConfigured,
+			bootstrap,
+			bootstrapError,
 			authBlockedMessage: authBlocked,
 			authRedirectInFlight,
 			authRequired,
@@ -498,6 +531,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			signUp,
 			signOut,
 			retryAuth,
+			retryBootstrap,
+			continueOffline,
 			maybeAutoSignIn,
 			protectedFetch,
 		}),
@@ -507,6 +542,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			canWrite,
 			clerkReady,
 			clerkConfigured,
+			bootstrap,
+			bootstrapError,
 			authBlocked,
 			authRedirectInFlight,
 			authRequired,
@@ -515,6 +552,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			signUp,
 			signOut,
 			retryAuth,
+			retryBootstrap,
+			continueOffline,
 			maybeAutoSignIn,
 			protectedFetch,
 		],

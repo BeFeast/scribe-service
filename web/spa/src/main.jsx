@@ -1,5 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
+import { AuthGate } from "./components/Loaders";
 import { useScribeRuntime } from "./design-app/api.jsx";
 import { CommandPalette } from "./design-app/command-palette.jsx";
 import { setRuntimeData } from "./design-app/data.js";
@@ -13,6 +14,15 @@ import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { useRoute } from "./hooks/useRoute";
 import { DEFAULT_TWEAKS, useTweaks } from "./hooks/useTweaks";
 import "./styles.css";
+
+function deriveGatePhase(auth, dataReady) {
+	if (auth.bootstrap === "error") return "error";
+	if (auth.bootstrap === "config") return "config";
+	if (auth.bootstrap === "clerk") return "clerk";
+	if (auth.clerkConfigured && !auth.signedIn) return "signin";
+	if (!dataReady) return "workspace";
+	return "ready";
+}
 
 function ScribeRoot() {
 	return (
@@ -29,6 +39,7 @@ function ScribeApp() {
 	const [cmdkOpen, setCmdkOpen] = React.useState(false);
 	const runtime = useScribeRuntime(auth, route);
 	const t = React.useMemo(() => ({ ...DEFAULT_TWEAKS, ...tweaks }), [tweaks]);
+	const gatePhase = deriveGatePhase(auth, !runtime.loading);
 
 	setRuntimeData({
 		transcripts: runtime.transcripts,
@@ -166,6 +177,14 @@ function ScribeApp() {
 
 	return (
 		<div className="app">
+			<AuthGate
+				phase={gatePhase}
+				error={auth.bootstrapError}
+				message={auth.authBlockedMessage}
+				onSignIn={auth.signIn}
+				onRetry={auth.retryBootstrap}
+				onContinueOffline={auth.continueOffline}
+			/>
 			<TopBar onOpenCmdk={() => setCmdkOpen(true)} t={t} setTweak={setTweak} />
 			<Sidebar page={route.page} navigate={navigateDesign} />
 			<main className="main" data-screen-label={route.page}>
