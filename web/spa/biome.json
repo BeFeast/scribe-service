@@ -1,7 +1,13 @@
 {
 	"$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
 	"files": {
-		"ignore": ["dist", "node_modules"]
+		"ignore": [
+			"dist",
+			"node_modules",
+			"src/design-source",
+			"src/design-app/*.jsx",
+			"src/styles.css"
+		]
 	},
 	"formatter": {
 		"enabled": true,

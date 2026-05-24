@@ -1478,8 +1478,3 @@ input, textarea, select { font-family: inherit; font-size: inherit; color: inher
   margin-bottom: 6px;
 }
 [data-variant="paper"] .empty .empty-title { font-style: italic; }
-
-
-/* Production glue states; visual language follows the design empty-state recipe. */
-button:disabled { opacity: 0.55; cursor: not-allowed; }
-.empty code { font-family: var(--font-mono); background: var(--bg-soft); padding: 1px 5px; border-radius: var(--radius-sm); }

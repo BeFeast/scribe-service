@@ -333,7 +333,11 @@ async function clickSettingsAppearanceButton(cdp, rowLabel, value) {
 		cdp,
 		`(() => {
 			const rows = Array.from(document.querySelectorAll(".settings-row"));
-			const row = rows.find((candidate) => candidate.querySelector(".row-label")?.textContent?.trim() === ${JSON.stringify(rowLabel)});
+			const expectedLabel = ${JSON.stringify(rowLabel)};
+			const row = rows.find((candidate) => {
+				const text = candidate.querySelector(".row-label")?.textContent?.replace(/\\s+/g, " ").trim() ?? "";
+				return text === expectedLabel || text.startsWith(expectedLabel);
+			});
 			if (!row) return false;
 			row.scrollIntoView({ block: "center" });
 			const expected = ${JSON.stringify(value)}.toLowerCase();
@@ -377,7 +381,7 @@ async function smokeVariantMatrix(cdp) {
 						`(() => {
 							const appearance = Array.from(document.querySelectorAll(".settings-group")).find((section) => section.querySelector("h2")?.textContent?.trim() === "Appearance");
 							appearance?.scrollIntoView({ block: "center" });
-							const activeButtons = Array.from(document.querySelectorAll(".settings-row .seg button[aria-pressed='true']")).map((button) => button.textContent?.trim().toLowerCase());
+							const activeButtons = Array.from(document.querySelectorAll(".settings-row .seg button[aria-pressed='true'], .settings-row .seg button.active")).map((button) => button.textContent?.trim().toLowerCase());
 							const rects = Array.from(appearance?.querySelectorAll(".settings-row") ?? []).map((row) => row.getBoundingClientRect());
 							return {
 								activeButtons,
