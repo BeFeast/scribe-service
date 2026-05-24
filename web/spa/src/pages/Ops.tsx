@@ -2,6 +2,7 @@ import React from "react";
 
 import { useAuth } from "../hooks/useAuth";
 import type { Route } from "../hooks/useRoute";
+import { handleRouteAnchorClick, routeToHref } from "../hooks/useRoute";
 import type { DisplayCurrency } from "../lib/currency";
 import { formatUsdCost } from "../lib/currency";
 
@@ -36,17 +37,17 @@ type RecentFailure = {
 
 type OpsSnapshot = {
 	window_days: number;
-	jobs_by_status: Record<string, number>;
+	queue_depth: number;
+	worker_pool: WorkerPoolSnapshot;
 	transcripts_done: number;
 	transcripts_partial: number;
-	queue_depth: number;
 	vast_spend_24h: number;
 	vast_spend_7d: number;
 	vast_spend_30d: number;
 	daily_spend_cap_usd: number;
 	spend_series_14d: number[];
+	jobs_by_status: Record<string, number>;
 	backup: BackupSnapshot;
-	worker_pool: WorkerPoolSnapshot;
 	recent_failures: RecentFailure[];
 	system: SystemSnapshot[];
 };
@@ -56,7 +57,6 @@ type OpsProps = {
 	navigate: (route: Route) => void;
 };
 
-const FAILURE_PAGE_SIZE = 10;
 const STATUS_TONES: Record<string, Tone> = {
 	done: "ok",
 	failed: "err",
@@ -67,12 +67,17 @@ function compactNumber(value: number): string {
 	return new Intl.NumberFormat("en-US").format(value);
 }
 
-function relativeAge(seconds: number | null): string {
-	if (seconds === null) {
+function formatRelativeTime(value: string | null): string {
+	if (value === null) {
 		return "never";
 	}
+	const timestamp = new Date(value).getTime();
+	if (!Number.isFinite(timestamp)) {
+		return "unknown";
+	}
+	const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
 	if (seconds < 90) {
-		return `${Math.max(0, Math.round(seconds))}s ago`;
+		return "a few seconds ago";
 	}
 	if (seconds < 7200) {
 		return `${Math.round(seconds / 60)}m ago`;
@@ -83,106 +88,112 @@ function relativeAge(seconds: number | null): string {
 	return `${Math.round(seconds / 86400)}d ago`;
 }
 
-function formatTime(value: string): string {
-	return new Intl.DateTimeFormat("en-US", {
+function formatAgeHours(seconds: number | null): string {
+	if (seconds === null) {
+		return "never";
+	}
+	return `${Math.max(0, Math.round(seconds / 3600))}h`;
+}
+
+function formatFailureTime(value: string): string {
+	return new Intl.DateTimeFormat(undefined, {
 		month: "short",
-		day: "numeric",
+		day: "2-digit",
 		hour: "2-digit",
 		minute: "2-digit",
 	}).format(new Date(value));
 }
 
-function MetricCard({
+function MetricPanel({
 	label,
 	value,
-	help,
-	tone = "accent",
-}: {
+	children,
+	tone,
+}: React.PropsWithChildren<{
 	label: string;
-	value: string;
-	help: string;
+	value: React.ReactNode;
 	tone?: Tone;
-}) {
+}>) {
 	return (
-		<section className={`metric metric-${tone}`}>
-			<p className="section-label">{label}</p>
-			<strong>{value}</strong>
-			<span className="metric-help">{help}</span>
+		<section className={`metric${tone ? ` metric-${tone}` : ""}`}>
+			<div className="label">{label}</div>
+			<div className="value tnum">{value}</div>
+			<div className="delta">{children}</div>
 		</section>
 	);
 }
 
-function Sparkline({ values, cap }: { values: number[]; cap: number }) {
-	const series = values.slice(-14);
-	while (series.length < 14) {
-		series.unshift(0);
+function Sparkline({ series, cap }: { series: number[]; cap: number }) {
+	const values = series.slice(-14);
+	while (values.length < 14) {
+		values.unshift(0);
 	}
-	const width = 260;
-	const height = 80;
-	const pad = 8;
-	const max = Math.max(cap, ...series, 1);
-	const x = (index: number) => pad + (index * (width - pad * 2)) / 13;
-	const y = (value: number) =>
-		height - pad - (value / max) * (height - pad * 2);
-	const points = series.map((value, index) => [x(index), y(value)] as const);
-	const line = points.map(([px, py]) => `${px},${py}`).join(" ");
-	const area = `${pad},${height - pad} ${line} ${width - pad},${height - pad}`;
-	const capY = y(cap);
+	const width = 100;
+	const height = 100;
+	const capEnabled = cap > 0;
+	const max = Math.max(...values, capEnabled ? cap : 0, 1);
+	const points = values.map((value, index) => {
+		const x = (index / Math.max(values.length - 1, 1)) * width;
+		const y = height - (value / max) * height * 0.85 - 6;
+		return [x, y] as const;
+	});
+	const linePath = `M ${points
+		.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`)
+		.join(" L ")}`;
+	const areaPath = `${linePath} L ${width},${height} L 0,${height} Z`;
+	const capY = height - (cap / max) * height * 0.85 - 6;
 
 	return (
 		<svg
 			className="spark ops-spark"
 			viewBox={`0 0 ${width} ${height}`}
+			preserveAspectRatio="none"
 			role="img"
-			aria-label="14 day Vast spend sparkline"
+			aria-label="14 day Vast.ai spend"
 		>
-			<line
-				className="cap-line"
-				x1={pad}
-				y1={capY}
-				x2={width - pad}
-				y2={capY}
-			/>
-			<polygon className="area" points={area} />
-			<polyline className="line" points={line} />
+			{capEnabled ? (
+				<line className="cap-line" x1="0" x2={width} y1={capY} y2={capY} />
+			) : null}
+			<path d={areaPath} className="area" opacity="0.4" />
+			<path d={linePath} className="line" />
 			{points.map(([cx, cy], index) => (
 				<circle
-					key={`${index}-${series[index]}`}
-					className="dot"
+					key={`${index}-${values[index]}`}
 					cx={cx}
 					cy={cy}
-					r="2.4"
+					r={index === points.length - 1 ? 2 : 0.8}
+					className="dot"
 				/>
 			))}
 		</svg>
 	);
 }
 
-function StatusBars({ statuses }: { statuses: Record<string, number> }) {
-	const rows = Object.entries(statuses).sort(
+function StatusBars({ stats }: { stats: Record<string, number> }) {
+	const entries = Object.entries(stats).sort(
 		(a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
 	);
-	const max = Math.max(...rows.map(([, count]) => count), 1);
+	const max = Math.max(...entries.map(([, count]) => count), 1);
 
-	if (rows.length === 0) {
-		return <p className="muted">No jobs in the last 24 h.</p>;
+	if (entries.length === 0) {
+		return <p className="muted">No jobs in the last 24h.</p>;
 	}
 
 	return (
-		<div className="status-bars">
-			{rows.map(([status, count]) => {
+		<div className="status-bars ops-status-bars">
+			{entries.map(([status, count]) => {
 				const tone = STATUS_TONES[status] ?? "accent";
 				return (
-					<div className="status-bar" key={status}>
-						<div className="status-bar-head">
-							<span>{status}</span>
-							<strong className="tnum">{compactNumber(count)}</strong>
-						</div>
+					<div className="ops-status-row" key={status}>
+						<div className="mono muted">{status}</div>
 						<div className="bar-track">
 							<span
 								className={`status-fill ${tone}`}
-								style={{ width: `${Math.max(5, (count / max) * 100)}%` }}
+								style={{ width: `${Math.max(4, (count / max) * 100)}%` }}
 							/>
+						</div>
+						<div className="mono tnum ops-status-count">
+							{compactNumber(count)}
 						</div>
 					</div>
 				);
@@ -193,14 +204,17 @@ function StatusBars({ statuses }: { statuses: Record<string, number> }) {
 
 function SystemRow({ item }: { item: SystemSnapshot }) {
 	const tone =
-		item.status === "err" ? "err" : item.status === "warn" ? "warn" : "ok";
+		item.status === "ok" ? "ok" : item.status === "warn" ? "warn" : "err";
+	const glyph = item.status === "ok" ? "●" : item.status === "warn" ? "◐" : "○";
 	return (
-		<div className="system-row">
-			<div>
-				<strong>{item.label}</strong>
-				<span>{item.value}</span>
-			</div>
-			<span className={`chip ${tone}`}>{item.status}</span>
+		<div className="ops-system-row">
+			<span className={`status-glyph ${tone}`} aria-hidden="true">
+				{glyph}
+			</span>
+			<span className={`ops-system-status ${tone}`}>{item.status}</span>
+			<span className="muted">{item.label}</span>
+			<div className="spacer" />
+			<span className="ops-system-value">{item.value}</span>
 		</div>
 	);
 }
@@ -212,20 +226,23 @@ function FailureRow({
 	failure: RecentFailure;
 	navigate: (route: Route) => void;
 }) {
+	const route: Route = { page: "job", params: { id: failure.id } };
 	return (
-		<button
-			type="button"
-			className="failure-row failure-action"
-			onClick={() => navigate({ page: "job", params: { id: failure.id } })}
-		>
-			<p className="err-title">Job #{failure.id}</p>
-			<p className="err-msg">
-				{failure.error ?? "Job failed without an error message."}
-			</p>
-			<p className="err-meta mono">
-				{failure.video_id} - {formatTime(failure.updated_at)}
-			</p>
-		</button>
+		<div className="failure-row">
+			<a
+				className="failure-action"
+				href={routeToHref(route)}
+				onClick={(event) => handleRouteAnchorClick(event, route, navigate)}
+			>
+				<p className="err-title">Job #{failure.id}</p>
+				<p className="err-msg">
+					{failure.error ?? "Job failed without an error message."}
+				</p>
+				<p className="err-meta mono">
+					{failure.video_id} - {formatFailureTime(failure.updated_at)}
+				</p>
+			</a>
+		</div>
 	);
 }
 
@@ -234,8 +251,6 @@ export function Ops({ displayCurrency, navigate }: OpsProps) {
 	const [snapshot, setSnapshot] = React.useState<OpsSnapshot | null>(null);
 	const [error, setError] = React.useState<string | null>(null);
 	const [loading, setLoading] = React.useState(true);
-	const [visibleFailures, setVisibleFailures] =
-		React.useState(FAILURE_PAGE_SIZE);
 
 	const load = React.useCallback(
 		async (signal?: AbortSignal) => {
@@ -246,9 +261,7 @@ export function Ops({ displayCurrency, navigate }: OpsProps) {
 				if (!response.ok) {
 					throw new Error(`ops endpoint returned ${response.status}`);
 				}
-				const body = (await response.json()) as OpsSnapshot;
-				setSnapshot(body);
-				setVisibleFailures(FAILURE_PAGE_SIZE);
+				setSnapshot((await response.json()) as OpsSnapshot);
 			} catch (caught) {
 				if (!signal?.aborted) {
 					setError(
@@ -270,141 +283,194 @@ export function Ops({ displayCurrency, navigate }: OpsProps) {
 		return () => abort.abort();
 	}, [load]);
 
+	const cap = snapshot?.daily_spend_cap_usd ?? 0;
+	const capEnabled = cap > 0;
+	const spendPct =
+		snapshot !== null && capEnabled
+			? Math.min(1, snapshot.vast_spend_24h / cap)
+			: 0;
+	const spendCls = spendPct > 0.85 ? "err" : spendPct > 0.6 ? "warn" : "";
 	const failures = snapshot?.recent_failures ?? [];
-	const visible = failures.slice(0, visibleFailures);
-	const backupTone: Tone = snapshot?.backup.stale ? "err" : "ok";
+	const failureSummary =
+		failures.length >= 50
+			? `showing ${compactNumber(failures.length)} most recent (capped)`
+			: `showing ${compactNumber(failures.length)} most recent`;
 
 	return (
 		<section className="pane ops-page">
 			<header className="pane-header">
 				<div>
-					<p className="eyebrow">Ops</p>
-					<h1 className="pane-h1">Runtime dashboard</h1>
-					<p className="pane-sub">One-shot snapshot from /api/ops.</p>
+					<h1 className="pane-h1">Ops</h1>
+					<div className="pane-sub">
+						Window: rolling {snapshot?.window_days ?? 1}d · last refresh{" "}
+						<span className="tnum">{loading ? "refreshing" : "now"}</span>
+					</div>
 				</div>
-				<button
-					type="button"
-					className="btn"
-					onClick={() => void load()}
-					disabled={loading}
-				>
-					{loading ? "Refreshing" : "Refresh"}
-				</button>
+				<div className="pane-actions">
+					<button
+						type="button"
+						className="btn"
+						onClick={() => void load()}
+						disabled={loading}
+					>
+						{loading ? <span className="spinner" aria-hidden="true" /> : null}
+						Refresh
+					</button>
+				</div>
 			</header>
 
 			{error !== null ? (
-				<div className="failure-row">
+				<div className="error-banner">
 					<p className="err-title">Ops snapshot unavailable</p>
 					<p className="err-msg">{error}</p>
 				</div>
 			) : null}
 
 			{snapshot === null && loading ? (
-				<div className="card">
-					<span className="spinner" />
-					<p className="muted">Loading ops snapshot.</p>
+				<div className="empty-queue">
+					<div>
+						<span className="spinner" aria-hidden="true" />
+						<strong>Loading ops snapshot</strong>
+						<span>Fetching the current one-shot dashboard state.</span>
+					</div>
 				</div>
 			) : null}
 
 			{snapshot !== null ? (
 				<>
 					<div className="metric-grid">
-						<MetricCard
-							label="Queue depth"
-							value={compactNumber(snapshot.queue_depth)}
-							help={`${snapshot.worker_pool.active}/${snapshot.worker_pool.total} workers active`}
-							tone="info"
-						/>
-						<MetricCard
-							label="Transcripts 24 h"
+						<MetricPanel label="Queue depth" value={snapshot.queue_depth}>
+							workers{" "}
+							<span className="tnum">
+								{snapshot.worker_pool.active}/{snapshot.worker_pool.total}
+							</span>{" "}
+							busy
+						</MetricPanel>
+						<MetricPanel
+							label="Transcripts · 24h"
 							value={compactNumber(snapshot.transcripts_done)}
-							help={`${compactNumber(snapshot.transcripts_partial)} partial`}
-							tone="ok"
-						/>
-						<MetricCard
-							label="Vast spend 24 h"
+						>
+							{snapshot.transcripts_partial > 0 ? (
+								<>
+									<span className="warn-text">
+										{compactNumber(snapshot.transcripts_partial)} partial
+									</span>{" "}
+									· awaiting resummarize
+								</>
+							) : (
+								"all summaries fresh"
+							)}
+						</MetricPanel>
+						<MetricPanel
+							label="Vast spend · 24h"
 							value={formatUsdCost(snapshot.vast_spend_24h, displayCurrency)}
-							help={`${formatUsdCost(snapshot.vast_spend_7d, displayCurrency)} over 7 d`}
-						/>
-						<MetricCard
+						>
+							{capEnabled ? (
+								<>
+									of{" "}
+									<span className="tnum">
+										{formatUsdCost(cap, displayCurrency)}
+									</span>{" "}
+									cap · {(spendPct * 100).toFixed(0)}% used
+									<div className="bar-track">
+										<span
+											className={spendCls}
+											style={{ width: `${spendPct * 100}%` }}
+										/>
+									</div>
+								</>
+							) : (
+								"daily cap disabled"
+							)}
+						</MetricPanel>
+						<MetricPanel
 							label="Backup heartbeat"
-							value={relativeAge(snapshot.backup.age_seconds)}
-							help={snapshot.backup.stale ? "stale" : "fresh"}
-							tone={backupTone}
-						/>
+							value={
+								<>
+									<span
+										className={`status-glyph ${
+											snapshot.backup.stale ? "err" : "ok"
+										}`}
+									>
+										{snapshot.backup.stale ? "✗" : "✓"}
+									</span>{" "}
+									{formatAgeHours(snapshot.backup.age_seconds)}
+								</>
+							}
+						>
+							last success{" "}
+							{formatRelativeTime(snapshot.backup.last_success_iso)} · stale
+							after {Math.round(snapshot.backup.stale_after / 3600)}h
+						</MetricPanel>
 					</div>
 
 					<div className="ops-grid">
-						<section className="card">
-							<div className="card-head">
-								<div>
-									<p className="section-label">14-day spend</p>
-									<strong>
-										{formatUsdCost(snapshot.vast_spend_30d, displayCurrency)} /
-										30 d
-									</strong>
+						<section className="metric ops-panel">
+							<div className="row ops-panel-head">
+								<div className="label">Vast.ai spend · last 14 days</div>
+								<div className="spacer" />
+								<div className="mono muted ops-spend-summary">
+									7d{" "}
+									<span className="tnum">
+										{formatUsdCost(snapshot.vast_spend_7d, displayCurrency)}
+									</span>{" "}
+									30d{" "}
+									<span className="tnum">
+										{formatUsdCost(snapshot.vast_spend_30d, displayCurrency)}
+									</span>
 								</div>
-								<span className="chip info">
-									cap{" "}
-									{formatUsdCost(snapshot.daily_spend_cap_usd, displayCurrency)}
-								</span>
 							</div>
-							<Sparkline
-								values={snapshot.spend_series_14d}
-								cap={snapshot.daily_spend_cap_usd}
-							/>
+							<Sparkline series={snapshot.spend_series_14d} cap={cap} />
+							{capEnabled ? null : (
+								<p className="muted ops-cap-note">Daily spend cap disabled.</p>
+							)}
 						</section>
-						<section className="card">
-							<p className="section-label">Jobs by status</p>
-							<StatusBars statuses={snapshot.jobs_by_status} />
+
+						<section className="metric ops-panel">
+							<div className="label ops-panel-label">Jobs by status · 24h</div>
+							<StatusBars stats={snapshot.jobs_by_status} />
 						</section>
 					</div>
 
-					<section className="ops-section">
-						<div className="section-line">
-							<p className="section-label">Recent failures</p>
-							<span className="muted">
-								{failures.length >= 50
-									? "50+ total"
-									: `${compactNumber(failures.length)} total`}
-							</span>
+					<div className="section-label split ops-section-label">
+						<span>Recent failures</span>
+						<span className="mono muted">{failureSummary}</span>
+					</div>
+					{failures.length === 0 ? (
+						<div className="empty-queue">
+							<div>
+								<strong>No recent failures</strong>
+								<span>
+									Failed jobs will appear here after the next snapshot.
+								</span>
+							</div>
 						</div>
-						{visible.length === 0 ? (
-							<div className="card">
-								<p className="muted">No recent failures.</p>
-							</div>
-						) : (
-							<div className="failure-list">
-								{visible.map((failure) => (
-									<FailureRow
-										key={failure.id}
-										failure={failure}
-										navigate={navigate}
-									/>
-								))}
-							</div>
-						)}
-						{visibleFailures < failures.length ? (
-							<button
-								type="button"
-								className="btn ghost"
-								onClick={() =>
-									setVisibleFailures((count) => count + FAILURE_PAGE_SIZE)
-								}
-							>
-								Show more
-							</button>
-						) : null}
-					</section>
-
-					<section className="ops-section">
-						<p className="section-label">System rollcall</p>
-						<div className="system-list">
-							{snapshot.system.map((item) => (
-								<SystemRow item={item} key={item.label} />
+					) : (
+						<div className="failure-list">
+							{failures.map((failure) => (
+								<FailureRow
+									key={failure.id}
+									failure={failure}
+									navigate={navigate}
+								/>
 							))}
 						</div>
-					</section>
+					)}
+
+					<div className="section-label ops-section-label">
+						<span>System</span>
+					</div>
+					<div className="ops-system-grid">
+						{snapshot.system.length === 0 ? (
+							<div className="ops-system-row">
+								<span className="muted">No system rollcall rows returned.</span>
+							</div>
+						) : (
+							snapshot.system.map((item) => (
+								<SystemRow item={item} key={item.label} />
+							))
+						)}
+					</div>
 				</>
 			) : null}
 		</section>
