@@ -305,6 +305,7 @@ def test_cmdk_custom_event_is_wired_without_window_globals() -> None:
     assert 'window.addEventListener("keydown", keydown, { capture: true })' in palette
     assert 'window.removeEventListener("keydown", keydown, { capture: true })' in palette
     assert "isCommandPaletteShortcut(event)" in palette
+    assert 'key === "unidentified" && event.code === "KeyK"' in palette
     assert "event.stopPropagation()" in palette
     assert "document.dispatchEvent(new CustomEvent(CMDK_OPEN_EVENT))" in topbar
     assert "window.scribe" not in main + topbar + palette

@@ -362,9 +362,10 @@ function isSelectable(item: PaletteItem): item is ResultItem {
 }
 
 export function isCommandPaletteShortcut(event: KeyboardEvent): boolean {
+	const key = event.key.toLowerCase();
 	return (
 		(event.metaKey || event.ctrlKey) &&
-		(event.key.toLowerCase() === "k" || event.code === "KeyK")
+		(key === "k" || (key === "unidentified" && event.code === "KeyK"))
 	);
 }
 
