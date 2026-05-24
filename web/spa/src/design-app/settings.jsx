@@ -1,7 +1,10 @@
 // biome-ignore-all lint: Claude Design source port; integration-only edits live in api/data/main.
 import React from "react";
+import { useAuth } from "../hooks/useAuth";
+import { adaptUsers } from "./adapters.js";
+import { fetchJson } from "./api.jsx";
 import { IconCards, IconCopy, IconDot, IconExternal, IconFeed, IconMoon, IconPlus, IconRefresh, IconSparkle, IconSun, IconTable, IconX } from "./icons.jsx";
-import { SCRIBE_USERS, STATS, fmtRelative, fmtUsd } from "./data.js";
+import { STATS, fmtRelative, fmtUsd } from "./data.js";
 // Settings page — config values that map to scribe/config.py settings.
 
 const DEFAULT_PROMPT = `You are a careful, ruthless reader. Given a transcript of a YouTube video, produce a Markdown summary with the following sections:
@@ -24,25 +27,132 @@ Style:
 - If you don't know something, omit it. Do not hedge.
 - Markdown only. No HTML.`;
 
-export function SettingsPage({ t, setTweak }) {
+export function SettingsPage({ t, setTweak, users: runtimeUsers = [] }) {
+  const auth = useAuth();
+  const [config, setConfig] = React.useState(null);
+  const [configDraft, setConfigDraft] = React.useState(null);
+  const [configState, setConfigState] = React.useState({ loading: true, error: null, saved: null });
+  const [prompts, setPrompts] = React.useState({ active_version: "v3", versions: [] });
+  const [promptVersion, setPromptVersion] = React.useState("v3");
   const [prompt, setPrompt] = React.useState(DEFAULT_PROMPT);
-  const [cap, setCap] = React.useState(STATS.daily_spend_cap_usd);
+  const [promptState, setPromptState] = React.useState({ loading: true, error: null, saved: null });
+  const cap = Number(configDraft?.daily_spend_cap_usd ?? STATS.daily_spend_cap_usd);
   const capUsagePct = cap > 0 ? Math.min(100, (STATS.vast_spend_24h / cap) * 100) : 0;
-  const [webhook, setWebhook] = React.useState("https://telegram.oklabs.uk/webhook/scribe");
-  const [publicBase, setPublicBase] = React.useState("https://scribe.oklabs.uk");
-  const [keepBotwallRetries, setKeepBotwallRetries] = React.useState(true);
-  const [embedTranscript, setEmbedTranscript] = React.useState(true);
+  const webhook = configDraft?.webhook_default ?? "";
+  const publicBase = configDraft?.public_base_url ?? "";
+  const workerConcurrency = Number(configDraft?.worker_concurrency ?? STATS.worker_pool.total ?? 2);
+  const keepBotwallRetries = Boolean(configDraft?.bot_wall_retry);
+  const embedTranscript = Boolean(configDraft?.webhook_embed_transcript);
+
+  React.useEffect(() => {
+    const controller = new AbortController();
+    setConfigState({ loading: true, error: null, saved: null });
+    fetchJson(auth, "/api/config", controller.signal)
+      .then((body) => {
+        if (controller.signal.aborted) return;
+        const values = configValues(body?.config ?? {});
+        setConfig(body?.config ?? {});
+        setConfigDraft(values);
+        setConfigState({ loading: false, error: null, saved: null });
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setConfigState({ loading: false, error: messageOf(error), saved: null });
+      });
+    return () => controller.abort();
+  }, [auth]);
+
+  React.useEffect(() => {
+    const controller = new AbortController();
+    setPromptState({ loading: true, error: null, saved: null });
+    fetchJson(auth, "/api/prompts", controller.signal)
+      .then(async (body) => {
+        const active = body?.active_version ?? body?.versions?.find((v) => v.is_active)?.id ?? "v3";
+        const response = await auth.protectedFetch("/api/prompts/" + active, { cache: "no-store", signal: controller.signal });
+        if (!response.ok) throw new Error(await responseMessage(response));
+        return { list: body, active, text: await response.text() };
+      })
+      .then(({ list, active, text }) => {
+        if (controller.signal.aborted) return;
+        setPrompts(list);
+        setPromptVersion(active);
+        setPrompt(text);
+        setPromptState({ loading: false, error: null, saved: null });
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setPromptState({ loading: false, error: messageOf(error), saved: null });
+      });
+    return () => controller.abort();
+  }, [auth]);
+
+  function setDraft(key, value) {
+    setConfigDraft((draft) => ({ ...(draft ?? {}), [key]: value }));
+    setConfigState((state) => ({ ...state, saved: null }));
+  }
+  function resetConfig() {
+    setConfigDraft(configValues(config ?? {}));
+    setConfigState((state) => ({ ...state, error: null, saved: null }));
+  }
+  async function saveConfig() {
+    setConfigState({ loading: false, error: null, saved: null });
+    try {
+      const body = await fetchJson(auth, "/api/config", undefined, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(configPayload(configDraft ?? {})),
+      });
+      setConfig(body?.config ?? {});
+      setConfigDraft(configValues(body?.config ?? {}));
+      setConfigState({ loading: false, error: null, saved: body?.restart_required?.length ? `Saved · restart required for ${body.restart_required.join(", ")}` : "Saved" });
+    } catch (error) {
+      setConfigState({ loading: false, error: messageOf(error), saved: null });
+    }
+  }
+  async function loadPromptVersion(version) {
+    setPromptVersion(version);
+    setPromptState({ loading: true, error: null, saved: null });
+    try {
+      const response = await auth.protectedFetch("/api/prompts/" + version, { cache: "no-store" });
+      if (!response.ok) throw new Error(await responseMessage(response));
+      setPrompt(await response.text());
+      setPromptState({ loading: false, error: null, saved: null });
+    } catch (error) {
+      setPromptState({ loading: false, error: messageOf(error), saved: null });
+    }
+  }
+  async function savePrompt() {
+    setPromptState({ loading: false, error: null, saved: null });
+    try {
+      const write = await auth.protectedFetch("/api/prompts/" + promptVersion, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: prompt }),
+      });
+      if (!write.ok) throw new Error(await responseMessage(write));
+      const list = await fetchJson(auth, "/api/prompts/active", undefined, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version: promptVersion }),
+      });
+      setPrompts(list);
+      setPromptState({ loading: false, error: null, saved: "Prompt saved" });
+    } catch (error) {
+      setPromptState({ loading: false, error: messageOf(error), saved: null });
+    }
+  }
 
   return (
     <div className="pane" style={{maxWidth: 960}}>
       <div className="pane-header">
         <div>
           <h1 className="pane-h1">Settings</h1>
-          <div className="pane-sub">Reads <code>.env</code> · changes write back via <code>POST /admin/config</code></div>
+          <div className="pane-sub">Reads <code>.env</code> · changes write back via <code>POST /api/config</code></div>
         </div>
         <div className="pane-actions">
-          <button className="btn ghost">Discard</button>
-          <button className="btn primary">Save changes</button>
+          {configState.loading && <span className="chip"><span className="spinner"/> Loading config</span>}
+          {configState.error && <span className="chip err">{configState.error}</span>}
+          {configState.saved && <span className="chip ok">{configState.saved}</span>}
+          <button className="btn ghost" onClick={resetConfig} disabled={!configDraft}>Discard</button>
+          <button className="btn primary" onClick={saveConfig} disabled={!configDraft}>Save changes</button>
         </div>
       </div>
 
@@ -58,7 +168,7 @@ export function SettingsPage({ t, setTweak }) {
           <div className="row-control">
             <div className="row" style={{gap: 8}}>
               <input type="number" step="0.25" min="0" value={cap}
-                     onChange={(e) => setCap(parseFloat(e.target.value) || 0)}
+                     onChange={(e) => setDraft("daily_spend_cap_usd", parseFloat(e.target.value) || 0)}
                      style={{width: 100}}/>
               <span className="muted mono" style={{fontSize: 12}}>USD</span>
               <span className="muted" style={{fontSize: 12, marginLeft: 16}}>
@@ -80,7 +190,9 @@ export function SettingsPage({ t, setTweak }) {
           <div className="row-control">
             <div className="seg" style={{width: "fit-content"}}>
               {[1, 2, 4, 8].map(n => (
-                <button key={n} className={n === 2 ? "active" : ""}>{n}</button>
+                <button key={n} className={n === workerConcurrency ? "active" : ""}
+                        aria-pressed={n === workerConcurrency}
+                        onClick={() => setDraft("worker_concurrency", n)}>{n}</button>
               ))}
             </div>
             <span className="muted mono" style={{fontSize: 12}}>
@@ -97,7 +209,7 @@ export function SettingsPage({ t, setTweak }) {
           <div className="row-control">
             <div className="row" style={{gap: 12, alignItems: "center"}}>
               <span className={"toggle " + (keepBotwallRetries ? "on" : "")}
-                    onClick={() => setKeepBotwallRetries(v => !v)}/>
+                    onClick={() => setDraft("bot_wall_retry", !keepBotwallRetries)}/>
               <span className="muted" style={{fontSize: 12.5}}>
                 {keepBotwallRetries ? "On — try 4 fallback clients before failing" : "Off — fail on first bot-wall"}
               </span>
@@ -112,7 +224,7 @@ export function SettingsPage({ t, setTweak }) {
           </div>
           <div className="row-control">
             <input type="url" value={publicBase}
-                   onChange={(e) => setPublicBase(e.target.value)}/>
+                   onChange={(e) => setDraft("public_base_url", e.target.value)}/>
             <span className="muted mono" style={{fontSize: 11.5}}>
               shortlinks resolve to <code>go.oklabs.uk/&lt;slug&gt;</code> → <code>{publicBase}/transcripts/142</code>
             </span>
@@ -126,10 +238,10 @@ export function SettingsPage({ t, setTweak }) {
           </div>
           <div className="row-control">
             <input type="url" value={webhook}
-                   onChange={(e) => setWebhook(e.target.value)}/>
+                   onChange={(e) => setDraft("webhook_default", e.target.value)}/>
             <div className="row" style={{gap: 12, alignItems: "center"}}>
               <span className={"toggle " + (embedTranscript ? "on" : "")}
-                    onClick={() => setEmbedTranscript(v => !v)}/>
+                    onClick={() => setDraft("webhook_embed_transcript", !embedTranscript)}/>
               <span className="muted" style={{fontSize: 12.5}}>
                 Embed <code>transcript</code> object in webhook payload
               </span>
@@ -149,13 +261,22 @@ export function SettingsPage({ t, setTweak }) {
           <div className="row-control">
             <div className="row" style={{justifyContent: "space-between"}}>
               <div className="row" style={{gap: 12}}>
-                <span className="chip">v3 · active</span>
-                <span className="chip" style={{cursor: "pointer"}}>v2</span>
-                <span className="chip" style={{cursor: "pointer"}}>v1</span>
+                {prompts.versions.map((version) => (
+                  <button key={version.id}
+                          className={"chip" + (version.id === promptVersion ? " active" : "")}
+                          style={{cursor: "pointer"}}
+                          onClick={() => loadPromptVersion(version.id)}>
+                    {version.id}{version.is_active ? " · active" : ""}
+                  </button>
+                ))}
               </div>
               <div className="row" style={{gap: 8}}>
-                <button className="btn ghost" style={{fontSize: 12, padding: "4px 8px"}}>
-                  <IconSparkle size={12}/> Dry-run
+                {promptState.loading && <span className="chip"><span className="spinner"/> Loading prompt</span>}
+                {promptState.error && <span className="chip err">{promptState.error}</span>}
+                {promptState.saved && <span className="chip ok">{promptState.saved}</span>}
+                <button className="btn ghost" onClick={savePrompt} disabled={promptState.loading}
+                        style={{fontSize: 12, padding: "4px 8px"}}>
+                  <IconSparkle size={12}/> Save prompt
                 </button>
                 <span className="muted mono" style={{fontSize: 11.5}}>
                   {prompt.length} chars · ~{Math.round(prompt.length / 4)} tokens
@@ -252,7 +373,7 @@ export function SettingsPage({ t, setTweak }) {
         </div>
       </div>
 
-      <AccessGroup/>
+      <AccessGroup initialUsers={runtimeUsers}/>
 
       <div className="settings-group">
         <h2>API access</h2>
@@ -265,12 +386,14 @@ export function SettingsPage({ t, setTweak }) {
           </div>
           <div className="row-control">
             <div className="row" style={{gap: 8}}>
-              <input type="text" value="scribe_••••••••••••••••••••" readOnly style={{maxWidth: 320}}/>
-              <button className="btn"><IconCopy size={14}/> Copy</button>
-              <button className="btn">Rotate</button>
+              <input type="text" value="configured server-side" readOnly style={{maxWidth: 320}}/>
+              <button className="btn" disabled title="The API does not expose bearer-token material">
+                <IconCopy size={14}/> Copy
+              </button>
+              <button className="btn" disabled title="POST /api/config/rotate-token is not implemented yet">Rotate</button>
             </div>
             <span className="muted mono" style={{fontSize: 11.5}}>
-              last used 4m ago · 142 calls today
+              current access: {auth.accessStatus}
             </span>
           </div>
         </div>
@@ -280,13 +403,44 @@ export function SettingsPage({ t, setTweak }) {
 }
 
 
+function configValues(config) {
+  return Object.fromEntries(Object.entries(config).map(([key, entry]) => [key, entry?.value]));
+}
+
+function configPayload(values) {
+  return {
+    daily_spend_cap_usd: Number(values.daily_spend_cap_usd ?? 0),
+    worker_concurrency: Number(values.worker_concurrency ?? 1),
+    bot_wall_retry: Boolean(values.bot_wall_retry),
+    webhook_default: values.webhook_default ?? "",
+    webhook_embed_transcript: Boolean(values.webhook_embed_transcript),
+    public_base_url: values.public_base_url ?? "",
+  };
+}
+
+async function responseMessage(response) {
+  try {
+    const body = await response.json();
+    if (typeof body?.detail === "string") return body.detail;
+    if (body?.detail && typeof body.detail === "object") return JSON.stringify(body.detail);
+  } catch {}
+  return ("HTTP " + response.status + " " + response.statusText).trim();
+}
+
+function messageOf(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+
 // ─── Access group (users / authorization) ───────────────────────────────────
-function AccessGroup() {
-  const [users, setUsers] = React.useState(SCRIBE_USERS);
-  React.useEffect(() => setUsers(SCRIBE_USERS), [SCRIBE_USERS]);
+function AccessGroup({ initialUsers = [] }) {
+  const auth = useAuth();
+  const [users, setUsers] = React.useState(initialUsers);
+  React.useEffect(() => setUsers(initialUsers), [initialUsers]);
   const [showAdd, setShowAdd] = React.useState(false);
   const [draft, setDraft] = React.useState({ email: "", name: "", role: "user" });
   const [refreshing, setRefreshing] = React.useState(false);
+  const [status, setStatus] = React.useState({ error: null, saved: null });
   const [openMenu, setOpenMenu] = React.useState(null);
 
   const me = users.find(u => u.is_me);
@@ -302,43 +456,70 @@ function AccessGroup() {
     return () => window.removeEventListener("click", close);
   }, [openMenu]);
 
-  function refresh() {
+  async function refresh() {
     setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 600);
+    setStatus({ error: null, saved: null });
+    try {
+      const me = await fetchJson(auth, "/api/auth/me");
+      const rows = me?.role === "admin" ? await fetchJson(auth, "/api/admin/users") : [];
+      setUsers(adaptUsers(me, rows));
+      setStatus({ error: null, saved: "Access refreshed" });
+    } catch (error) {
+      setStatus({ error: messageOf(error), saved: null });
+    } finally {
+      setRefreshing(false);
+    }
   }
-  function addUser() {
+  async function addUser() {
     if (!draft.email) return;
-    setUsers(us => [...us, {
-      email: draft.email,
-      name: draft.name || draft.email.split("@")[0],
-      role: draft.role,
-      state: "active",
-      source: "manual",
-      clerk_subject: null,
-      last_seen: null,
-      calls_24h: 0,
-    }]);
-    setDraft({ email: "", name: "", role: "user" });
-    setShowAdd(false);
+    setStatus({ error: null, saved: null });
+    try {
+      await fetchJson(auth, "/api/admin/users", undefined, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: draft.email, display_name: draft.name || null, role: draft.role }),
+      });
+      setDraft({ email: "", name: "", role: "user" });
+      setShowAdd(false);
+      await refresh();
+      setStatus({ error: null, saved: "User saved" });
+    } catch (error) {
+      setStatus({ error: messageOf(error), saved: null });
+    }
   }
-  function toggleState(email) {
-    setUsers(us => us.map(u => u.email === email
-      ? { ...u, state: u.state === "active" ? "disabled" : "active" }
-      : u));
+  async function toggleState(user) {
     setOpenMenu(null);
+    setStatus({ error: null, saved: null });
+    try {
+      if (user.state === "active") {
+        await fetchJson(auth, "/api/admin/users/" + user.id + "/disable", undefined, { method: "POST" });
+      } else {
+        await fetchJson(auth, "/api/admin/users", undefined, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: user.email, display_name: user.name, role: user.role }),
+        });
+      }
+      await refresh();
+      setStatus({ error: null, saved: "User updated" });
+    } catch (error) {
+      setStatus({ error: messageOf(error), saved: null });
+    }
   }
-  function setRole(email, role) {
-    setUsers(us => us.map(u => u.email === email ? { ...u, role } : u));
+  async function setRole(user, role) {
     setOpenMenu(null);
-  }
-  function unlink(email) {
-    setUsers(us => us.map(u => u.email === email
-      ? { ...u, clerk_subject: null, source: "manual" } : u));
-    setOpenMenu(null);
-  }
-  function remove(email) {
-    setUsers(us => us.filter(u => u.email !== email));
-    setOpenMenu(null);
+    setStatus({ error: null, saved: null });
+    try {
+      await fetchJson(auth, "/api/admin/users", undefined, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: user.email, display_name: user.name, role }),
+      });
+      await refresh();
+      setStatus({ error: null, saved: "Role updated" });
+    } catch (error) {
+      setStatus({ error: messageOf(error), saved: null });
+    }
   }
 
   return (
@@ -346,6 +527,8 @@ function AccessGroup() {
       <div className="row" style={{alignItems: "baseline", justifyContent: "space-between", marginBottom: 4}}>
         <h2>Access</h2>
         <div className="row" style={{gap: 8}}>
+          {status.error && <span className="chip err">{status.error}</span>}
+          {status.saved && <span className="chip ok">{status.saved}</span>}
           <button className="btn ghost" onClick={refresh} disabled={refreshing}
                   style={{fontSize: 12, padding: "4px 8px"}}>
             {refreshing ? <span className="spinner"/> : <IconRefresh size={12}/>}
@@ -427,10 +610,8 @@ function AccessGroup() {
               <UserRow key={u.email} u={u}
                        openMenu={openMenu === u.email}
                        onOpenMenu={() => setOpenMenu(openMenu === u.email ? null : u.email)}
-                       onToggle={() => toggleState(u.email)}
-                       onSetRole={(r) => setRole(u.email, r)}
-                       onUnlink={() => unlink(u.email)}
-                       onRemove={() => remove(u.email)}/>
+                       onToggle={() => toggleState(u)}
+                       onSetRole={(r) => setRole(u, r)}/>
             ))}
           </tbody>
         </table>
@@ -471,7 +652,7 @@ function CurrentSession({ me }) {
   );
 }
 
-function UserRow({ u, openMenu, onOpenMenu, onToggle, onSetRole, onUnlink, onRemove }) {
+function UserRow({ u, openMenu, onOpenMenu, onToggle, onSetRole }) {
   const isMe = u.is_me;
   return (
     <tr className={u.state === "disabled" ? "disabled" : ""}>
@@ -541,11 +722,12 @@ function UserRow({ u, openMenu, onOpenMenu, onToggle, onSetRole, onUnlink, onRem
               {u.is_me && <span className="muted"> · can't disable self</span>}
             </MenuItem>
             {u.clerk_subject && (
-              <MenuItem onClick={onUnlink}>Unlink Clerk identity</MenuItem>
+              <MenuItem disabled>Unlink Clerk identity<span className="muted"> · no endpoint</span></MenuItem>
             )}
             <div style={{height: 1, background: "var(--border-soft)", margin: "4px 0"}}/>
-            <MenuItem onClick={onRemove} danger disabled={u.is_me}>
+            <MenuItem danger disabled>
               Remove from allowlist
+              <span className="muted"> · no endpoint</span>
             </MenuItem>
           </div>
         )}
@@ -576,4 +758,3 @@ function initialsOf(name) {
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return name.slice(0, 2).toUpperCase();
 }
-
