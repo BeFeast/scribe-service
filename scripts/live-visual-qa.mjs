@@ -317,12 +317,12 @@ async function openCommandPalette(cdp) {
 	});
 }
 
-async function clickTweaksButton(cdp, rowLabel, value) {
+async function clickAppearanceButton(cdp, rowLabel, value) {
 	return await evaluate(
 		cdp,
 		`(() => {
-			const rows = Array.from(document.querySelectorAll(".tweak-row"));
-			const row = rows.find((candidate) => candidate.querySelector(":scope > span")?.textContent?.trim() === ${JSON.stringify(rowLabel)});
+			const rows = Array.from(document.querySelectorAll(".settings-row"));
+			const row = rows.find((candidate) => candidate.querySelector(".row-label")?.textContent?.trim() === ${JSON.stringify(rowLabel)});
 			if (!row) return false;
 			const button = Array.from(row.querySelectorAll("button")).find((candidate) => candidate.textContent?.trim() === ${JSON.stringify(value)});
 			if (!button) return false;
@@ -349,16 +349,22 @@ async function smokeVariantMatrix(cdp) {
 		for (const theme of THEMES) {
 			for (const density of DENSITIES) {
 				for (const libraryLayout of LIBRARY_LAYOUTS) {
+					await cdp.send("Page.navigate", { url: absolute("#/settings") });
+					await waitForLoad(cdp);
+					await sleep(WAIT_MS);
 					const clicks = [
-						await clickTweaksButton(cdp, "Variant", variant),
+						await clickAppearanceButton(cdp, "Visual variant", variant),
 					];
 					await sleep(30);
-					clicks.push(await clickTweaksButton(cdp, "Theme", theme));
+					clicks.push(await clickAppearanceButton(cdp, "Theme", theme === "dark" ? "Dark" : "Light"));
 					await sleep(30);
-					clicks.push(await clickTweaksButton(cdp, "Density", density));
+					clicks.push(await clickAppearanceButton(cdp, "Density", density));
 					await sleep(30);
-					clicks.push(await clickTweaksButton(cdp, "Library", libraryLayout));
+					clicks.push(await clickAppearanceButton(cdp, "Library default layout", libraryLayout[0].toUpperCase() + libraryLayout.slice(1)));
 					await sleep(80);
+					await cdp.send("Page.navigate", { url: absolute("#/library") });
+					await waitForLoad(cdp);
+					await sleep(WAIT_MS);
 					const state = await evaluate(
 						cdp,
 						`(() => {
@@ -366,8 +372,6 @@ async function smokeVariantMatrix(cdp) {
 							const scrolling = document.scrollingElement;
 							const panel = document.querySelector(".tweaks-panel");
 							const layoutSelector = ${JSON.stringify(libraryLayout === "table" ? ".lib-table" : libraryLayout === "feed" ? ".lib-feed" : ".lib-cards")};
-							const activeButtons = Array.from(document.querySelectorAll(".tweaks-panel .seg.active")).map((button) => button.textContent?.trim());
-							const panelRect = panel?.getBoundingClientRect();
 							return {
 								dataset: {
 									variant: doc.dataset.variant || "",
@@ -375,9 +379,8 @@ async function smokeVariantMatrix(cdp) {
 									density: doc.dataset.density || "",
 									libraryLayout: doc.dataset.libraryLayout || "",
 								},
-								activeButtons,
 								layoutVisible: Boolean(document.querySelector(layoutSelector)),
-								controlsReachable: Boolean(panelRect && panelRect.width > 0 && panelRect.height > 0 && panelRect.left < window.innerWidth && panelRect.top < window.innerHeight && panelRect.right > 0 && panelRect.bottom > 0),
+								noFloatingTweaksPanel: panel === null,
 								horizontalOverflow: (scrolling?.scrollWidth ?? 0) > window.innerWidth + 1,
 							};
 						})()`,
@@ -485,12 +488,8 @@ async function main() {
 				state.dataset.theme !== row.theme ||
 				state.dataset.density !== row.density ||
 				state.dataset.libraryLayout !== row.libraryLayout ||
-				!state.activeButtons.includes(row.variant) ||
-				!state.activeButtons.includes(row.theme) ||
-				!state.activeButtons.includes(row.density) ||
-				!state.activeButtons.includes(row.libraryLayout) ||
 				!state.layoutVisible ||
-				!state.controlsReachable ||
+				!state.noFloatingTweaksPanel ||
 				state.horizontalOverflow
 			);
 		});

@@ -719,7 +719,8 @@ export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
 				<section className="settings-group">
 					<h2>Appearance</h2>
 					<p className="group-sub">
-						Theme tweaks also live in the floating Tweaks panel.
+						Product display controls for theme, visual variant, density, and the
+						default Library layout.
 					</p>
 					<SegRow
 						label="Theme"
@@ -734,7 +735,7 @@ export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
 					/>
 					<SegRow
 						label="Visual variant"
-						hint="Three takes on the same product. They share data and layout - only the type system, palette, and chrome change."
+						hint="Four takes on the same product. They share data and layout - only the type system, palette, and chrome change."
 						value={tweaks.variant}
 						options={["paper", "terminal", "console", "field"]}
 						onChange={(value) =>

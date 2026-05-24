@@ -73,6 +73,12 @@ export const IconX = (props: IconProps) => (
 	</Icon>
 );
 
+export const IconCheck = (props: IconProps) => (
+	<Icon {...props}>
+		<path d="M3 8l3.5 3.5L13 4.5" />
+	</Icon>
+);
+
 export const IconArrow = (props: IconProps) => (
 	<Icon {...props}>
 		<path d="M3 8h10M9 4l4 4-4 4" />
@@ -98,6 +104,25 @@ export const IconRefresh = (props: IconProps) => (
 		<path d="M13 4v3h-3" />
 		<path d="M3 12v-3h3" />
 		<path d="M13 7a5 5 0 00-9-1.5M3 9a5 5 0 009 1.5" />
+	</Icon>
+);
+
+export const IconTerminal = (props: IconProps) => (
+	<Icon {...props}>
+		<rect x="2" y="3" width="12" height="10" rx="1" />
+		<path d="M5 7l2 1.5L5 10M8.5 10.5h3" />
+	</Icon>
+);
+
+export const IconLink = (props: IconProps) => (
+	<Icon {...props}>
+		<path d="M9.5 6.5l-3 3M7 5L9 3a2 2 0 012.8 2.8L9.8 7.8M9 11l-2 2a2 2 0 01-2.8-2.8L6.2 8.2" />
+	</Icon>
+);
+
+export const IconDot = (props: IconProps) => (
+	<Icon {...props}>
+		<circle cx="8" cy="8" r="2.5" fill="currentColor" />
 	</Icon>
 );
 
@@ -146,6 +171,31 @@ export const IconMoon = (props: IconProps) => (
 export const IconSparkle = (props: IconProps) => (
 	<Icon {...props}>
 		<path d="M8 2l1.4 4.2L13.5 8 9.4 9.8 8 14l-1.4-4.2L2.5 8 6.6 6.2 8 2z" />
+	</Icon>
+);
+
+export const IconDownload = (props: IconProps) => (
+	<Icon {...props}>
+		<path d="M8 2v8M5 7l3 3 3-3M3 13h10" />
+	</Icon>
+);
+
+export const IconWave = (props: IconProps) => (
+	<Icon {...props}>
+		<path d="M2 8h1M4 5v6M6 6v4M8 3v10M10 5v6M12 6v4M14 8h-1" />
+	</Icon>
+);
+
+export const IconDollar = (props: IconProps) => (
+	<Icon {...props}>
+		<path d="M8 2v12M11 5H7a2 2 0 000 4h2a2 2 0 010 4H5" />
+	</Icon>
+);
+
+export const IconAlert = (props: IconProps) => (
+	<Icon {...props}>
+		<path d="M8 2.5l6 11h-12l6-11z" />
+		<path d="M8 7v3M8 12v.1" />
 	</Icon>
 );
 

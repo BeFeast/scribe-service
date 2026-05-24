@@ -16,7 +16,6 @@ def test_app_shell_files_exist() -> None:
         "components/ConfirmDialog.tsx",
         "components/TopBar.tsx",
         "components/Sidebar.tsx",
-        "components/TweaksPanel.tsx",
         "constants.ts",
         "hooks/useEventSource.ts",
         "hooks/usePoll.ts",
@@ -37,7 +36,8 @@ def test_app_mounts_shell_and_placeholder_router() -> None:
     assert "TopBar" in source
     assert "Sidebar" in source
     assert "CommandPalette" in source
-    assert "TweaksPanel" in source
+    assert "TweaksPanel" not in source
+    assert "tweaks-panel" not in source
     assert "useRoute" in source
     assert "Library" in source
     assert "layout={tweaks.libraryLayout}" in source
@@ -47,6 +47,22 @@ def test_app_mounts_shell_and_placeholder_router() -> None:
     assert 'route.page === "library"' in source
     assert 'route.page === "transcript"' in source
     assert "<Transcript" in source
+
+
+def test_normal_routes_do_not_mount_floating_tweaks_panel() -> None:
+    source = read("main.tsx")
+    settings = read("pages/Settings.tsx")
+
+    assert 'className="tweaks-panel"' not in source
+    assert 'from "./components/TweaksPanel"' not in source
+    assert "Theme tweaks also live in the floating Tweaks panel" not in settings
+    for label in (
+        "Theme",
+        "Visual variant",
+        "Library default layout",
+        "Density",
+    ):
+        assert label in settings
 
 
 def test_confirm_dialog_is_in_app_not_browser_prompt() -> None:
@@ -583,16 +599,18 @@ def test_tweaks_defaults_persist_and_apply_to_html_dataset() -> None:
     assert "dataset.libraryLayout = tweaks.libraryLayout" in source
 
 
-def test_tweaks_panel_exposes_design_variant_theme_density_controls() -> None:
+def test_appearance_exposes_design_variant_theme_density_controls() -> None:
     hooks = read("hooks/useTweaks.ts")
     topbar = read("components/TopBar.tsx")
-    panel = read("components/TweaksPanel.tsx")
+    settings = read("pages/Settings.tsx")
 
     assert 'export type ScribeTheme = "light" | "dark";' in hooks
     for value in ('"paper"', '"terminal"', '"console"', '"field"'):
-        assert value in panel
-    assert 'const themeOptions: ScribeTheme[] = ["light", "dark"]' in panel
-    assert 'const densityOptions: ScribeDensity[] = ["compact", "cozy", "comfy"]' in panel
+        assert value in settings
+    assert "Visual variant" in settings
+    assert "Library default layout" in settings
+    assert "Density" in settings
+    assert 'options={["compact", "cozy", "comfy"]}' in settings
     assert "Toggle theme" in topbar
     assert "replaceTweaks({ ...tweaks, theme:" in topbar
 
@@ -652,17 +670,15 @@ def test_route_hook_uses_typed_hash_routes() -> None:
 
 def test_spa_internal_navigation_uses_real_relative_anchors() -> None:
     sidebar = read("components/Sidebar.tsx")
-    tweaks = read("components/TweaksPanel.tsx")
     library = read("pages/Library.tsx")
     transcript = read("pages/Transcript.tsx")
     job_card = read("components/JobCard.tsx")
     failure_row = read("components/FailureRow.tsx")
     job_detail = read("pages/JobDetail.tsx")
     route = read("hooks/useRoute.ts")
-    source = sidebar + tweaks + library + transcript + job_card + failure_row + job_detail
+    source = sidebar + library + transcript + job_card + failure_row + job_detail
 
     assert 'href={routeToHref(nextRoute)}' in sidebar
-    assert 'href={routeToHref(item.route)}' in tweaks
     assert 'className="job-card-open"' in job_card
     assert 'className="failure-action"' in failure_row
     assert "row.summary_shortlink" not in library

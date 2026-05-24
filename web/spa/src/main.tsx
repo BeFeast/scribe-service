@@ -5,7 +5,6 @@ import { DesignSystemPlayground } from "./DesignSystemPlayground";
 import { CommandPalette } from "./components/CommandPalette";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
-import { TweaksPanel } from "./components/TweaksPanel";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { useRoute } from "./hooks/useRoute";
 import { useTweaks } from "./hooks/useTweaks";
@@ -89,16 +88,6 @@ function App() {
 					<Placeholder page={route.page} id={route.params.id} />
 				)}
 			</main>
-			<TweaksPanel
-				tweaks={tweaks}
-				setVariant={(variant) => replaceTweaks({ ...tweaks, variant })}
-				setTheme={(theme) => replaceTweaks({ ...tweaks, theme })}
-				setDensity={(density) => replaceTweaks({ ...tweaks, density })}
-				setLibraryLayout={(libraryLayout) =>
-					replaceTweaks({ ...tweaks, libraryLayout })
-				}
-				navigate={navigate}
-			/>
 			<CommandPalette navigate={navigate} />
 		</div>
 	);

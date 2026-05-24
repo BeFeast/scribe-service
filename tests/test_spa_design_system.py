@@ -263,13 +263,13 @@ def test_live_visual_qa_script_covers_required_routes_and_responsive_viewports()
     assert 'const DENSITIES = ["compact", "cozy", "comfy"]' in script
     assert 'const LIBRARY_LAYOUTS = ["table", "feed", "cards"]' in script
     assert "smokeVariantMatrix" in script
-    assert "clickTweaksButton" in script
+    assert "clickAppearanceButton" in script
     assert "await sleep(30);" in script
     assert "variantMatrixFailures" in script
     assert "closeCommandPalette" in script
     assert "commandPaletteMismatch" in script
-    assert "panelRect.right > 0" in script
-    assert "panelRect.bottom > 0" in script
+    assert "noFloatingTweaksPanel" in script
+    assert 'document.querySelector(".tweaks-panel")' in script
     assert 'dataset.variant !== "field"' in script
     assert 'dataset.theme !== "light"' in script
     assert 'dataset.density !== "compact"' in script
