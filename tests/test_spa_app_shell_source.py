@@ -371,10 +371,17 @@ def test_command_palette_covers_submit_search_navigation_and_a11y() -> None:
     assert "TRANSCRIPTS" not in source
     assert "ACTIVE_JOBS" not in source
     assert "STATS" not in source
-    assert "Recent submissions" not in source
+    assert "Recent submissions" in source
+    assert "recent-job-${job.id}" in source
+    assert "recent-transcript-${transcript.id}" in source
+    assert "Linus Torvalds on Git" not in source
+    assert "Rich Hickey" not in source
+    assert "Bryan Cantrill" not in source
     assert "source=manual" in source
     assert "Scribe could not submit that job" in source
     assert "Sign in is required" in source
+    assert "<dialog" in source
+    assert "cmdk-modal" in source
     assert 'aria-modal="true"' in source
     assert 'event.key === "Escape"' in source
     assert 'event.key === "Enter"' in source
@@ -383,6 +390,11 @@ def test_command_palette_covers_submit_search_navigation_and_a11y() -> None:
     assert 'setQuery("")' in source
     assert 'submitState.state === "success"' in source
     assert "safeSelectedIndex" in source
+    assert "watchPipeline(submitState.job.job_id)" in source
+    assert "navigate(route(\"job\", jobId))" in source
+    assert "setSubmitted({ id: 219" not in source
+    assert "navigate(\"job\", { id: 218 })" not in source
+    assert "Queued as job #219" not in source
     assert "cmdk-modal" in source
     assert "cmdk-input-row" in source
 
