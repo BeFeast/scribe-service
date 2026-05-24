@@ -2029,6 +2029,16 @@ a {
 	font-size: 0.82rem;
 }
 
+.ops-unavailable {
+	display: grid;
+	min-height: 8rem;
+	place-items: center;
+	border: 1px dashed var(--border-soft);
+	border-radius: var(--radius);
+	font-family: var(--font-mono);
+	font-size: 0.78rem;
+}
+
 .ops-section,
 .failure-list,
 .system-list,

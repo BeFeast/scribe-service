@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import secrets
+import time
 from collections.abc import Iterator
 from html.parser import HTMLParser
 from urllib.parse import quote, urlparse
@@ -1688,6 +1689,79 @@ def _service_version() -> str:
         return "vunknown"
 
 
+def _metric_freshness(timestamp: float, *, fresh_seconds: int) -> tuple[str, str]:
+    if timestamp <= 0:
+        return "no recent signal recorded", "warn"
+    age = max(0, int(time.time() - timestamp))
+    iso = dt.datetime.fromtimestamp(int(timestamp), tz=dt.UTC).isoformat(timespec="seconds")
+    status = "ok" if age <= fresh_seconds else "warn"
+    return f"last signal {iso} ({age}s ago)", status
+
+
+def _system_snapshot(
+    *,
+    backup: BackupSnapshot,
+    worker_pool: WorkerPoolSnapshot,
+    worker_active_count: int,
+    spend_24h: float,
+    daily_cap: float,
+) -> list[SystemSnapshot]:
+    """Cheap system rows for /api/ops.
+
+    Keep this request-local: /api/ops is polled frequently by the SPA, so
+    network and extra DB rollcall probes stay out of the hot path.
+    """
+    vast_pct = (spend_24h / daily_cap) if daily_cap > 0 else 0
+    vast_status = "err" if vast_pct > 0.95 else "warn" if vast_pct > 0.85 else "ok"
+    vast_value = (
+        f"24h spend ${spend_24h:.2f} / ${daily_cap:.2f} cap"
+        if daily_cap > 0
+        else f"24h spend ${spend_24h:.2f} · cap disabled"
+    )
+    codex_value, codex_status = _metric_freshness(
+        float(metrics.gauge_value(metrics.last_codex_success_timestamp)),
+        fresh_seconds=3600,
+    )
+    vast_signal, vast_signal_status = _metric_freshness(
+        float(metrics.gauge_value(metrics.last_vast_launch_timestamp)),
+        fresh_seconds=24 * 3600,
+    )
+    if vast_signal_status != "ok" and vast_status == "ok":
+        vast_status = vast_signal_status
+        vast_value = f"{vast_value} · {vast_signal}"
+
+    return [
+        SystemSnapshot(label="scribe-service", value=_service_version(), status="ok"),
+        SystemSnapshot(
+            label="Worker",
+            value=f"{worker_active_count}/{worker_pool.total} busy",
+            status="ok" if worker_active_count < worker_pool.total else "warn",
+        ),
+        SystemSnapshot(label="Postgres", value="request query succeeded", status="ok"),
+        SystemSnapshot(
+            label="Backup",
+            value=(
+                f"stale · last success {_format_backup_age(backup.age_seconds)}"
+                if backup.stale
+                else f"fresh · last success {_format_backup_age(backup.age_seconds)}"
+            ),
+            status="err" if backup.stale else "ok",
+        ),
+        SystemSnapshot(label="Vast.ai", value=vast_value, status=vast_status),
+        SystemSnapshot(label="codex CLI", value=codex_value, status=codex_status),
+    ]
+
+
+def _format_backup_age(seconds: int | None) -> str:
+    if seconds is None:
+        return "unknown"
+    if seconds < 90:
+        return f"{seconds}s ago"
+    if seconds < 7200:
+        return f"{round(seconds / 60)}m ago"
+    return f"{round(seconds / 3600)}h ago"
+
+
 @router.get("/api/ops", response_model=OpsSnapshot)
 def api_ops(
     response: Response,
@@ -1731,11 +1805,27 @@ def api_ops(
     ) or 0
     # DB-derived proxy for worker occupancy. It can lag real OS thread state
     # after a worker crash until retry/recovery updates the in-flight jobs.
+    recent_failures_since = now - dt.timedelta(days=7)
     recent_failures = session.execute(
-        _actor_filter(select(Job).where(Job.status == JobStatus.failed), Job, actor)
+        _actor_filter(
+            select(Job).where(
+                Job.status == JobStatus.failed,
+                Job.updated_at >= recent_failures_since,
+            ),
+            Job,
+            actor,
+        )
         .order_by(Job.updated_at.desc(), Job.id.desc())
         .limit(50)
     ).scalars().all()
+    spend_24h = round(_vast_spend_usd_since(session, now - dt.timedelta(hours=24)), 4)
+    spend_7d = round(_vast_spend_usd_since(session, now - dt.timedelta(days=7)), 4)
+    spend_30d = round(_vast_spend_usd_since(session, now - dt.timedelta(days=30)), 4)
+    backup = _backup_snapshot()
+    worker_pool = WorkerPoolSnapshot(
+        active=min(int(active_workers), settings.worker_concurrency),
+        total=settings.worker_concurrency,
+    )
 
     return OpsSnapshot(
         window_days=1,
@@ -1743,16 +1833,13 @@ def api_ops(
         transcripts_done=int(transcripts_done),
         transcripts_partial=int(transcripts_partial),
         queue_depth=int(queue_depth),
-        vast_spend_24h=round(_vast_spend_usd_since(session, now - dt.timedelta(hours=24)), 4),
-        vast_spend_7d=round(_vast_spend_usd_since(session, now - dt.timedelta(days=7)), 4),
-        vast_spend_30d=round(_vast_spend_usd_since(session, now - dt.timedelta(days=30)), 4),
+        vast_spend_24h=spend_24h,
+        vast_spend_7d=spend_7d,
+        vast_spend_30d=spend_30d,
         daily_spend_cap_usd=settings.daily_spend_cap_usd,
         spend_series_14d=_spend_series_14d(session, now),
-        backup=_backup_snapshot(),
-        worker_pool=WorkerPoolSnapshot(
-            active=min(int(active_workers), settings.worker_concurrency),
-            total=settings.worker_concurrency,
-        ),
+        backup=backup,
+        worker_pool=worker_pool,
         recent_failures=[
             RecentFailureSnapshot(
                 id=job.id,
@@ -1763,10 +1850,13 @@ def api_ops(
             )
             for job in recent_failures
         ],
-        system=[
-            SystemSnapshot(label="scribe-service", value=_service_version(), status="ok"),
-            SystemSnapshot(label="Postgres", value="connected", status="ok"),
-        ],
+        system=_system_snapshot(
+            backup=backup,
+            worker_pool=worker_pool,
+            worker_active_count=int(active_workers),
+            spend_24h=spend_24h,
+            daily_cap=settings.daily_spend_cap_usd,
+        ),
     )
 
 
