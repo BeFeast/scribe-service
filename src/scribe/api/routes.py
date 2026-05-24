@@ -69,6 +69,7 @@ from scribe.api.schemas import (
     TranscriptBrief,
     TranscriptFull,
     UserAdminCreate,
+    UserAdminRoleUpdate,
     UserAdminView,
     WorkerPoolSnapshot,
 )
@@ -704,6 +705,24 @@ def disable_user(
         if active_admins is not None and active_admins <= 1:
             raise HTTPException(status_code=400, detail="cannot disable the last active admin account")
     user.disabled = True
+    session.commit()
+    session.refresh(user)
+    return _user_view(user)
+
+
+@router.post("/api/admin/users/{user_id}/role", response_model=UserAdminView)
+def update_user_role(
+    user_id: int,
+    body: UserAdminRoleUpdate,
+    session: Session = Depends(get_session),
+    _actor: Actor = Depends(require_admin_actor),
+) -> UserAdminView:
+    if body.role not in {"admin", "user"}:
+        raise HTTPException(status_code=422, detail="role must be admin or user")
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail=f"user {user_id} not found")
+    user.role = body.role
     session.commit()
     session.refresh(user)
     return _user_view(user)

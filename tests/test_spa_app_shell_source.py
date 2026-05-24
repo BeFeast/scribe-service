@@ -232,6 +232,7 @@ def test_core_route_wiring_uses_real_backend_actions_where_present() -> None:
     assert 'fetchJson(auth, "/api/prompts"' in settings
     assert 'auth.protectedFetch("/api/prompts/" + promptVersion' in settings
     assert 'fetchJson(auth, "/api/admin/users"' in settings
+    assert '"/api/admin/users/" + user.id + "/role"' in settings
     assert "SCRIBE_USERS" not in settings
     assert "fetchJson(auth" in api
     assert "auth.protectedFetch(\"/api/jobs/\" + id + \"/log/stream\"" in api

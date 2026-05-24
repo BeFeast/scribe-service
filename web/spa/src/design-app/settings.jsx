@@ -507,10 +507,10 @@ function AccessGroup({ initialUsers = [] }) {
     setOpenMenu(null);
     setStatus({ error: null, saved: null });
     try {
-      await fetchJson(auth, "/api/admin/users", undefined, {
+      await fetchJson(auth, "/api/admin/users/" + user.id + "/role", undefined, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: user.email, display_name: user.name, role }),
+        body: JSON.stringify({ role }),
       });
       await refresh();
       setStatus({ error: null, saved: "Role updated" });
