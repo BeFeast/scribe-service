@@ -37,7 +37,7 @@ def test_app_mounts_shell_and_placeholder_router() -> None:
     assert "TopBar" in source
     assert "Sidebar" in source
     assert "CommandPalette" in source
-    assert "TweaksPanel" in source
+    assert "TweaksPanel" not in source
     assert "useRoute" in source
     assert "Library" in source
     assert "layout={tweaks.libraryLayout}" in source
@@ -583,16 +583,18 @@ def test_tweaks_defaults_persist_and_apply_to_html_dataset() -> None:
     assert "dataset.libraryLayout = tweaks.libraryLayout" in source
 
 
-def test_tweaks_panel_exposes_design_variant_theme_density_controls() -> None:
+def test_settings_appearance_exposes_design_variant_theme_density_controls() -> None:
     hooks = read("hooks/useTweaks.ts")
     topbar = read("components/TopBar.tsx")
-    panel = read("components/TweaksPanel.tsx")
+    settings = read("pages/Settings.tsx")
 
     assert 'export type ScribeTheme = "light" | "dark";' in hooks
     for value in ('"paper"', '"terminal"', '"console"', '"field"'):
-        assert value in panel
-    assert 'const themeOptions: ScribeTheme[] = ["light", "dark"]' in panel
-    assert 'const densityOptions: ScribeDensity[] = ["compact", "cozy", "comfy"]' in panel
+        assert value in settings
+    assert '"light"' in settings
+    assert '"dark"' in settings
+    assert '"compact", "cozy", "comfy"' in settings
+    assert "Library default layout" in settings
     assert "Toggle theme" in topbar
     assert "replaceTweaks({ ...tweaks, theme:" in topbar
 

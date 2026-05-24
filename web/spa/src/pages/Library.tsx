@@ -122,6 +122,20 @@ function formatElapsed(seconds: number): string {
 	return minutes > 0 ? `${minutes}m ${rest}s` : `${rest}s`;
 }
 
+function previewSummary(row: LibraryRow): string {
+	if (row.is_partial || row.summary_excerpt.trim() === "") {
+		return "Whisper finished; summary regeneration pending. POST /transcripts/{id}/resummarize to retry.";
+	}
+	return row.summary_excerpt
+		.replace(/\*\*(.+?)\*\*/g, "$1")
+		.replace(/\*(.+?)\*/g, "$1")
+		.replace(/`(.+?)`/g, "$1")
+		.replace(/^#+\s*/gm, "")
+		.replace(/\n+/g, " ")
+		.trim()
+		.slice(0, 240);
+}
+
 function buildLibraryUrl(
 	query: string,
 	tag: string | undefined,
@@ -139,6 +153,16 @@ function buildLibraryUrl(
 
 function hasNonTerminalJob(jobs: ActiveJob[]): boolean {
 	return jobs.some((job) => !terminalStatuses.has(job.status));
+}
+
+function handleKeyboardOpen(
+	event: React.KeyboardEvent,
+	open: () => void,
+): void {
+	if (event.key === "Enter" || event.key === " ") {
+		event.preventDefault();
+		open();
+	}
 }
 
 async function readErrorMessage(response: Response): Promise<string> {
@@ -557,7 +581,7 @@ function InFlightStrip({ navigate }: { navigate: (route: Route) => void }) {
 				<span className="live-dot" aria-hidden="true" />
 				<strong>In flight</strong>
 				<span className="muted">
-					/ {jobs.length} job{jobs.length === 1 ? "" : "s"}
+					· {jobs.length} job{jobs.length === 1 ? "" : "s"}
 				</span>
 				{error ? <span className="chip warn">poll delayed</span> : null}
 				<div className="spacer" />
@@ -571,7 +595,7 @@ function InFlightStrip({ navigate }: { navigate: (route: Route) => void }) {
 						)
 					}
 				>
-					open queue -
+					open queue →
 				</a>
 			</div>
 			{jobs.map((job) => (
@@ -592,20 +616,6 @@ function InFlightRow({
 	const activeStage =
 		stageLabels.find((stage) => job.stages[stage]?.state === "active") ??
 		job.status;
-	const doneCount = stageLabels.filter(
-		(stage) => job.stages[stage]?.state === "done",
-	).length;
-	const activeProgress = job.stages[activeStage]?.progress;
-	const progress = Math.max(
-		8,
-		Math.min(
-			100,
-			((doneCount +
-				(typeof activeProgress === "number" ? activeProgress : 0.5)) /
-				stageLabels.length) *
-				100,
-		),
-	);
 
 	return (
 		<a
@@ -615,14 +625,30 @@ function InFlightRow({
 		>
 			<span className="inflight-copy">
 				<strong>{job.title ?? job.source_label ?? job.video_id}</strong>
-				<span className="mono">
-					job {job.id} / {activeStage} / {formatElapsed(job.elapsed_s)}
+				<span className="inflight-stages" aria-label="Pipeline stages">
+					{stageLabels.map((stage) => {
+						const stageState = job.stages[stage]?.state ?? "pending";
+						const progress = job.stages[stage]?.progress;
+						return (
+							<span
+								key={stage}
+								className={`stage-pill ${stageState}`}
+								title={stage}
+							>
+								{stageState === "active" && typeof progress === "number" ? (
+									<span style={{ width: `${Math.round(progress * 100)}%` }} />
+								) : null}
+							</span>
+						);
+					})}
 				</span>
 			</span>
-			<span className="bar-track" aria-label={`${activeStage} progress`}>
-				<span style={{ width: `${progress}%` }} />
+			<span className="mono muted">
+				{activeStage === "transcribing"
+					? `transcribing · ${Math.round((job.stages.transcribing?.progress ?? 0) * 100)}%`
+					: activeStage}
 			</span>
-			<span className="mono muted">{job.status}</span>
+			<span className="mono muted">{formatElapsed(job.elapsed_s)}</span>
 		</a>
 	);
 }
@@ -664,6 +690,10 @@ function LibTable({
 	onDelete: (row: LibraryRow) => void;
 	deleteBusyId: number | null;
 }) {
+	function openTranscript(row: LibraryRow) {
+		navigate({ page: "transcript", params: { id: row.id } });
+	}
+
 	return (
 		<div className="table-wrap">
 			<table className="lib-table">
@@ -679,9 +709,19 @@ function LibTable({
 				</thead>
 				<tbody>
 					{rows.map((row) => (
-						<tr key={row.id}>
+						<tr
+							key={row.id}
+							onClick={() => openTranscript(row)}
+							onKeyDown={(event) =>
+								handleKeyboardOpen(event, () => openTranscript(row))
+							}
+							tabIndex={0}
+						>
 							<td className="col-num">{row.id}</td>
 							<td className="col-title">
+								{row.is_partial ? (
+									<span className="chip warn">partial</span>
+								) : null}
 								<a
 									className="link-button table-title"
 									href={routeToHref({
@@ -698,12 +738,9 @@ function LibTable({
 								>
 									{row.title}
 								</a>
-								{row.is_partial ? (
-									<span className="chip warn">partial</span>
-								) : null}
 							</td>
 							<td className="col-tags">
-								<TagList row={row} navigate={navigate} />
+								<TagList row={row} navigate={navigate} className="row-tags" />
 							</td>
 							<td className="col-meta col-len">
 								{formatDuration(row.duration_seconds)}
@@ -745,20 +782,20 @@ function LibFeed({
 	return (
 		<div className="lib-feed">
 			{rows.map((row) => (
-				<article className="feed-item" key={row.id}>
+				<div className="feed-item" key={row.id}>
 					<div className="feed-num">#{row.id}</div>
 					<div className="feed-body">
 						<div className="feed-meta-top">
 							<span className="tnum">{formatDate(row.created_at)}</span>
-							<span className="sep">/</span>
+							<span className="sep">·</span>
 							<span>{formatDuration(row.duration_seconds)}</span>
-							<span className="sep">/</span>
+							<span className="sep">·</span>
 							<span>{row.lang ?? "lang n/a"}</span>
-							<span className="sep">/</span>
+							<span className="sep">·</span>
 							<span>{formatUsdCost(row.vast_cost, displayCurrency)}</span>
 							{row.is_partial ? (
 								<>
-									<span className="sep">/</span>
+									<span className="sep">·</span>
 									<span className="chip warn">partial</span>
 								</>
 							) : null}
@@ -781,7 +818,7 @@ function LibFeed({
 								{row.title}
 							</a>
 						</h2>
-						<p className="feed-excerpt">{row.summary_excerpt}</p>
+						<p className="feed-excerpt">{previewSummary(row)}</p>
 						<TagList row={row} navigate={navigate} />
 						<RowLinks
 							row={row}
@@ -789,7 +826,7 @@ function LibFeed({
 							busy={deleteBusyId === row.id}
 						/>
 					</div>
-				</article>
+				</div>
 			))}
 		</div>
 	);
@@ -811,12 +848,12 @@ function LibCards({
 	return (
 		<div className="lib-cards">
 			{rows.map((row) => (
-				<article className="card" key={row.id}>
+				<div className="card" key={row.id}>
 					<div className="card-meta-top">
 						<span>#{row.id}</span>
-						<span className="sep">/</span>
+						<span className="sep">·</span>
 						<span>{formatDate(row.created_at)}</span>
-						<span className="sep">/</span>
+						<span className="sep">·</span>
 						<span>{formatDuration(row.duration_seconds)}</span>
 						{row.is_partial ? <span className="chip warn">partial</span> : null}
 					</div>
@@ -838,7 +875,7 @@ function LibCards({
 							{row.title}
 						</a>
 					</h3>
-					<p className="card-excerpt">{row.summary_excerpt}</p>
+					<p className="card-excerpt">{previewSummary(row)}</p>
 					<div className="card-foot">
 						<TagList row={row} navigate={navigate} />
 					</div>
@@ -850,7 +887,7 @@ function LibCards({
 							busy={deleteBusyId === row.id}
 						/>
 					</div>
-				</article>
+				</div>
 			))}
 		</div>
 	);
@@ -859,15 +896,17 @@ function LibCards({
 function TagList({
 	row,
 	navigate,
+	className = "feed-tags",
 }: {
 	row: LibraryRow;
 	navigate: (route: Route) => void;
+	className?: string;
 }) {
 	if (row.tags === null || row.tags.length === 0) {
 		return <span className="muted">untagged</span>;
 	}
 	return (
-		<div className="feed-tags">
+		<div className={className}>
 			{row.tags.map((tag) => {
 				const tagRoute: Route = { page: "library", params: { tag } };
 				return (
@@ -875,9 +914,10 @@ function TagList({
 						className="tag tag-button"
 						key={tag}
 						href={routeToHref(tagRoute)}
-						onClick={(event) =>
-							handleRouteAnchorClick(event, tagRoute, navigate)
-						}
+						onClick={(event) => {
+							event.stopPropagation();
+							handleRouteAnchorClick(event, tagRoute, navigate);
+						}}
 					>
 						{tag}
 					</a>
@@ -915,21 +955,31 @@ function RowLinks({
 	return (
 		<div className="row-links">
 			{row.source_url !== null ? (
-				<a href={row.source_url} target="_blank" rel="noreferrer">
+				<a
+					href={row.source_url}
+					target="_blank"
+					rel="noreferrer"
+					onClick={(event) => event.stopPropagation()}
+				>
 					{row.source_label ?? "Source"}
 				</a>
 			) : null}
-			<PrivateShareLinks
-				id={row.id}
-				copyKinds={pageCopyKinds}
-				targetKinds={
-					row.is_partial ? partialShareTargetKinds : completeShareTargetKinds
-				}
-			/>
+			<span onClickCapture={(event) => event.stopPropagation()}>
+				<PrivateShareLinks
+					id={row.id}
+					copyKinds={pageCopyKinds}
+					targetKinds={
+						row.is_partial ? partialShareTargetKinds : completeShareTargetKinds
+					}
+				/>
+			</span>
 			<button
 				type="button"
 				className="link-button danger-link"
-				onClick={() => onDelete(row)}
+				onClick={(event) => {
+					event.stopPropagation();
+					onDelete(row);
+				}}
 				disabled={busy}
 			>
 				{busy ? "Deleting" : "Delete"}

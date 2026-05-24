@@ -719,7 +719,8 @@ export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
 				<section className="settings-group">
 					<h2>Appearance</h2>
 					<p className="group-sub">
-						Theme tweaks also live in the floating Tweaks panel.
+						Design variant, theme, density, and library layout controls for the
+						product shell.
 					</p>
 					<SegRow
 						label="Theme"

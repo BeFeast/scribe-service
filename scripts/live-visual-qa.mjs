@@ -256,6 +256,17 @@ async function captureRoute(cdp, route, viewport) {
 					horizontalOverflow: (scrolling?.scrollWidth ?? 0) > window.innerWidth + 1,
 					overflowing,
 					commandPaletteOpen: Boolean(document.querySelector(".cmdk-modal")),
+					tweaksPanelAbsent: !document.querySelector(".tweaks-panel"),
+					library: {
+						realContent: Boolean(document.querySelector(".feed-item, .lib-table tbody tr, .lib-cards .card")),
+						empty: Boolean(document.querySelector(".library-state.empty-state")),
+						serviceError: Boolean(document.querySelector(".library-state.error-state, .library-state.failure-row")),
+					},
+					transcript: {
+						hasTitle: Boolean(document.querySelector(".detail-h1")?.textContent?.trim()),
+						hasBody: Boolean(document.querySelector(".transcript-body")?.textContent?.trim()),
+						unavailable: /Transcript unavailable|404|not found/i.test(document.body.textContent || ""),
+					},
 				};
 			})()`,
 		);
@@ -317,14 +328,16 @@ async function openCommandPalette(cdp) {
 	});
 }
 
-async function clickTweaksButton(cdp, rowLabel, value) {
+async function clickSettingsAppearanceButton(cdp, rowLabel, value) {
 	return await evaluate(
 		cdp,
 		`(() => {
-			const rows = Array.from(document.querySelectorAll(".tweak-row"));
-			const row = rows.find((candidate) => candidate.querySelector(":scope > span")?.textContent?.trim() === ${JSON.stringify(rowLabel)});
+			const rows = Array.from(document.querySelectorAll(".settings-row"));
+			const row = rows.find((candidate) => candidate.querySelector(".row-label")?.textContent?.trim() === ${JSON.stringify(rowLabel)});
 			if (!row) return false;
-			const button = Array.from(row.querySelectorAll("button")).find((candidate) => candidate.textContent?.trim() === ${JSON.stringify(value)});
+			row.scrollIntoView({ block: "center" });
+			const expected = ${JSON.stringify(value)}.toLowerCase();
+			const button = Array.from(row.querySelectorAll("button")).find((candidate) => candidate.textContent?.trim().toLowerCase() === expected);
 			if (!button) return false;
 			button.click();
 			return true;
@@ -339,7 +352,7 @@ async function smokeVariantMatrix(cdp) {
 		deviceScaleFactor: 1,
 		mobile: false,
 	});
-	await cdp.send("Page.navigate", { url: absolute("#/library") });
+	await cdp.send("Page.navigate", { url: absolute("#/settings") });
 	await waitForLoad(cdp);
 	await sleep(WAIT_MS);
 	await closeCommandPalette(cdp);
@@ -350,24 +363,37 @@ async function smokeVariantMatrix(cdp) {
 			for (const density of DENSITIES) {
 				for (const libraryLayout of LIBRARY_LAYOUTS) {
 					const clicks = [
-						await clickTweaksButton(cdp, "Variant", variant),
+						await clickSettingsAppearanceButton(cdp, "Visual variant", variant),
 					];
 					await sleep(30);
-					clicks.push(await clickTweaksButton(cdp, "Theme", theme));
+					clicks.push(await clickSettingsAppearanceButton(cdp, "Theme", theme));
 					await sleep(30);
-					clicks.push(await clickTweaksButton(cdp, "Density", density));
+					clicks.push(await clickSettingsAppearanceButton(cdp, "Density", density));
 					await sleep(30);
-					clicks.push(await clickTweaksButton(cdp, "Library", libraryLayout));
+					clicks.push(await clickSettingsAppearanceButton(cdp, "Library default layout", libraryLayout));
 					await sleep(80);
+					const settingsState = await evaluate(
+						cdp,
+						`(() => {
+							const appearance = Array.from(document.querySelectorAll(".settings-group")).find((section) => section.querySelector("h2")?.textContent?.trim() === "Appearance");
+							appearance?.scrollIntoView({ block: "center" });
+							const activeButtons = Array.from(document.querySelectorAll(".settings-row .seg button[aria-pressed='true']")).map((button) => button.textContent?.trim().toLowerCase());
+							const rects = Array.from(appearance?.querySelectorAll(".settings-row") ?? []).map((row) => row.getBoundingClientRect());
+							return {
+								activeButtons,
+								controlsReachable: rects.some((rect) => rect.width > 0 && rect.height > 0 && rect.left < window.innerWidth && rect.top < window.innerHeight && rect.right > 0 && rect.bottom > 0),
+							};
+						})()`,
+					);
+					await cdp.send("Page.navigate", { url: absolute("#/library") });
+					await waitForLoad(cdp);
+					await sleep(120);
 					const state = await evaluate(
 						cdp,
 						`(() => {
 							const doc = document.documentElement;
 							const scrolling = document.scrollingElement;
-							const panel = document.querySelector(".tweaks-panel");
 							const layoutSelector = ${JSON.stringify(libraryLayout === "table" ? ".lib-table" : libraryLayout === "feed" ? ".lib-feed" : ".lib-cards")};
-							const activeButtons = Array.from(document.querySelectorAll(".tweaks-panel .seg.active")).map((button) => button.textContent?.trim());
-							const panelRect = panel?.getBoundingClientRect();
 							return {
 								dataset: {
 									variant: doc.dataset.variant || "",
@@ -375,14 +401,18 @@ async function smokeVariantMatrix(cdp) {
 									density: doc.dataset.density || "",
 									libraryLayout: doc.dataset.libraryLayout || "",
 								},
-								activeButtons,
+								activeButtons: ${JSON.stringify(settingsState.activeButtons)},
 								layoutVisible: Boolean(document.querySelector(layoutSelector)),
-								controlsReachable: Boolean(panelRect && panelRect.width > 0 && panelRect.height > 0 && panelRect.left < window.innerWidth && panelRect.top < window.innerHeight && panelRect.right > 0 && panelRect.bottom > 0),
+								controlsReachable: ${JSON.stringify(settingsState.controlsReachable)},
+								tweaksPanelAbsent: !document.querySelector(".tweaks-panel"),
 								horizontalOverflow: (scrolling?.scrollWidth ?? 0) > window.innerWidth + 1,
 							};
 						})()`,
 					);
 					results.push({ variant, theme, density, libraryLayout, clicks, state });
+					await cdp.send("Page.navigate", { url: absolute("#/settings") });
+					await waitForLoad(cdp);
+					await sleep(80);
 				}
 			}
 		}
@@ -464,7 +494,9 @@ async function main() {
 		await writeFile(join(OUT_DIR, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 		cdp.close();
 
-		const runtimeErrors = manifest.routes.flatMap((route) => route.consoleErrors);
+		const runtimeErrors = manifest.routes
+			.flatMap((route) => route.consoleErrors)
+			.filter((message) => !message.includes("/favicon.ico"));
 		const defaultRows = manifest.routes.filter((route) => route.key === "library");
 		const defaultMismatch = defaultRows.filter(
 			(route) =>
@@ -477,6 +509,21 @@ async function main() {
 			(route) => route.key === "command-palette" && !route.state.commandPaletteOpen,
 		);
 		const overflowRows = manifest.routes.filter((route) => route.state.horizontalOverflow);
+		const tweaksPanelRows = manifest.routes.filter((route) => !route.state.tweaksPanelAbsent);
+		const libraryContentRows = manifest.routes.filter(
+			(route) =>
+				route.key === "library" &&
+				(!route.state.library.realContent ||
+					route.state.library.empty ||
+					route.state.library.serviceError),
+		);
+		const transcriptContentRows = manifest.routes.filter(
+			(route) =>
+				route.key.startsWith("transcript-") &&
+				(!route.state.transcript.hasTitle ||
+					!route.state.transcript.hasBody ||
+					route.state.transcript.unavailable),
+		);
 		const variantMatrixFailures = manifest.variantMatrix.filter((row) => {
 			const state = row.state;
 			return (
@@ -491,6 +538,7 @@ async function main() {
 				!state.activeButtons.includes(row.libraryLayout) ||
 				!state.layoutVisible ||
 				!state.controlsReachable ||
+				!state.tweaksPanelAbsent ||
 				state.horizontalOverflow
 			);
 		});
@@ -501,6 +549,9 @@ async function main() {
 			defaultMismatch.length > 0 ||
 			commandPaletteMismatch.length > 0 ||
 			overflowRows.length > 0 ||
+			tweaksPanelRows.length > 0 ||
+			libraryContentRows.length > 0 ||
+			transcriptContentRows.length > 0 ||
 			variantMatrixFailures.length > 0
 		) {
 			console.error(
@@ -511,6 +562,9 @@ async function main() {
 						defaultMismatch,
 						commandPaletteMismatch,
 						overflowRows,
+						tweaksPanelRows,
+						libraryContentRows,
+						transcriptContentRows,
 						variantMatrixFailures,
 					},
 					null,
