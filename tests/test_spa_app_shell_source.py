@@ -262,6 +262,17 @@ def test_core_route_wiring_uses_real_backend_actions_where_present() -> None:
     assert "isJobView" in command
     assert 'fetchJson(auth, "/api/config"' in settings
     assert 'fetchJson(auth, "/api/prompts"' in settings
+    assert 'fetchJson(auth, "/api/auth/extension-token"' in settings
+    assert "navigator.clipboard.writeText(extensionTokenState.token)" in settings
+    assert "/api/config/rotate-token" not in settings
+    assert "configured server-side" not in settings
+    assert "bearer-token rotation is not implemented yet" not in settings
+    assert "POST /api/config/rotate-token is not implemented yet" not in settings
+    assert "auth.signOut()" in settings
+    assert "function clerkProfileAction()" in settings
+    assert "openUserProfile" in settings
+    assert "onClick={manageInClerk}" in settings
+    assert "onClick={signOut}" in settings
     assert 'auth.protectedFetch("/api/prompts/" + promptVersion' in settings
     assert 'fetchJson(auth, "/api/admin/users"' in settings
     assert '"/api/admin/users/" + user.id + "/role"' in settings
