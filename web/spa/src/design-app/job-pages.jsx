@@ -1,5 +1,6 @@
 // biome-ignore-all lint: Claude Design source port; integration-only edits live in api/data/main.
 import React from "react";
+import { isInFlight } from "./api.jsx";
 import { IconArrow, IconClock, IconCopy, IconExternal, IconPlus, IconRefresh, IconX } from "./icons.jsx";
 import { ACTIVE_JOBS, CURRENT_JOB, CURRENT_JOB_LOG, CURRENT_JOB_STATE, RECENT_FAILURES, STATS, fmtElapsed, fmtRelative, fmtUsd } from "./data.js";
 // Job-in-flight detail — real-time pipeline diagram.
@@ -160,26 +161,33 @@ export function PipelineDiagram({ job, compact }) {
 export function JobDetail({ id, navigate, log = CURRENT_JOB_LOG, onRefresh, onCancelJob, onRetryJob }) {
   const job = CURRENT_JOB || ACTIVE_JOBS.find((j) => j.id === id);
   const [actionState, setActionState] = React.useState({ pending: null, message: null, error: null });
+  const actionAbortRef = React.useRef(null);
+  React.useEffect(() => () => actionAbortRef.current?.abort(), []);
   const runAction = async (name, task) => {
+    actionAbortRef.current?.abort();
+    const controller = new AbortController();
+    actionAbortRef.current = controller;
     setActionState({ pending: name, message: null, error: null });
     try {
-      await task();
-      setActionState({ pending: null, message: `${name} complete`, error: null });
+      await task(controller.signal);
+      if (!controller.signal.aborted) setActionState({ pending: null, message: `${name} complete`, error: null });
     } catch (error) {
-      setActionState({ pending: null, message: null, error: error instanceof Error ? error.message : String(error) });
+      if (!controller.signal.aborted) setActionState({ pending: null, message: null, error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      if (actionAbortRef.current === controller) actionAbortRef.current = null;
     }
   };
   const copyJob = () => runAction("copy", async () => {
     await navigator.clipboard.writeText(JSON.stringify(job, null, 2));
   });
-  const cancelJob = () => runAction("cancel", async () => {
-    await onCancelJob?.(job.id);
+  const cancelJob = () => runAction("cancel", async (signal) => {
+    await onCancelJob?.(job.id, signal);
   });
-  const retryJob = () => runAction("retry", async () => {
-    await onRetryJob?.(job.id);
+  const retryJob = () => runAction("retry", async (signal) => {
+    await onRetryJob?.(job.id, signal);
   });
-  const refreshJob = () => runAction("refresh", async () => {
-    await onRefresh?.(job.id);
+  const refreshJob = () => runAction("refresh", async (signal) => {
+    await onRefresh?.(job.id, signal);
   });
   if (CURRENT_JOB_STATE.loading) return <div className="pane"><div className="empty"><div className="empty-title">Loading job</div><div>Fetching /jobs/{id}.</div></div></div>;
   if (!job || CURRENT_JOB_STATE.error) return <div className="pane"><a onClick={() => navigate("queue")} style={{display: "inline-flex", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--muted)", cursor: "pointer", marginBottom: 18}}>← Queue</a><div className="empty"><div className="empty-title">Job unavailable</div><div>{CURRENT_JOB_STATE.error || "No job is loaded."}</div></div></div>;
@@ -230,7 +238,7 @@ export function JobDetail({ id, navigate, log = CURRENT_JOB_LOG, onRefresh, onCa
         <a className="btn" href="/metrics" target="_blank" rel="noreferrer"><IconExternal size={14}/> Open in Prometheus</a>
         <button className="btn" onClick={refreshJob} disabled={actionState.pending === "refresh"}><IconRefresh size={14}/> Poll now</button>
         {job.status === "failed" && <button className="btn" onClick={retryJob} disabled={actionState.pending === "retry"}><IconRefresh size={14}/> Retry job</button>}
-        {["queued","downloading","transcribing","summarizing"].includes(job.status) && <button className="btn" onClick={cancelJob} disabled={actionState.pending === "cancel"} style={{color: "var(--err)", borderColor: "color-mix(in oklab, var(--err) 32%, var(--border))"}}>
+        {isInFlight(job.status) && <button className="btn" onClick={cancelJob} disabled={actionState.pending === "cancel"} style={{color: "var(--err)", borderColor: "color-mix(in oklab, var(--err) 32%, var(--border))"}}>
           <IconX size={14}/> Cancel job
         </button>}
       </div>

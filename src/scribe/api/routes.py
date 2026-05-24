@@ -838,9 +838,12 @@ async def _stream_job_logs(job_id: int, session: Session | None = None):
 
 
 @router.get("/api/jobs/{job_id}/log/stream", include_in_schema=False)
-def stream_job_log(job_id: int, session: Session = Depends(get_session)) -> StreamingResponse:
-    if session.get(Job, job_id) is None:
-        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+def stream_job_log(
+    job_id: int,
+    session: Session = Depends(get_session),
+    actor: Actor = Depends(require_actor),
+) -> StreamingResponse:
+    _require_owned_job(session, job_id, actor)
     return StreamingResponse(
         _stream_job_logs(job_id, session),
         media_type="text/event-stream",

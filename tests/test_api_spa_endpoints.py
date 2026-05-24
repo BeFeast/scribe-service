@@ -625,6 +625,29 @@ def test_api_job_log_stream_returns_buffered_worker_lines_and_closes(client, db_
     job_log_buffer.clear()
 
 
+def test_api_job_log_stream_is_owner_scoped(client, db_session):
+    job = Job(
+        url="https://youtu.be/logstream2",
+        video_id="logstream2",
+        status=JobStatus.transcribing,
+        owner_subject="owner-a",
+        owner_email="a@example.test",
+    )
+    db_session.add(job)
+    db_session.commit()
+    job_log_buffer.clear()
+    job_log_buffer.append({"ts": "2026-05-16T12:00:00+00:00", "job_id": job.id, "stage": "whisper", "msg": "private"})
+
+    resp = client.get(
+        f"/api/jobs/{job.id}/log/stream",
+        headers={"Authorization": "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJvd25lci1iIn0."},
+    )
+
+    assert resp.status_code == 404
+    assert "private" not in resp.text
+    job_log_buffer.clear()
+
+
 def test_api_ops_empty(client, tmp_path, monkeypatch):
     path = tmp_path / "_last_success_ts"
     monkeypatch.setattr(settings, "backup_status_path", str(path))
