@@ -1,18 +1,20 @@
 import { useMemo } from "react";
 
-type Variant = "field";
-type Theme = "light";
-type Density = "compact";
+type Variant = "paper" | "terminal" | "console" | "field";
+type Theme = "light" | "dark";
+type Density = "compact" | "cozy" | "comfy";
 
-const variants: Variant[] = ["field"];
-const themes: Theme[] = ["light"];
+const variants: Variant[] = ["paper", "terminal", "console", "field"];
+const themes: Theme[] = ["light", "dark"];
+const densities: Density[] = ["compact", "cozy", "comfy"];
 
 export function DesignSystemPlayground() {
-	const density: Density = "compact";
 	const combos = useMemo(
 		() =>
 			variants.flatMap((variant) =>
-				themes.map((theme) => ({ variant, theme })),
+				themes.flatMap((theme) =>
+					densities.map((density) => ({ variant, theme, density })),
+				),
 			),
 		[],
 	);
@@ -32,13 +34,13 @@ export function DesignSystemPlayground() {
 				className="ds-playground-grid"
 				aria-label="Design system variants"
 			>
-				{combos.map(({ variant, theme }) => (
+				{combos.map(({ variant, theme, density }) => (
 					<article
 						className="ds-scope"
 						data-density={density}
 						data-theme={theme}
 						data-variant={variant}
-						key={`${variant}-${theme}`}
+						key={`${variant}-${theme}-${density}`}
 					>
 						<ComponentSampler
 							density={density}
