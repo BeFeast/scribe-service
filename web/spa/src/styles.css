@@ -416,7 +416,7 @@ a {
 
 .toggle button[aria-pressed="true"],
 .seg button[aria-pressed="true"],
-.seg button.active {
+.seg button[aria-selected="true"] {
 	background: var(--accent);
 	color: var(--accent-fg);
 }
@@ -3618,7 +3618,6 @@ a {
 		border-bottom: var(--rule);
 	}
 
-	.lib-toolbar,
 	.inflight-row,
 	.feed-item {
 		grid-template-columns: 1fr;

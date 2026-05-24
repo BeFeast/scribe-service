@@ -482,6 +482,8 @@ export function Library({
 							rows={rows}
 							displayCurrency={displayCurrency}
 							navigate={navigate}
+							onDelete={requestDeleteTranscript}
+							deleteBusyId={deleteBusyId}
 						/>
 					) : null}
 					{layout === "cards" ? (
@@ -639,7 +641,6 @@ function LayoutButton({
 	return (
 		<button
 			type="button"
-			className={active ? "active" : ""}
 			role="tab"
 			aria-selected={active}
 			title={label}
@@ -732,10 +733,14 @@ function LibFeed({
 	rows,
 	displayCurrency,
 	navigate,
+	onDelete,
+	deleteBusyId,
 }: {
 	rows: LibraryRow[];
 	displayCurrency: DisplayCurrency;
 	navigate: (route: Route) => void;
+	onDelete: (row: LibraryRow) => void;
+	deleteBusyId: number | null;
 }) {
 	return (
 		<div className="lib-feed">
@@ -778,6 +783,11 @@ function LibFeed({
 						</h2>
 						<p className="feed-excerpt">{row.summary_excerpt}</p>
 						<TagList row={row} navigate={navigate} />
+						<RowLinks
+							row={row}
+							onDelete={onDelete}
+							busy={deleteBusyId === row.id}
+						/>
 					</div>
 				</article>
 			))}
