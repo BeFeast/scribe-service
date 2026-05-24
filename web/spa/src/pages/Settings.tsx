@@ -2,8 +2,26 @@ import React from "react";
 
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Markdown } from "../components/Markdown";
+import {
+	IconCards,
+	IconCopy,
+	IconFeed,
+	IconMoon,
+	IconPlus,
+	IconRefresh,
+	IconSparkle,
+	IconSun,
+	IconTable,
+	IconX,
+} from "../components/ShellIcons";
 import { useAuth } from "../hooks/useAuth";
-import type { LibraryLayout, Tweaks } from "../hooks/useTweaks";
+import type {
+	LibraryLayout,
+	ScribeDensity,
+	ScribeTheme,
+	ScribeVariant,
+	Tweaks,
+} from "../hooks/useTweaks";
 import { isAuthStatus } from "../lib/auth";
 import type { DisplayCurrency } from "../lib/currency";
 import { displayCurrencies } from "../lib/currency";
@@ -81,7 +99,7 @@ type SettingsProps = {
 
 type SettingsRowProps = {
 	label: string;
-	hint: string;
+	hint?: string;
 	source?: string;
 	children: React.ReactNode;
 };
@@ -344,6 +362,15 @@ export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
 		}
 	}
 
+	async function discard() {
+		setError(null);
+		setStatus(null);
+		if (await loadSettings()) {
+			replaceTweaks(savedTweaks);
+			setStatus("Discarded");
+		}
+	}
+
 	async function dryRun() {
 		const transcriptId = Number.parseInt(dryRunTranscriptId, 10);
 		if (!Number.isFinite(transcriptId)) {
@@ -515,14 +542,13 @@ export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
 		<section className="settings-page pane">
 			<header className="pane-header">
 				<div>
-					<p className="eyebrow">Settings</p>
-					<h1 className="pane-h1">Pipeline, summaries, appearance, access</h1>
+					<h1 className="pane-h1">Settings</h1>
 					<p className="pane-sub">
-						Runtime controls are saved in the service database and refreshed
-						from the API.
+						Reads <code>.env</code> · changes write back via{" "}
+						<code>POST /api/config</code>
 					</p>
 				</div>
-				<div className="settings-actions">
+				<div className="pane-actions settings-actions">
 					<span className="access-status">{auth.accessStatus}</span>
 					{!auth.canWrite && auth.clerkConfigured ? (
 						<>
@@ -551,8 +577,22 @@ export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
 							Sign out
 						</button>
 					) : null}
-					<button className="btn ghost" type="button" onClick={loadSettings}>
+					<button
+						className="btn ghost"
+						type="button"
+						disabled={saving || loading}
+						onClick={() => void loadSettings()}
+					>
+						{loading ? <span className="spinner" /> : <IconRefresh size={12} />}
 						Refresh
+					</button>
+					<button
+						className="btn ghost"
+						type="button"
+						disabled={saving || loading || !hasUnsavedChanges}
+						onClick={() => void discard()}
+					>
+						Discard
 					</button>
 					<button
 						className="btn primary"
@@ -560,7 +600,7 @@ export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
 						disabled={saving || loading || !hasUnsavedChanges}
 						onClick={save}
 					>
-						{saving ? "Saving" : "Save"}
+						{saving ? "Saving" : "Save changes"}
 					</button>
 				</div>
 			</header>
@@ -583,71 +623,43 @@ export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
 			) : null}
 
 			<div className="settings-layout" aria-busy={loading}>
-				<AccessSection
-					currentUser={currentUser}
-					users={adminUsers}
-					loading={accessLoading}
-					error={accessError ?? auth.authBlockedMessage}
-					adminRequired={adminRequired}
-					auth={auth}
-					email={userEmail}
-					displayName={userDisplayName}
-					role={userRole}
-					savingUser={savingUser}
-					onEmail={setUserEmail}
-					onDisplayName={setUserDisplayName}
-					onRole={setUserRole}
-					onSaveUser={saveUser}
-					onDisableRequest={requestDisableUser}
-					onRefresh={loadAccess}
-				/>
-
 				<section className="settings-group">
-					<h2 className="section-label">API access</h2>
-					<TokenRow
-						token={extensionToken}
-						showToken={showExtensionToken}
-						isCreating={creatingExtensionToken}
-						canCreate={auth.accessStatus === "Signed in"}
-						onCreate={createExtensionToken}
-						onCopy={copyExtensionToken}
-						onToggleShow={() => setShowExtensionToken((value) => !value)}
-					/>
-				</section>
-
-				<section className="settings-group">
-					<h2 className="section-label">Pipeline</h2>
+					<h2>Pipeline</h2>
+					<p className="group-sub">
+						How scribe acquires audio, transcribes, and writes back.
+					</p>
 					<NumberRow
-						label="Daily spend cap"
-						hint="Rolling 24-hour Vast.ai cap in USD; 0 disables the cap."
+						label="Daily Vast.ai spend cap"
+						hint="Rolling 24h. New POST /jobs returns 429 above the cap; retries and resummarize bypass it."
 						source={config.daily_spend_cap_usd?.source}
 						value={numberDraft(draft.daily_spend_cap_usd)}
 						min={0}
 						step={0.25}
+						suffix="USD"
 						disabled={!isMutable(config.daily_spend_cap_usd)}
 						onChange={(value) => updateDraft("daily_spend_cap_usd", value)}
 					/>
-					<NumberRow
+					<WorkerConcurrencyRow
 						label="Worker concurrency"
-						hint="Number of local pipeline workers. Restart required."
+						hint="Postgres queue uses FOR UPDATE SKIP LOCKED so workers don't fight for jobs."
 						source={config.worker_concurrency?.source}
 						value={numberDraft(draft.worker_concurrency)}
-						min={1}
-						step={1}
 						disabled={!isMutable(config.worker_concurrency)}
 						onChange={(value) => updateDraft("worker_concurrency", value)}
 					/>
 					<ToggleRow
-						label="Bot-wall retry"
-						hint="Enable alternate downloader retries when YouTube blocks a client."
+						label="yt-dlp bot-wall retry"
+						hint="When YouTube returns sign-in bot-wall copy, scribe cycles fallback clients with backoff."
 						source={config.bot_wall_retry?.source}
 						checked={booleanDraft(draft.bot_wall_retry)}
 						disabled={!isMutable(config.bot_wall_retry)}
 						onChange={(value) => updateDraft("bot_wall_retry", value)}
+						onLabel="On - try fallback clients before failing"
+						offLabel="Off - fail on first bot-wall"
 					/>
 					<UrlRow
 						label="Public base URL"
-						hint="Used for generated web links and shortlink targets."
+						hint="Used to mint Chhoto shortlinks. Path is /transcripts/{id}."
 						source={config.public_base_url?.source}
 						value={stringDraft(draft.public_base_url)}
 						disabled={!isMutable(config.public_base_url)}
@@ -672,20 +684,22 @@ export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
 						onChange={(value) => updateDraft("display_currency", value)}
 					/>
 					<UrlRow
-						label="Default webhook"
-						hint="Callback URL used when a job does not provide one."
+						label="Webhook callback"
+						hint="scribe POSTs JobView JSON here on terminal status. Per-job callback_url overrides this."
 						source={config.webhook_default?.source}
 						value={stringDraft(draft.webhook_default)}
 						disabled={!isMutable(config.webhook_default)}
 						onChange={(value) => updateDraft("webhook_default", value)}
 					/>
 					<ToggleRow
-						label="Embed transcript"
-						hint="Include transcript markdown in webhook payloads."
+						label="Transcript embedding"
+						hint="Embed the transcript object in webhook payloads when downstream consumers need full text."
 						source={config.webhook_embed_transcript?.source}
 						checked={booleanDraft(draft.webhook_embed_transcript)}
 						disabled={!isMutable(config.webhook_embed_transcript)}
 						onChange={(value) => updateDraft("webhook_embed_transcript", value)}
+						onLabel="Embed transcript object in webhook payload"
+						offLabel="Send job metadata without transcript payload"
 					/>
 				</section>
 
@@ -703,18 +717,88 @@ export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
 				/>
 
 				<section className="settings-group">
-					<h2 className="section-label">Appearance</h2>
+					<h2>Appearance</h2>
+					<p className="group-sub">
+						Theme tweaks also live in the floating Tweaks panel.
+					</p>
 					<SegRow
-						label="Library layout"
-						hint="Default layout for transcript browsing."
+						label="Theme"
+						value={tweaks.theme}
+						options={[
+							{ value: "light", label: "Light", icon: <IconSun size={13} /> },
+							{ value: "dark", label: "Dark", icon: <IconMoon size={13} /> },
+						]}
+						onChange={(value) =>
+							replaceTweaks({ ...tweaks, theme: value as ScribeTheme })
+						}
+					/>
+					<SegRow
+						label="Visual variant"
+						hint="Three takes on the same product. They share data and layout - only the type system, palette, and chrome change."
+						value={tweaks.variant}
+						options={["paper", "terminal", "console", "field"]}
+						onChange={(value) =>
+							replaceTweaks({ ...tweaks, variant: value as ScribeVariant })
+						}
+					/>
+					<SegRow
+						label="Library default layout"
 						value={tweaks.libraryLayout}
-						options={["feed", "table", "cards"]}
+						options={[
+							{ value: "table", label: "Table", icon: <IconTable size={13} /> },
+							{ value: "feed", label: "Feed", icon: <IconFeed size={13} /> },
+							{ value: "cards", label: "Cards", icon: <IconCards size={13} /> },
+						]}
 						onChange={(value) =>
 							replaceTweaks({
 								...tweaks,
 								libraryLayout: value as LibraryLayout,
 							})
 						}
+					/>
+					<SegRow
+						label="Density"
+						value={tweaks.density}
+						options={["compact", "cozy", "comfy"]}
+						onChange={(value) =>
+							replaceTweaks({ ...tweaks, density: value as ScribeDensity })
+						}
+					/>
+				</section>
+
+				<AccessSection
+					currentUser={currentUser}
+					users={adminUsers}
+					loading={accessLoading}
+					error={accessError ?? auth.authBlockedMessage}
+					adminRequired={adminRequired}
+					auth={auth}
+					email={userEmail}
+					displayName={userDisplayName}
+					role={userRole}
+					savingUser={savingUser}
+					onEmail={setUserEmail}
+					onDisplayName={setUserDisplayName}
+					onRole={setUserRole}
+					onSaveUser={saveUser}
+					onDisableRequest={requestDisableUser}
+					onRefresh={loadAccess}
+				/>
+
+				<section className="settings-group">
+					<h2>API access</h2>
+					<p className="group-sub">
+						Used by the Chrome extension, Telegram bot, Obsidian plugin, and
+						curl-from-anywhere.
+					</p>
+					<TokenRow
+						token={extensionToken}
+						showToken={showExtensionToken}
+						isCreating={creatingExtensionToken}
+						canCreate={auth.accessStatus === "Signed in"}
+						onCreate={createExtensionToken}
+						onCopy={copyExtensionToken}
+						onToggleShow={() => setShowExtensionToken((value) => !value)}
 					/>
 				</section>
 			</div>
@@ -730,7 +814,7 @@ export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
 								aria-label="Close dry-run"
 								onClick={() => setDryRunMarkdown(null)}
 							>
-								x
+								<IconX size={14} />
 							</button>
 						</header>
 						<Markdown body={dryRunMarkdown} />
@@ -804,12 +888,33 @@ export function AccessSection({
 
 	return (
 		<section className="settings-group access-group">
-			<div className="prompt-head">
-				<h2 className="section-label">Access</h2>
-				<button className="btn ghost" type="button" onClick={onRefresh}>
-					Refresh access
-				</button>
+			<div className="settings-group-head">
+				<h2>Access</h2>
+				<div className="row-control-line">
+					<button
+						className="btn ghost compact"
+						type="button"
+						onClick={onRefresh}
+					>
+						{loading ? <span className="spinner" /> : <IconRefresh size={12} />}
+						Refresh
+					</button>
+					<button
+						className="btn primary compact"
+						type="button"
+						disabled={!adminControlsEnabled || savingUser}
+						onClick={onSaveUser}
+					>
+						<IconPlus size={12} />
+						{savingUser ? "Saving user" : "Add user"}
+					</button>
+				</div>
 			</div>
+			<p className="group-sub">
+				Email allowlist enforced on every <code>POST /jobs</code>, web UI, and
+				webhook. Users with role <code>admin</code> can edit settings, retry
+				failed jobs, and manage access.
+			</p>
 
 			<div className="access-card">
 				<div>
@@ -1087,7 +1192,9 @@ export function SettingsRow({
 		<div className="settings-row">
 			<div>
 				<div className="row-label">{label}</div>
-				<div className="hint">{hint}</div>
+				{hint !== undefined && hint !== "" ? (
+					<div className="hint">{hint}</div>
+				) : null}
 			</div>
 			<div className="row-control">
 				{source !== undefined ? (
@@ -1106,6 +1213,7 @@ export function NumberRow({
 	value,
 	min,
 	step,
+	suffix,
 	disabled,
 	onChange,
 }: {
@@ -1115,20 +1223,77 @@ export function NumberRow({
 	value: number;
 	min: number;
 	step: number;
+	suffix?: string;
 	disabled: boolean;
 	onChange: (value: number) => void;
 }) {
 	return (
 		<SettingsRow label={label} hint={hint} source={source}>
-			<input
-				className="settings-input number"
-				type="number"
-				value={value}
-				min={min}
-				step={step}
-				disabled={disabled}
-				onChange={(event) => onChange(event.currentTarget.valueAsNumber)}
-			/>
+			<div className="row-control-line">
+				<input
+					className="settings-input number"
+					type="number"
+					value={value}
+					min={min}
+					step={step}
+					disabled={disabled}
+					onChange={(event) => onChange(event.currentTarget.valueAsNumber)}
+				/>
+				{suffix !== undefined ? (
+					<span className="muted mono settings-unit">{suffix}</span>
+				) : null}
+			</div>
+		</SettingsRow>
+	);
+}
+
+export function WorkerConcurrencyRow({
+	label,
+	hint,
+	source,
+	value,
+	disabled,
+	onChange,
+}: {
+	label: string;
+	hint: string;
+	source?: string;
+	value: number;
+	disabled: boolean;
+	onChange: (value: number) => void;
+}) {
+	const presets = [1, 2, 4, 8];
+
+	return (
+		<SettingsRow label={label} hint={hint} source={source}>
+			<div className="row-control-line">
+				<div className="seg" aria-label={`${label} presets`}>
+					{presets.map((option) => (
+						<button
+							key={option}
+							type="button"
+							aria-pressed={option === value}
+							disabled={disabled}
+							onClick={() => onChange(option)}
+						>
+							{option}
+						</button>
+					))}
+				</div>
+				<input
+					className="settings-input number"
+					type="number"
+					value={value}
+					min={1}
+					step={1}
+					disabled={disabled}
+					aria-label={`${label} custom value`}
+					onChange={(event) => onChange(event.currentTarget.valueAsNumber)}
+				/>
+			</div>
+			<span className="muted mono settings-unit">
+				currently <span className="tnum">{value}</span> workers
+			</span>
 		</SettingsRow>
 	);
 }
@@ -1168,6 +1333,8 @@ export function ToggleRow({
 	source,
 	checked,
 	disabled,
+	onLabel,
+	offLabel,
 	onChange,
 }: {
 	label: string;
@@ -1175,18 +1342,23 @@ export function ToggleRow({
 	source?: string;
 	checked: boolean;
 	disabled: boolean;
+	onLabel?: string;
+	offLabel?: string;
 	onChange: (value: boolean) => void;
 }) {
 	return (
 		<SettingsRow label={label} hint={hint} source={source}>
-			<label className="switch">
+			<label className="settings-toggle-line">
 				<input
 					type="checkbox"
 					checked={checked}
 					disabled={disabled}
 					onChange={(event) => onChange(event.currentTarget.checked)}
 				/>
-				<span />
+				<span className={`toggle${checked ? " on" : ""}`} />
+				<span className="muted">
+					{checked ? (onLabel ?? "On") : (offLabel ?? "Off")}
+				</span>
 			</label>
 		</SettingsRow>
 	);
@@ -1265,24 +1437,33 @@ export function SegRow({
 	onChange,
 }: {
 	label: string;
-	hint: string;
+	hint?: string;
 	value: string;
-	options: string[];
+	options: Array<
+		string | { value: string; label: string; icon?: React.ReactNode }
+	>;
 	onChange: (value: string) => void;
 }) {
 	return (
 		<SettingsRow label={label} hint={hint}>
 			<div className="seg" aria-label={label}>
-				{options.map((option) => (
-					<button
-						key={option}
-						type="button"
-						aria-pressed={option === value}
-						onClick={() => onChange(option)}
-					>
-						{option}
-					</button>
-				))}
+				{options.map((option) => {
+					const item =
+						typeof option === "string"
+							? { value: option, label: option }
+							: option;
+					return (
+						<button
+							key={item.value}
+							type="button"
+							aria-pressed={item.value === value}
+							onClick={() => onChange(item.value)}
+						>
+							{item.icon}
+							{item.label}
+						</button>
+					);
+				})}
 			</div>
 		</SettingsRow>
 	);
@@ -1314,57 +1495,76 @@ export function PromptEditor({
 	const selected = promptList?.versions.find((item) => item.id === version);
 	const chars = body.length;
 	const tokens = Math.ceil(chars / 4);
+	const versions = promptList?.versions ?? [];
+	const activeVersion = promptList?.active_version;
 
 	return (
 		<section className="settings-group prompt-group">
-			<div className="prompt-head">
-				<h2 className="section-label">Advanced summarizer prompt</h2>
-				{isDirty ? <span className="chip warn">dirty</span> : null}
-			</div>
-			<SegRow
-				label="Version"
-				hint={
-					selected?.first_line ??
-					"LLM instructions used to generate summary markdown, tags, and card descriptions."
-				}
-				value={version}
-				options={promptVersions}
-				onChange={onVersion}
-			/>
-			<div className="prompt-editor">
-				<textarea
-					value={body}
-					spellCheck={false}
-					onChange={(event) => onBody(event.currentTarget.value)}
-				/>
-				<div className="prompt-meter">
-					<span>{chars.toLocaleString()} chars</span>
-					<span>{tokens.toLocaleString()} tokens est.</span>
-					{selected !== undefined ? (
-						<span>{selected.len_tokens_est.toLocaleString()} saved est.</span>
+			<h2>Summary prompt</h2>
+			<p className="group-sub">
+				Edited live via <code>/api/prompts</code>. Changes apply to new jobs and
+				to <code>POST /resummarize</code>.
+			</p>
+			<div className="settings-row prompt-row">
+				<div className="row-control prompt-control">
+					<div className="prompt-toolbar">
+						<div className="row-control-line">
+							{(versions.length > 0
+								? versions
+								: promptVersions.map((id) => ({
+										id,
+										is_active: id === activeVersion,
+										first_line: "",
+										len_chars: 0,
+										len_tokens_est: 0,
+									}))
+							).map((item) => (
+								<button
+									key={item.id}
+									type="button"
+									className={`chip prompt-chip${item.id === version ? " active" : ""}`}
+									onClick={() => onVersion(item.id)}
+								>
+									{item.id}
+									{item.is_active ? " · active" : ""}
+								</button>
+							))}
+							{isDirty ? <span className="chip warn">dirty</span> : null}
+						</div>
+						<div className="row-control-line prompt-actions">
+							<input
+								className="settings-input number dry-run-input"
+								inputMode="numeric"
+								value={transcriptId}
+								placeholder="Transcript id"
+								aria-label="Dry-run transcript id"
+								onChange={(event) => onTranscriptId(event.currentTarget.value)}
+							/>
+							<button
+								className="btn ghost"
+								type="button"
+								disabled={isDryRunning}
+								onClick={onDryRun}
+							>
+								<IconSparkle size={12} />
+								{isDryRunning ? "Running" : "Dry-run"}
+							</button>
+							<span className="muted mono prompt-count">
+								{chars.toLocaleString()} chars · ~{tokens.toLocaleString()}{" "}
+								tokens
+							</span>
+						</div>
+					</div>
+					{selected?.first_line ? (
+						<span className="hint">{selected.first_line}</span>
 					) : null}
+					<textarea
+						value={body}
+						spellCheck={false}
+						onChange={(event) => onBody(event.currentTarget.value)}
+					/>
 				</div>
 			</div>
-			<SettingsRow
-				label="Dry-run"
-				hint="Run the selected prompt against an existing transcript id."
-			>
-				<input
-					className="settings-input number"
-					inputMode="numeric"
-					value={transcriptId}
-					placeholder="Transcript id"
-					onChange={(event) => onTranscriptId(event.currentTarget.value)}
-				/>
-				<button
-					className="btn"
-					type="button"
-					disabled={isDryRunning}
-					onClick={onDryRun}
-				>
-					{isDryRunning ? "Running" : "Dry-run"}
-				</button>
-			</SettingsRow>
 		</section>
 	);
 }
@@ -1407,6 +1607,7 @@ export function TokenRow({
 				{isCreating ? "Creating" : "Create"}
 			</button>
 			<button className="btn" type="button" disabled={!token} onClick={onCopy}>
+				<IconCopy size={14} />
 				Copy
 			</button>
 			<button

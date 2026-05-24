@@ -371,9 +371,61 @@ def test_settings_access_section_wires_current_user_and_admin_users() -> None:
     assert "Add or update user" in settings
     assert "`/api/admin/users/${disableTarget.id}/disable`" in settings
     assert "ConfirmDialog" in settings
+    assert "onClick={() => void loadSettings()}" in settings
+    assert "Refresh" in settings
     assert "window.alert" not in settings
     assert "window.confirm" not in settings
     assert "window.prompt" not in settings
+
+
+def test_settings_literal_port_controls_stay_wired_to_real_sources() -> None:
+    settings = read("pages/Settings.tsx")
+    tweaks = read("hooks/useTweaks.ts")
+
+    for label in (
+        "Daily Vast.ai spend cap",
+        "Worker concurrency",
+        "yt-dlp bot-wall retry",
+        "Public base URL",
+        "Webhook callback",
+        "Transcript embedding",
+        "Summary prompt",
+        "Visual variant",
+        "Library default layout",
+        "Density",
+        "API access",
+    ):
+        assert label in settings
+    for api in (
+        'auth.protectedFetch("/api/config"',
+        'auth.protectedFetch("/api/prompts"',
+        "`/api/prompts/${version}`",
+        'auth.protectedFetch("/api/prompts/active"',
+        'auth.protectedFetch("/api/prompts/dry-run"',
+        'auth.protectedFetch("/api/auth/me")',
+        'auth.protectedFetch("/api/admin/users")',
+        'auth.protectedFetch("/api/auth/extension-token"',
+    ):
+        assert api in settings
+    for option in (
+        '"paper"',
+        '"terminal"',
+        '"console"',
+        '"field"',
+        '"light"',
+        '"dark"',
+        '"compact"',
+        '"cozy"',
+        '"comfy"',
+        '"table"',
+        '"feed"',
+        '"cards"',
+    ):
+        assert option in settings or option in tweaks
+    for forbidden in ("SCRIBE_USERS", "STATS.", "telegram.oklabs.uk/webhook/scribe"):
+        assert forbidden not in settings
+    assert 'aria-label={`${label} custom value`}' in settings
+    assert 'type="number"' in settings
 
 
 def test_global_shell_shows_access_status_and_operator_auth() -> None:

@@ -143,6 +143,12 @@ export const IconMoon = (props: IconProps) => (
 	</Icon>
 );
 
+export const IconSparkle = (props: IconProps) => (
+	<Icon {...props}>
+		<path d="M8 2l1.4 4.2L13.5 8 9.4 9.8 8 14l-1.4-4.2L2.5 8 6.6 6.2 8 2z" />
+	</Icon>
+);
+
 export const IconRSS = (props: IconProps) => (
 	<Icon {...props}>
 		<circle cx="4" cy="12" r="1" />
