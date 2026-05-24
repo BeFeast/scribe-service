@@ -179,6 +179,9 @@ def test_adapter_contract_is_non_visual_and_owns_backend_translation() -> None:
         '"/api/jobs/active"',
         '"/api/jobs/recent-failures?limit=12"',
         '"/api/ops"',
+        '"/api/jobs/" + route.params.id + "/log/stream"',
+        '"/admin/jobs/" + id + "/cancel"',
+        '"/admin/jobs/" + id + "/retry"',
         '"/api/auth/me"',
         '"/api/admin/users"',
         '"/transcripts/" + route.params.id',
@@ -225,6 +228,11 @@ def test_core_route_wiring_uses_real_backend_actions_where_present() -> None:
     assert "parseVideoUrl" in command
     assert "isJobView" in command
     assert "fetchJson(auth" in api
+    assert "new EventSource" in api
+    assert "setTimeout(load, 2000)" in api
+    assert "onCancelJob" in read("design-app/job-pages.jsx")
+    assert "onRetryJob" in read("design-app/job-pages.jsx")
+    assert "STATS.system" in read("design-app/ops.jsx")
 
 
 def test_production_sources_do_not_use_browser_native_dialogs_or_old_globals() -> None:
