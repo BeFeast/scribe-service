@@ -40,6 +40,12 @@ export let CURRENT_JOB_LOG = { connected: false, error: null, lines: [] };
 export let DISPLAY_CURRENCY = "ILS";
 export let PUBLIC_BASE_URL = "";
 
+export const USD_DISPLAY_RATES = Object.freeze({
+	USD: 1,
+	ILS: 3.7,
+	EUR: 0.92,
+});
+
 export function setRuntimeData(next) {
 	TRANSCRIPTS = next.transcripts ?? TRANSCRIPTS;
 	ACTIVE_JOBS = next.activeJobs ?? ACTIVE_JOBS;
@@ -134,8 +140,8 @@ export function fmtUsd(value) {
 
 export function fmtDisplayCurrency(value, currency = DISPLAY_CURRENCY) {
 	if (value == null || Number.isNaN(Number(value))) return "\u2014";
-	const number = Number(value);
 	const normalized = normalizeDisplayCurrency(currency);
+	const number = convertUsdToDisplayCurrency(Number(value), normalized);
 	const fractionDigits = Math.abs(number) < 0.1 ? 4 : 2;
 	if (normalized === "ILS") {
 		return `₪${number.toFixed(fractionDigits)} ILS`;
@@ -146,6 +152,15 @@ export function fmtDisplayCurrency(value, currency = DISPLAY_CURRENCY) {
 		minimumFractionDigits: fractionDigits,
 		maximumFractionDigits: fractionDigits,
 	}).format(number);
+}
+
+export function convertUsdToDisplayCurrency(
+	value,
+	currency = DISPLAY_CURRENCY,
+) {
+	if (value == null || Number.isNaN(Number(value))) return Number.NaN;
+	const normalized = normalizeDisplayCurrency(currency);
+	return Number(value) * USD_DISPLAY_RATES[normalized];
 }
 
 export function normalizeDisplayCurrency(value) {
