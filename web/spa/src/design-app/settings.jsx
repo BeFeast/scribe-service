@@ -29,7 +29,11 @@ Style:
 
 export const CLERK_PROFILE_UNAVAILABLE = "Clerk profile management is unavailable in this deployment";
 
-export function SettingsPage({ t, setTweak, users: runtimeUsers = [], onConfigSaved }) {
+export function canRenderAccessGroup(currentUser) {
+  return currentUser?.role === "admin";
+}
+
+export function SettingsPage({ t, setTweak, users: runtimeUsers = [], currentUser = null, onConfigSaved }) {
   const auth = useAuth();
   const [config, setConfig] = React.useState(null);
   const [configDraft, setConfigDraft] = React.useState(null);
@@ -437,7 +441,7 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [], onConfigSa
         </div>
       </div>
 
-      <AccessGroup initialUsers={runtimeUsers}/>
+      {canRenderAccessGroup(currentUser) && <AccessGroup initialUsers={runtimeUsers}/>}
 
       <div className="settings-group">
         <h2>API access</h2>

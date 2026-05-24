@@ -2,7 +2,7 @@ import React from "react";
 import { adaptConfig, adaptFailure, adaptJob, adaptLibraryRow, adaptOps, adaptTranscript, adaptUsers } from "./adapters.js";
 
 export function useScribeRuntime(auth, route) {
-	const [core, setCore] = React.useState({ loading: true, error: null, transcripts: [], activeJobs: [], failures: [], stats: adaptOps(null), spendSeries: [], users: [], config: adaptConfig(null) });
+	const [core, setCore] = React.useState({ loading: true, error: null, transcripts: [], activeJobs: [], failures: [], stats: adaptOps(null), spendSeries: [], users: [], currentUser: null, config: adaptConfig(null) });
 	const [currentTranscript, setCurrentTranscript] = React.useState({ loading: false, error: null, value: null });
 	const [currentJob, setCurrentJob] = React.useState({ loading: false, error: null, value: null });
 	const [currentJobLog, setCurrentJobLog] = React.useState({ connected: false, error: null, lines: [] });
@@ -153,6 +153,7 @@ export function useScribeRuntime(auth, route) {
 		fetchJson(auth, "/api/auth/me", controller.signal)
 			.then((body) => {
 				me = body;
+				if (!controller.signal.aborted) setCore((previous) => ({ ...previous, currentUser: me }));
 				if (body?.role !== "admin") return [];
 				return fetchJson(auth, "/api/admin/users", controller.signal);
 			})

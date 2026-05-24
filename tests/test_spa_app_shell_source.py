@@ -288,6 +288,28 @@ def test_core_route_wiring_uses_real_backend_actions_where_present() -> None:
     assert "STATS.system" in read("design-app/ops.jsx")
 
 
+def test_settings_access_region_uses_auth_me_role_as_visibility_source() -> None:
+    settings = read("design-app/settings.jsx")
+    api = read("design-app/api.jsx")
+    main = read("main.jsx")
+
+    assert "currentUser: null" in api
+    assert 'fetchJson(auth, "/api/auth/me", controller.signal)' in api
+    assert 'if (body?.role !== "admin") return [];' in api
+    assert 'return fetchJson(auth, "/api/admin/users", controller.signal);' in api
+    assert "currentUser: me" in api
+    assert 'if (!controller.signal.aborted) setCore((previous) => ({ ...previous, currentUser: me }));' in api
+    assert "currentUser: runtime.currentUser" in main
+    assert "currentUser={runtime.currentUser}" in main
+    assert "export function canRenderAccessGroup(currentUser)" in settings
+    assert 'return currentUser?.role === "admin";' in settings
+    assert (
+        '{canRenderAccessGroup(currentUser) && <AccessGroup initialUsers={runtimeUsers}/>}'
+        in settings
+    )
+    assert "canWrite" not in settings
+
+
 def test_transcript_summary_frontmatter_renders_as_properties_panel() -> None:
     transcript = read("design-app/transcript-detail.jsx")
     styles = read("styles.css")

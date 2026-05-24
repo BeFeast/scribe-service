@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
 	CLERK_PROFILE_UNAVAILABLE,
+	canRenderAccessGroup,
 	clerkProfileAction,
 } from "../src/design-app/settings.jsx";
 
@@ -73,5 +74,14 @@ describe("clerkProfileAction", () => {
 		} finally {
 			clearWindow();
 		}
+	});
+});
+
+describe("canRenderAccessGroup", () => {
+	test("only allows the /api/auth/me admin role to mount Access management", () => {
+		expect(canRenderAccessGroup({ role: "admin" })).toBe(true);
+		expect(canRenderAccessGroup({ role: "user", canWrite: true })).toBe(false);
+		expect(canRenderAccessGroup({ role: "user", users: [{ role: "admin" }] })).toBe(false);
+		expect(canRenderAccessGroup(null)).toBe(false);
 	});
 });
