@@ -41,7 +41,7 @@ export function JobCard({
 	cancelDisabled = false,
 }: JobCardProps) {
 	const jobRoute: Route = { page: "job", params: { id: job.id } };
-	const source = job.source ?? job.source_label ?? "direct";
+	const source = job.source_label ?? job.source ?? "direct";
 	return (
 		<div className="job-card">
 			<div className="job-card-header">

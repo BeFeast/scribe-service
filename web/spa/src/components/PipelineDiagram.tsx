@@ -112,13 +112,6 @@ export function PipelineDiagram({
 								<span style={{ width: `${progress}%` }} />
 							</div>
 						) : null}
-						{state === "done" &&
-						view?.duration_s !== null &&
-						view?.duration_s !== undefined ? (
-							<div className="stage-note done-note">
-								completed in {formatDuration(view.duration_s)}
-							</div>
-						) : null}
 						{compact ? (
 							<span className="stage-state">{stageMeta(view)}</span>
 						) : null}

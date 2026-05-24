@@ -176,7 +176,13 @@ export function Queue({ navigate }: QueueProps) {
 					<h1 className="pane-h1">Queue</h1>
 					<div className="pane-sub">
 						{active.length} in flight &middot;{" "}
-						<span className="live-dot" aria-hidden="true" /> live
+						{error ? (
+							<span className="chip warn">stale</span>
+						) : (
+							<>
+								<span className="live-dot" aria-hidden="true" /> live
+							</>
+						)}
 					</div>
 				</div>
 				<div className="pane-actions">
