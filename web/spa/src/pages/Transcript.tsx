@@ -1,669 +1,392 @@
-import React from "react";
+// Transcript detail — title, meta, summary (rendered from MD), transcript excerpt.
 
-import { ConfirmDialog } from "../components/ConfirmDialog";
-import { PrivateShareLinks } from "../components/PrivateShareLinks";
-import { useAuth } from "../hooks/useAuth";
-import {
-	type Route,
-	handleRouteAnchorClick,
-	routeToHref,
-} from "../hooks/useRoute";
-import type { DisplayCurrency } from "../lib/currency";
-import { formatUsdCost } from "../lib/currency";
+function TranscriptDetail({ id, navigate }) {
+  const t = TRANSCRIPTS.find(r => r.id === id) || TRANSCRIPTS[0];
+  const [regenerating, setRegenerating] = React.useState(false);
+  const [copied, setCopied] = React.useState(null);
+  const [shareOpen, setShareOpen] = React.useState(false);
+  const [deleteConfirm, setDeleteConfirm] = React.useState(false);
 
-type TranscriptRecord = {
-	id: number;
-	video_id: string;
-	title: string;
-	tags?: string[] | null;
-	duration_seconds?: number | null;
-	lang?: string | null;
-	source_url?: string | null;
-	source_label?: string | null;
-	created_at: string;
-	job_id: number;
-	transcript_md: string;
-	summary_md?: string | null;
-	vast_cost?: number | null;
-};
+  function copy(text, key) {
+    try {
+      navigator.clipboard && navigator.clipboard.writeText(text);
+      setCopied(key); setTimeout(() => setCopied(null), 1600);
+    } catch (e) {
+      setCopied("err:" + key); setTimeout(() => setCopied(null), 2400);
+    }
+  }
+  function regen() {
+    setRegenerating(true);
+    setTimeout(() => setRegenerating(false), 1800);
+  }
 
-type TranscriptProps = {
-	id?: number;
-	displayCurrency: DisplayCurrency;
-	navigate: (route: Route) => void;
-};
+  return (
+    <div className="pane pane-narrow">
+      <div className="row" style={{marginBottom: 18}}>
+        <a onClick={() => navigate("library")}
+           style={{display: "inline-flex", alignItems: "center", gap: 6,
+                   fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--muted)",
+                   cursor: "pointer", textDecoration: "none"}}>
+          ← Library
+        </a>
+        <div className="spacer"/>
+        <div className="share-wrap">
+          <button className="btn primary" onClick={() => setShareOpen(o => !o)}>
+            <IconLink size={13}/> Share
+          </button>
+          {shareOpen && (
+            <ShareSheet t={t} onClose={() => setShareOpen(false)}
+                        copy={copy} copied={copied}/>
+          )}
+        </div>
+      </div>
 
-type MarkdownBlock =
-	| { type: "heading"; level: 1 | 2 | 3 | 4; text: string }
-	| { type: "paragraph"; text: string }
-	| { type: "quote"; text: string }
-	| { type: "code"; text: string }
-	| { type: "list"; ordered: boolean; items: string[] };
+      <div className="mono muted" style={{fontSize: 12, marginBottom: 8}}>
+        #{t.id} · transcript
+      </div>
+      <h1 className="detail-h1">{t.title}</h1>
 
-type InlineToken =
-	| { type: "text"; text: string }
-	| { type: "code"; text: string }
-	| { type: "strong"; text: string }
-	| { type: "em"; text: string }
-	| { type: "link"; text: string; href: string };
+      <div className="detail-meta">
+        <span>{t.lang || "—"}</span>
+        <span className="sep">·</span>
+        <span><IconClock size={12} style={{verticalAlign: -1, marginRight: 3}}/>{fmtDuration(t.duration_seconds)}</span>
+        <span className="sep">·</span>
+        <span>{fmtRelative(t.created_at)}</span>
+        <span className="sep">·</span>
+        <a href={`https://youtu.be/${t.video_id}`} target="_blank" rel="noreferrer">
+          <IconExternal size={11} style={{verticalAlign: -1, marginRight: 3}}/>
+          youtu.be/{t.video_id}
+        </a>
+      </div>
 
-const COPY_RESET_MS = 1400;
-const inlinePattern =
-	/(`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)\s]+\)|\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_)/g;
-const plainUrlPattern = /https?:\/\/[^\s<>'"]+/g;
-const trailingUrlPunctuation = ".,;:!?)]}";
+      {t.tags && (
+        <div className="detail-tags">
+          {t.tags.map(tg => (
+            <span key={tg} className="chip" onClick={() => navigate("library", { tag: tg })}
+                  style={{cursor: "pointer"}}>
+              #{tg}
+            </span>
+          ))}
+        </div>
+      )}
 
-function stripFrontmatter(text: string): string {
-	if (!text.startsWith("---")) {
-		return text;
-	}
-	const end = text.indexOf("\n---", 3);
-	if (end === -1) {
-		return text;
-	}
-	return text.slice(end + 4).replace(/^\n+/, "");
+      {t.summary_md == null ? (
+        <PartialNotice transcript={t} onRegen={regen} regenerating={regenerating}/>
+      ) : (
+        <>
+          <div className="section-label">
+            <span>Summary</span>
+            <div className="row" style={{gap: 6}}>
+              <button className="btn ghost" onClick={() => copy(t.summary_md, "all")}
+                      style={{fontSize: 12, padding: "4px 8px"}}>
+                <IconCopy size={12}/> {copied === "all" ? "Copied" : "Copy"}
+              </button>
+              <button className="btn ghost" onClick={regen} disabled={regenerating}
+                      style={{fontSize: 12, padding: "4px 8px",
+                              color: regenerating ? "var(--accent)" : undefined}}>
+                {regenerating ? <span className="spinner"/> : <IconRefresh size={12}/>}
+                {regenerating ? "Regenerating…" : "Regenerate"}
+              </button>
+            </div>
+          </div>
+          <div className="prose"><Markdown src={t.summary_md}/></div>
+        </>
+      )}
+
+      <div className="section-label">
+        <span>Transcript excerpt</span>
+        <div className="row" style={{gap: 6}}>
+          <span className="mono muted" style={{fontSize: 11}}>
+            ~{Math.round((t.duration_seconds || 1) / 60)} min · {t.lang}
+          </span>
+          <button className="btn ghost" style={{fontSize: 12, padding: "4px 8px"}}>
+            <IconDownload size={12}/> Download .md
+          </button>
+        </div>
+      </div>
+      <div className="transcript-body">
+        {t.transcript_excerpt}{"\n\n…"}
+      </div>
+
+      <div className="hr"/>
+      <div className="mono muted" style={{fontSize: 11, display: "flex", gap: 16, flexWrap: "wrap"}}>
+        <span>job_id: <span className="tnum">{t.id + 76}</span></span>
+        <span>video_id: {t.video_id}</span>
+        <span>vast_cost: {fmtUsd(t.vast_cost)}</span>
+        <span>created: {t.created_at.replace("T", " ").replace("Z", "Z")}</span>
+      </div>
+
+      <div className="danger-zone">
+        <IconAlert size={20} style={{color: "var(--err)", flexShrink: 0}}/>
+        <div className="dz-text">
+          <div className="dz-title">Delete transcript</div>
+          <div className="dz-sub">
+            Removes the row plus its shortlinks. The owning job ({t.id + 76}) is kept;
+            resubmitting the same video will re-run the full pipeline (~{fmtUsd(t.vast_cost || 0.02)}).
+          </div>
+        </div>
+        {deleteConfirm ? (
+          <div className="row" style={{gap: 6, flexShrink: 0}}>
+            <button className="btn ghost" onClick={() => setDeleteConfirm(false)}
+                    style={{fontSize: 12, padding: "5px 10px"}}>
+              Cancel
+            </button>
+            <button className="btn danger" onClick={() => navigate("library")}
+                    style={{fontSize: 12, padding: "5px 12px"}}>
+              <IconX size={12}/> Yes, delete
+            </button>
+          </div>
+        ) : (
+          <button className="btn danger" onClick={() => setDeleteConfirm(true)}
+                  style={{fontSize: 12, padding: "5px 12px", flexShrink: 0}}>
+            Delete…
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
-function parseMd(markdown: string): MarkdownBlock[] {
-	const lines = stripFrontmatter(markdown).replace(/\r\n/g, "\n").split("\n");
-	const blocks: MarkdownBlock[] = [];
-	let index = 0;
+// ─── Share sheet ──────────────────────────────────────────────────────────
+function ShareSheet({ t, onClose, copy, copied }) {
+  const ref = React.useRef(null);
+  const [visibility, setVisibility] = React.useState("public");
+  const fullUrl = `scribe.oklabs.uk/transcripts/${t.id}`;
+  const shortlink = t.summary_shortlink || `go.oklabs.uk/${t.id}s`;
 
-	while (index < lines.length) {
-		const line = lines[index] ?? "";
-		const trimmed = line.trim();
-		if (trimmed === "") {
-			index += 1;
-			continue;
-		}
+  React.useEffect(() => {
+    function onDoc(e) {
+      if (ref.current && !ref.current.contains(e.target)) onClose();
+    }
+    function onKey(e) { if (e.key === "Escape") onClose(); }
+    setTimeout(() => document.addEventListener("click", onDoc), 0);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("click", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
 
-		if (trimmed.startsWith("```")) {
-			const codeLines: string[] = [];
-			index += 1;
-			while (index < lines.length && !lines[index].trim().startsWith("```")) {
-				codeLines.push(lines[index]);
-				index += 1;
-			}
-			blocks.push({ type: "code", text: codeLines.join("\n") });
-			index += 1;
-			continue;
-		}
+  function isCopied(key)  { return copied === key; }
+  function isErr(key)     { return copied === "err:" + key; }
+  function statusFor(key, label) {
+    if (isErr(key))    return <span className="sh-status err"><IconX size={11}/> failed — clipboard blocked</span>;
+    if (isCopied(key)) return <span className="sh-status ok"><IconCheck size={11}/> {label || "copied"}</span>;
+    return null;
+  }
 
-		const heading = /^(#{1,4})\s+(.+)$/.exec(trimmed);
-		if (heading !== null) {
-			blocks.push({
-				type: "heading",
-				level: heading[1].length as 1 | 2 | 3 | 4,
-				text: heading[2],
-			});
-			index += 1;
-			continue;
-		}
+  function download(filename, ext) {
+    // Simulated for prototype — real impl hits /transcripts/{id}/{kind}.md
+    copy(`# ${t.title}\n\n(mock download: ${filename})`, "dl:" + ext);
+  }
 
-		if (trimmed.startsWith(">")) {
-			const quoteLines: string[] = [];
-			while (index < lines.length && lines[index].trim().startsWith(">")) {
-				quoteLines.push(lines[index].trim().replace(/^>\s?/, ""));
-				index += 1;
-			}
-			blocks.push({ type: "quote", text: quoteLines.join(" ") });
-			continue;
-		}
+  return (
+    <div className="share-sheet" ref={ref}>
+      <div className="sh-hd">
+        <span className="lbl">Share</span>
+        <div className="spacer"/>
+        <span className={"vis " + visibility}
+              onClick={() => setVisibility(visibility === "public" ? "unlisted" : "public")}
+              title="Click to toggle visibility">
+          <span className="vis-dot"/>
+          {visibility === "public" ? "public" : "unlisted"}
+        </span>
+      </div>
 
-		const listMatch = /^((?:[-*])|\d+[.)])\s+(.+)$/.exec(trimmed);
-		if (listMatch !== null) {
-			const ordered = /^\d+[.)]$/.test(listMatch[1]);
-			const items: string[] = [];
-			while (index < lines.length) {
-				const current = lines[index].trim();
-				const item = /^((?:[-*])|\d+[.)])\s+(.+)$/.exec(current);
-				if (item === null || /^\d+[.)]$/.test(item[1]) !== ordered) {
-					break;
-				}
-				items.push(item[2]);
-				index += 1;
-			}
-			blocks.push({ type: "list", ordered, items });
-			continue;
-		}
+      {/* Primary action: the shortlink */}
+      <div className="sh-url">
+        <span className="scheme">go.oklabs.uk/</span>
+        <span className="path">{shortlink.replace(/^go\.oklabs\.uk\//, "")}</span>
+        <button className="btn primary"
+                onClick={() => copy("https://" + shortlink, "sl")}
+                style={{fontSize: 12, padding: "5px 10px"}}>
+          {isCopied("sl") ? <><IconCheck size={12}/> Copied</> : <><IconCopy size={12}/> Copy link</>}
+        </button>
+      </div>
 
-		const paragraph: string[] = [];
-		while (index < lines.length) {
-			const current = lines[index].trim();
-			if (
-				current === "" ||
-				current.startsWith("```") ||
-				/^(#{1,4})\s+/.test(current) ||
-				current.startsWith(">") ||
-				/^((?:[-*])|\d+[.)])\s+/.test(current)
-			) {
-				break;
-			}
-			paragraph.push(current);
-			index += 1;
-		}
-		blocks.push({ type: "paragraph", text: paragraph.join(" ") });
-	}
+      {/* Copy as Markdown */}
+      <div className="sh-section">
+        <div className="sh-section-label">Copy as Markdown</div>
+        <div className="sh-item" onClick={() => copy(t.summary_md || "", "summary")}>
+          <div className="sh-glyph"><IconSparkle size={14}/></div>
+          <div className="sh-text">
+            <div className="sh-title">Summary</div>
+            <div className="sh-sub">~{t.summary_md ? Math.round(t.summary_md.length / 4) : 0} tokens · paste into Obsidian, notes…</div>
+          </div>
+          {statusFor("summary", "copied to clipboard")
+            ?? <span className="sh-keys"><span className="kbd">⌘</span><span className="kbd">C</span></span>}
+        </div>
+        <div className="sh-item" onClick={() => copy(t.transcript_excerpt || "", "transcript")}>
+          <div className="sh-glyph"><IconWave size={14}/></div>
+          <div className="sh-text">
+            <div className="sh-title">Transcript</div>
+            <div className="sh-sub">{fmtDuration(t.duration_seconds)} · timestamps · {t.lang || "—"}</div>
+          </div>
+          {statusFor("transcript", "copied to clipboard")
+            ?? <span className="sh-keys"><span className="kbd">⇧</span><span className="kbd">⌘</span><span className="kbd">C</span></span>}
+        </div>
+      </div>
 
-	return blocks;
+      {/* Download */}
+      <div className="sh-section">
+        <div className="sh-section-label">Download</div>
+        <div className="sh-item" onClick={() => download(`scribe-${t.id}-summary.md`, "summary")}>
+          <div className="sh-glyph"><IconDownload size={13}/></div>
+          <div className="sh-text">
+            <div className="sh-title">summary.md</div>
+            <div className="sh-sub">/transcripts/{t.id}/summary.md</div>
+          </div>
+          {statusFor("dl:summary", "downloaded")}
+        </div>
+        <div className="sh-item" onClick={() => download(`scribe-${t.id}-transcript.md`, "transcript")}>
+          <div className="sh-glyph"><IconDownload size={13}/></div>
+          <div className="sh-text">
+            <div className="sh-title">transcript.md</div>
+            <div className="sh-sub">/transcripts/{t.id}/transcript.md</div>
+          </div>
+          {statusFor("dl:transcript", "downloaded")}
+        </div>
+      </div>
+
+      {/* Send to integration */}
+      <div className="sh-section">
+        <div className="sh-section-label">Send to</div>
+        <div className="sh-item" onClick={() => copy("sent:telegram", "tg")}>
+          <div className="sh-glyph" style={{color: "var(--info)"}}><IconExternal size={13}/></div>
+          <div className="sh-text">
+            <div className="sh-title">Telegram</div>
+            <div className="sh-sub">@oleg · summary as message + .md attachment</div>
+          </div>
+          {statusFor("tg", "sent")
+            ?? <span className="sh-keys"><IconArrow size={11}/></span>}
+        </div>
+        <div className="sh-item" onClick={() => copy("sent:obsidian", "ob")}>
+          <div className="sh-glyph" style={{color: "#7c3aed"}}><IconExternal size={13}/></div>
+          <div className="sh-text">
+            <div className="sh-title">Obsidian vault</div>
+            <div className="sh-sub">scribe/ · creates summary + transcript + frontmatter</div>
+          </div>
+          {statusFor("ob", "sent")
+            ?? <span className="sh-keys"><IconArrow size={11}/></span>}
+        </div>
+        <div className="sh-item" onClick={() => copy(`${fullUrl}/feed.xml`, "rss")}>
+          <div className="sh-glyph"><IconRSS size={13}/></div>
+          <div className="sh-text">
+            <div className="sh-title">RSS</div>
+            <div className="sh-sub">Subscribe to all summaries · feed.xml</div>
+          </div>
+          {statusFor("rss", "feed URL copied")
+            ?? <span className="sh-keys"><IconCopy size={11}/></span>}
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function inline(text: string): InlineToken[] {
-	const tokens: InlineToken[] = [];
-	let cursor = 0;
-	for (const match of text.matchAll(inlinePattern)) {
-		const value = match[0];
-		if (match.index > cursor) {
-			pushTextTokens(tokens, text.slice(cursor, match.index));
-		}
-		if (value.startsWith("`")) {
-			tokens.push({ type: "code", text: value.slice(1, -1) });
-		} else if (value.startsWith("[")) {
-			const link = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(value);
-			if (link === null) {
-				pushTextTokens(tokens, value);
-			} else {
-				tokens.push({ type: "link", text: link[1], href: link[2] });
-			}
-		} else if (value.startsWith("**") || value.startsWith("__")) {
-			tokens.push({ type: "strong", text: value.slice(2, -2) });
-		} else {
-			tokens.push({ type: "em", text: value.slice(1, -1) });
-		}
-		cursor = match.index + value.length;
-	}
-	if (cursor < text.length) {
-		pushTextTokens(tokens, text.slice(cursor));
-	}
-	return tokens;
+function PartialNotice({ transcript, onRegen, regenerating }) {
+  return (
+    <div style={{
+      padding: "16px 18px",
+      border: "1px solid color-mix(in oklab, var(--warn) 32%, transparent)",
+      borderRadius: "var(--radius-lg)",
+      background: "color-mix(in oklab, var(--warn) 10%, var(--bg))",
+      color: "var(--warn)",
+      marginTop: 12,
+      display: "flex", gap: 14, alignItems: "flex-start",
+    }}>
+      <IconAlert size={18}/>
+      <div style={{flex: 1, color: "var(--fg)"}}>
+        <div style={{fontWeight: 600, marginBottom: 4}}>Partial transcript — summary failed</div>
+        <div style={{color: "var(--fg-soft)", fontSize: 13.5, lineHeight: 1.5}}>
+          Whisper transcribed this video successfully but the codex summarizer
+          timed out. The transcript is preserved; rerunning will only re-summarize
+          (no Vast.ai cost).
+        </div>
+      </div>
+      <button className="btn primary" onClick={onRegen} disabled={regenerating}>
+        {regenerating ? <span className="spinner"/> : <IconRefresh size={14}/>}
+        {regenerating ? "Summarizing…" : "Run summarizer"}
+      </button>
+    </div>
+  );
 }
 
-function pushTextTokens(tokens: InlineToken[], text: string) {
-	let cursor = 0;
-	for (const match of text.matchAll(plainUrlPattern)) {
-		if (match.index > cursor) {
-			tokens.push({ type: "text", text: text.slice(cursor, match.index) });
-		}
-		const [href, trailing] = splitTrailingUrlPunctuation(match[0]);
-		tokens.push({ type: "link", text: href, href });
-		if (trailing.length > 0) {
-			tokens.push({ type: "text", text: trailing });
-		}
-		cursor = match.index + match[0].length;
-	}
-	if (cursor < text.length) {
-		tokens.push({ type: "text", text: text.slice(cursor) });
-	}
+// Tiny markdown renderer — handles headings, bold, italic, code, lists, blockquotes.
+// Sufficient for our seed content; not a full CommonMark parser.
+function Markdown({ src }) {
+  const parts = React.useMemo(() => parseMd(src), [src]);
+  return <>{parts}</>;
+}
+function parseMd(md) {
+  const lines = md.split("\n");
+  const out = [];
+  let i = 0; let key = 0;
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^##\s+/.test(l)) {
+      out.push(<h2 key={key++}>{inline(l.replace(/^##\s+/, ""))}</h2>);
+      i++; continue;
+    }
+    if (/^#\s+/.test(l)) {
+      out.push(<h2 key={key++}>{inline(l.replace(/^#\s+/, ""))}</h2>);
+      i++; continue;
+    }
+    if (/^>/.test(l)) {
+      const buf = [];
+      while (i < lines.length && /^>/.test(lines[i])) {
+        buf.push(lines[i].replace(/^>\s?/, "")); i++;
+      }
+      out.push(<blockquote key={key++}>{inline(buf.join(" "))}</blockquote>);
+      continue;
+    }
+    if (/^\s*[-*]\s+/.test(l)) {
+      const items = [];
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+        items.push(lines[i].replace(/^\s*[-*]\s+/, "")); i++;
+      }
+      out.push(<ul key={key++}>{items.map((it, j) => <li key={j}>{inline(it)}</li>)}</ul>);
+      continue;
+    }
+    if (/^\s*\d+\.\s+/.test(l)) {
+      const items = [];
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+        items.push(lines[i].replace(/^\s*\d+\.\s+/, "")); i++;
+      }
+      out.push(<ol key={key++}>{items.map((it, j) => <li key={j}>{inline(it)}</li>)}</ol>);
+      continue;
+    }
+    if (l.trim() === "") { i++; continue; }
+    // paragraph: collect until blank line
+    const buf = [l];
+    i++;
+    while (i < lines.length && lines[i].trim() !== "" && !/^(#|>|\s*[-*]\s|\s*\d+\.\s)/.test(lines[i])) {
+      buf.push(lines[i]); i++;
+    }
+    out.push(<p key={key++}>{inline(buf.join(" "))}</p>);
+  }
+  return out;
+}
+function inline(s) {
+  // **bold** *italic* `code`
+  const out = []; let i = 0; let buf = ""; let k = 0;
+  const flush = () => { if (buf) { out.push(buf); buf = ""; } };
+  while (i < s.length) {
+    if (s.startsWith("**", i)) {
+      const end = s.indexOf("**", i + 2);
+      if (end !== -1) { flush(); out.push(<strong key={k++}>{s.slice(i+2, end)}</strong>); i = end + 2; continue; }
+    }
+    if (s[i] === "*" && s[i+1] !== " ") {
+      const end = s.indexOf("*", i + 1);
+      if (end !== -1) { flush(); out.push(<em key={k++}>{s.slice(i+1, end)}</em>); i = end + 1; continue; }
+    }
+    if (s[i] === "`") {
+      const end = s.indexOf("`", i + 1);
+      if (end !== -1) { flush(); out.push(<code key={k++}>{s.slice(i+1, end)}</code>); i = end + 1; continue; }
+    }
+    buf += s[i]; i++;
+  }
+  flush();
+  return out;
 }
 
-function splitTrailingUrlPunctuation(rawUrl: string): [string, string] {
-	let href = rawUrl;
-	let trailing = "";
-	while (
-		href.length > 0 &&
-		trailingUrlPunctuation.includes(href[href.length - 1] ?? "")
-	) {
-		if (href.endsWith(")") && count(href, "(") >= count(href, ")")) {
-			break;
-		}
-		trailing = `${href[href.length - 1]}${trailing}`;
-		href = href.slice(0, -1);
-	}
-	return [href, trailing];
-}
-
-function count(text: string, needle: string): number {
-	return text.split(needle).length - 1;
-}
-
-function Inline({ text }: { text: string }) {
-	return inline(text).map((token, index) => {
-		const key = `${token.type}-${index}-${token.text.slice(0, 8)}`;
-		if (token.type === "code") {
-			return <code key={key}>{token.text}</code>;
-		}
-		if (token.type === "strong") {
-			return <strong key={key}>{token.text}</strong>;
-		}
-		if (token.type === "em") {
-			return <em key={key}>{token.text}</em>;
-		}
-		if (token.type === "link") {
-			return (
-				<a
-					key={key}
-					href={token.href}
-					target="_blank"
-					rel="noopener noreferrer"
-				>
-					{token.text}
-				</a>
-			);
-		}
-		return <React.Fragment key={key}>{token.text}</React.Fragment>;
-	});
-}
-
-export function Markdown({ body }: { body: string }) {
-	const blocks = React.useMemo(() => parseMd(body), [body]);
-	return (
-		<div className="prose transcript-markdown">
-			{blocks.map((block, index) => {
-				const key = `${block.type}-${index}`;
-				if (block.type === "heading") {
-					const Heading = `h${block.level}` as "h1" | "h2" | "h3" | "h4";
-					return (
-						<Heading key={key}>
-							<Inline text={block.text} />
-						</Heading>
-					);
-				}
-				if (block.type === "quote") {
-					return (
-						<blockquote key={key}>
-							<Inline text={block.text} />
-						</blockquote>
-					);
-				}
-				if (block.type === "code") {
-					return (
-						<pre key={key}>
-							<code>{block.text}</code>
-						</pre>
-					);
-				}
-				if (block.type === "list") {
-					const ListTag = block.ordered ? "ol" : "ul";
-					return (
-						<ListTag key={key}>
-							{block.items.map((item) => (
-								<li key={`${key}-${item}`}>
-									<Inline text={item} />
-								</li>
-							))}
-						</ListTag>
-					);
-				}
-				return (
-					<p key={key}>
-						<Inline text={block.text} />
-					</p>
-				);
-			})}
-		</div>
-	);
-}
-
-function formatDuration(seconds?: number | null): string {
-	if (seconds === null || seconds === undefined) {
-		return "duration unknown";
-	}
-	const hours = Math.floor(seconds / 3600);
-	const minutes = Math.floor((seconds % 3600) / 60);
-	const rest = seconds % 60;
-	if (hours > 0) {
-		return `${hours}:${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
-	}
-	return `${minutes}:${String(rest).padStart(2, "0")}`;
-}
-
-function formatDate(value: string): string {
-	return new Intl.DateTimeFormat(undefined, {
-		dateStyle: "medium",
-		timeStyle: "short",
-	}).format(new Date(value));
-}
-
-function transcriptExcerpt(markdown: string): string {
-	const stripped = stripFrontmatter(markdown).trim();
-	if (stripped.length <= 3200) {
-		return stripped;
-	}
-	return `${stripped.slice(0, 3200).trimEnd()}\n\n...`;
-}
-
-function useCopy() {
-	const [copied, setCopied] = React.useState<string | null>(null);
-	const timer = React.useRef<number | null>(null);
-
-	React.useEffect(() => {
-		return () => {
-			if (timer.current !== null) {
-				window.clearTimeout(timer.current);
-			}
-		};
-	}, []);
-
-	return {
-		copied,
-		copy: React.useCallback(async (key: string, text: string) => {
-			await navigator.clipboard.writeText(text);
-			setCopied(key);
-			if (timer.current !== null) {
-				window.clearTimeout(timer.current);
-			}
-			timer.current = window.setTimeout(() => setCopied(null), COPY_RESET_MS);
-		}, []),
-	};
-}
-
-export function PartialNotice({
-	onRun,
-	busy,
-	error,
-}: {
-	onRun: () => void;
-	busy: boolean;
-	error: string | null;
-}) {
-	return (
-		<section className="partial-notice" aria-live="polite">
-			<div>
-				<p className="section-label">Partial transcript</p>
-				<h2>Summary is not available yet</h2>
-				<p>
-					Whisper finished and saved the transcript, but the summarizer did not
-					produce a summary for this row.
-				</p>
-				{error !== null ? <p className="inline-error">{error}</p> : null}
-			</div>
-			<button
-				className="btn primary"
-				type="button"
-				onClick={onRun}
-				disabled={busy}
-			>
-				{busy ? <span className="spinner" aria-hidden="true" /> : null}
-				{busy ? "Running" : "Run summarizer"}
-			</button>
-		</section>
-	);
-}
-
-export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
-	const auth = useAuth();
-	const [record, setRecord] = React.useState<TranscriptRecord | null>(null);
-	const [loading, setLoading] = React.useState(true);
-	const [error, setError] = React.useState<string | null>(null);
-	const [regenerating, setRegenerating] = React.useState(false);
-	const [deleting, setDeleting] = React.useState(false);
-	const [confirmDeleteOpen, setConfirmDeleteOpen] = React.useState(false);
-	const [regenerateError, setRegenerateError] = React.useState<string | null>(
-		null,
-	);
-	const { copied, copy } = useCopy();
-
-	const load = React.useCallback(
-		async (signal?: AbortSignal) => {
-			if (id === undefined) {
-				setError("Transcript id is missing.");
-				setLoading(false);
-				return;
-			}
-			setLoading(true);
-			setError(null);
-			const response = await auth.protectedFetch(`/transcripts/${id}`, {
-				headers: { Accept: "application/json" },
-				cache: "no-store",
-				signal,
-			});
-			if (!response.ok) {
-				throw new Error(`Transcript load failed (HTTP ${response.status})`);
-			}
-			setRecord((await response.json()) as TranscriptRecord);
-			setLoading(false);
-		},
-		[auth, id],
-	);
-
-	React.useEffect(() => {
-		const abort = new AbortController();
-		load(abort.signal).catch((caught: unknown) => {
-			if (!abort.signal.aborted) {
-				setError(caught instanceof Error ? caught.message : String(caught));
-				setLoading(false);
-			}
-		});
-		return () => abort.abort();
-	}, [load]);
-
-	const regenerate = React.useCallback(async () => {
-		if (id === undefined) {
-			return;
-		}
-		setRegenerating(true);
-		setRegenerateError(null);
-		try {
-			const response = await auth.protectedFetch(
-				`/transcripts/${id}/resummarize`,
-				{
-					method: "POST",
-					headers: { Accept: "application/json" },
-				},
-			);
-			if (!response.ok) {
-				let detail = `Regenerate failed (HTTP ${response.status})`;
-				try {
-					const body = (await response.json()) as { detail?: string };
-					if (body.detail !== undefined) {
-						detail = body.detail;
-					}
-				} catch (_error) {
-					// Non-JSON error body; keep the status-based message.
-				}
-				throw new Error(detail);
-			}
-			await load();
-		} catch (caught) {
-			setRegenerateError(
-				caught instanceof Error ? caught.message : String(caught),
-			);
-		} finally {
-			setRegenerating(false);
-		}
-	}, [auth, id, load]);
-
-	const deleteTranscript = React.useCallback(async () => {
-		if (record === null || deleting) {
-			return;
-		}
-		setDeleting(true);
-		setError(null);
-		try {
-			const response = await auth.protectedFetch(
-				`/admin/transcripts/${record.id}`,
-				{
-					method: "DELETE",
-				},
-			);
-			if (!response.ok) {
-				throw new Error(`Delete failed (HTTP ${response.status})`);
-			}
-			setConfirmDeleteOpen(false);
-			navigate({ page: "library", params: {} });
-		} catch (caught) {
-			setError(caught instanceof Error ? caught.message : String(caught));
-		} finally {
-			setDeleting(false);
-		}
-	}, [auth, deleting, navigate, record]);
-
-	if (loading) {
-		return (
-			<section className="pane transcript-detail">
-				<div className="loading-row">
-					<span className="spinner" aria-hidden="true" />
-					<span>Loading transcript</span>
-				</div>
-			</section>
-		);
-	}
-
-	if (error !== null || record === null) {
-		return (
-			<section className="pane transcript-detail">
-				<div className="failure-row">
-					<p className="err-title">Transcript unavailable</p>
-					<p className="err-msg">{error ?? "No transcript loaded."}</p>
-					<a
-						className="btn"
-						href={routeToHref({ page: "library", params: {} })}
-						onClick={(event) =>
-							handleRouteAnchorClick(
-								event,
-								{ page: "library", params: {} },
-								navigate,
-							)
-						}
-					>
-						Back to library
-					</a>
-				</div>
-			</section>
-		);
-	}
-
-	const created = formatDate(record.created_at);
-	const summaryBody = record.summary_md ?? "";
-	const excerpt = transcriptExcerpt(record.transcript_md);
-
-	return (
-		<section className="pane transcript-detail">
-			<header className="pane-header transcript-hero">
-				<div>
-					<p className="eyebrow">Transcript #{record.id}</p>
-					<h1 className="detail-h1">{record.title}</h1>
-					<div className="detail-meta meta-strip">
-						<span>{record.lang ?? "lang unknown"}</span>
-						<span>{formatDuration(record.duration_seconds)}</span>
-						<span>{created}</span>
-						{record.source_url ? (
-							<a href={record.source_url} target="_blank" rel="noreferrer">
-								{record.source_label ?? "Source"}
-							</a>
-						) : null}
-						<a href={`/transcripts/${record.id}/summary.md`}>summary.md</a>
-						<a href={`/transcripts/${record.id}/transcript.md`}>
-							transcript.md
-						</a>
-					</div>
-				</div>
-				<div className="transcript-actions">
-					<div className="share-control" aria-label="Private share links">
-						<span className="section-label">Share</span>
-						<PrivateShareLinks id={record.id} />
-					</div>
-					<button
-						type="button"
-						className="btn ghost danger-button"
-						onClick={() => setConfirmDeleteOpen(true)}
-						disabled={deleting}
-					>
-						{deleting ? "Deleting" : "Delete"}
-					</button>
-				</div>
-			</header>
-
-			{record.tags && record.tags.length > 0 ? (
-				<nav className="detail-tags" aria-label="Transcript tags">
-					{record.tags.map((tag) => {
-						const tagRoute: Route = { page: "library", params: { tag } };
-						return (
-							<a
-								className="tag"
-								key={tag}
-								href={routeToHref(tagRoute)}
-								onClick={(event) =>
-									handleRouteAnchorClick(event, tagRoute, navigate)
-								}
-							>
-								{tag}
-							</a>
-						);
-					})}
-				</nav>
-			) : null}
-
-			{record.summary_md === null || record.summary_md === undefined ? (
-				<PartialNotice
-					onRun={regenerate}
-					busy={regenerating}
-					error={regenerateError}
-				/>
-			) : (
-				<section className="detail-section">
-					<div className="section-head">
-						<div>
-							<p className="section-label">Summary</p>
-							{regenerateError !== null ? (
-								<p className="inline-error">{regenerateError}</p>
-							) : null}
-						</div>
-						<div className="section-actions">
-							<button
-								className="btn ghost"
-								type="button"
-								onClick={() => void copy("summary", summaryBody)}
-							>
-								{copied === "summary" ? "copied!" : "Copy"}
-							</button>
-							<button
-								className="btn"
-								type="button"
-								onClick={regenerate}
-								disabled={regenerating}
-							>
-								{regenerating ? (
-									<span className="spinner" aria-hidden="true" />
-								) : null}
-								{regenerating ? "Regenerating" : "Regenerate"}
-							</button>
-						</div>
-					</div>
-					<div className={regenerating ? "body-dimmed" : undefined}>
-						<Markdown body={summaryBody} />
-					</div>
-				</section>
-			)}
-
-			<section className="detail-section">
-				<div className="section-head">
-					<div>
-						<p className="section-label">Transcript excerpt</p>
-					</div>
-					<button
-						className="btn ghost"
-						type="button"
-						onClick={() => void copy("transcript", record.transcript_md)}
-					>
-						{copied === "transcript" ? "copied!" : "Copy"}
-					</button>
-				</div>
-				<div className="transcript-body">
-					<Markdown body={excerpt} />
-				</div>
-			</section>
-
-			<footer className="detail-footer">
-				<span>job_id: {record.job_id}</span>
-				<span>video_id: {record.video_id}</span>
-				<span>
-					vast_cost: {formatUsdCost(record.vast_cost, displayCurrency)}
-				</span>
-				<span>created: {created}</span>
-			</footer>
-
-			{confirmDeleteOpen ? (
-				<ConfirmDialog
-					title="Delete transcript"
-					body={`Delete "${record.title}"? This also removes its job record.`}
-					confirmLabel="Delete"
-					busyLabel="Deleting"
-					busy={deleting}
-					onCancel={() => setConfirmDeleteOpen(false)}
-					onConfirm={deleteTranscript}
-				/>
-			) : null}
-		</section>
-	);
-}
+Object.assign(window, { TranscriptDetail });
