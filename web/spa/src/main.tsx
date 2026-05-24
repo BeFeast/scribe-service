@@ -5,6 +5,7 @@ import { DesignSystemPlayground } from "./DesignSystemPlayground";
 import { CommandPalette } from "./components/CommandPalette";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
+import { TweaksPanel } from "./components/TweaksPanel";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { useRoute } from "./hooks/useRoute";
 import { useTweaks } from "./hooks/useTweaks";
@@ -56,37 +57,48 @@ function App() {
 	}
 
 	return (
-		<div className="app-shell">
-			<TopBar route={route} />
-			<div className="shell-body">
-				<Sidebar route={route} navigate={navigate} />
-				<main className="content-pane">
-					{route.page === "queue" ? (
-						<Queue navigate={navigate} />
-					) : route.page === "job" ? (
-						<JobDetail id={route.params.id} navigate={navigate} />
-					) : route.page === "library" ? (
-						<Library
-							layout={tweaks.libraryLayout}
-							displayCurrency={displayCurrency}
-							route={route}
-							navigate={navigate}
-						/>
-					) : route.page === "transcript" ? (
-						<Transcript
-							id={route.params.id}
-							displayCurrency={displayCurrency}
-							navigate={navigate}
-						/>
-					) : route.page === "ops" ? (
-						<Ops displayCurrency={displayCurrency} navigate={navigate} />
-					) : route.page === "settings" ? (
-						<Settings tweaks={tweaks} replaceTweaks={replaceTweaks} />
-					) : (
-						<Placeholder page={route.page} id={route.params.id} />
-					)}
-				</main>
-			</div>
+		<div className="app">
+			<TopBar tweaks={tweaks} replaceTweaks={replaceTweaks} />
+			<Sidebar route={route} navigate={navigate} />
+			<main className="main" data-screen-label={route.page}>
+				{route.page === "queue" ? (
+					<Queue navigate={navigate} />
+				) : route.page === "job" ? (
+					<JobDetail id={route.params.id} navigate={navigate} />
+				) : route.page === "library" ? (
+					<Library
+						layout={tweaks.libraryLayout}
+						displayCurrency={displayCurrency}
+						route={route}
+						navigate={navigate}
+						setLibraryLayout={(libraryLayout) =>
+							replaceTweaks({ ...tweaks, libraryLayout })
+						}
+					/>
+				) : route.page === "transcript" ? (
+					<Transcript
+						id={route.params.id}
+						displayCurrency={displayCurrency}
+						navigate={navigate}
+					/>
+				) : route.page === "ops" ? (
+					<Ops displayCurrency={displayCurrency} navigate={navigate} />
+				) : route.page === "settings" ? (
+					<Settings tweaks={tweaks} replaceTweaks={replaceTweaks} />
+				) : (
+					<Placeholder page={route.page} id={route.params.id} />
+				)}
+			</main>
+			<TweaksPanel
+				tweaks={tweaks}
+				setVariant={(variant) => replaceTweaks({ ...tweaks, variant })}
+				setTheme={(theme) => replaceTweaks({ ...tweaks, theme })}
+				setDensity={(density) => replaceTweaks({ ...tweaks, density })}
+				setLibraryLayout={(libraryLayout) =>
+					replaceTweaks({ ...tweaks, libraryLayout })
+				}
+				navigate={navigate}
+			/>
 			<CommandPalette navigate={navigate} />
 		</div>
 	);

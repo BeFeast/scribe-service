@@ -37,10 +37,11 @@ def test_app_mounts_shell_and_placeholder_router() -> None:
     assert "TopBar" in source
     assert "Sidebar" in source
     assert "CommandPalette" in source
-    assert "TweaksPanel" not in source
+    assert "TweaksPanel" in source
     assert "useRoute" in source
     assert "Library" in source
     assert "layout={tweaks.libraryLayout}" in source
+    assert "setLibraryLayout={(libraryLayout)" in source
     assert "displayCurrency={displayCurrency}" in source
     assert 'auth.protectedFetch("/api/config")' in source
     assert 'route.page === "library"' in source
@@ -94,6 +95,7 @@ def test_transcript_markdown_autolinks_plain_urls_safely() -> None:
 
 def test_library_page_fetches_api_and_supports_layouts() -> None:
     source = read("pages/Library.tsx")
+    command_palette = read("components/CommandPalette.tsx")
 
     assert "function InFlightStrip" in source
     assert "function InFlightRow" in source
@@ -110,24 +112,64 @@ def test_library_page_fetches_api_and_supports_layouts() -> None:
     assert "Next" in source
     assert "window.setTimeout(() => setDebouncedQuery(query), 200)" in source
     assert 'auth.protectedFetch("/api/jobs/active"' in source
-    assert 'auth.protectedFetch("/jobs"' in source
+    assert 'auth.protectedFetch("/jobs"' in command_palette
     assert "`/admin/transcripts/${row.id}`" in source
-    assert 'source: "manual"' in source
-    assert "Queued job #" in source
-    assert 'className="library-submit"' in source
-    assert 'type="url"' in source
+    assert 'source: "manual"' in command_palette
+    assert "CMDK_OPEN_EVENT" in source
+    assert "Submit URL" in source
+    assert 'className="lib-toolbar"' in source
+    assert 'className="search"' in source
+    assert "Search titles + transcripts" in source
+    assert 'className="library-submit"' not in source
+    assert "Title or summary" not in source
+    assert '<h1 className="pane-h1">Library</h1>' in source
+    assert "Transcripts</h1>" not in source
     assert "hasNonTerminalJob(jobs) ? 5000 : 30000" in source
     assert "usePoll(poll, interval)" in source
     assert "chip warn" in source
     assert "partial" in source
     assert "Delete transcript" in source
-    assert "<colgroup>" in source
-    assert 'className="lib-table-meta-col"' in source
+    assert 'className="col-num"' in source
+    assert 'className="feed-num"' in source
+    assert 'className="card-title"' in source
+    assert 'className="card-excerpt"' in source
     assert 'layout === "table"' in source
     assert 'layout === "feed"' in source
     assert 'layout === "cards"' in source
     assert "row.source_url" in source
     assert "row.source_label" in source
+
+
+def test_library_rejects_old_repainted_dom_and_default_only_tweaks() -> None:
+    library = read("pages/Library.tsx")
+    hooks = read("hooks/useTweaks.ts")
+    styles = read("styles.css")
+
+    assert "library-hero" not in library
+    assert "library-search" not in library
+    assert "library-submit" not in library
+    assert "Title or summary" not in library
+    assert "Transcripts</h1>" not in library
+    assert '<h1 className="pane-h1">Library</h1>' in library
+    assert 'className="lib-toolbar"' in library
+    assert 'layout === "table"' in library
+    assert 'layout === "feed"' in library
+    assert 'layout === "cards"' in library
+
+    assert 'export type ScribeVariant = "paper" | "terminal" | "console" | "field";' in hooks
+    assert 'export type ScribeTheme = "light" | "dark";' in hooks
+    assert 'export type ScribeDensity = "compact" | "cozy" | "comfy";' in hooks
+    for selector in (
+        '[data-variant="paper"]',
+        '[data-variant="terminal"]',
+        '[data-variant="console"]',
+        '[data-variant="field"]',
+        '[data-density="compact"]',
+        '[data-density="cozy"]',
+        '[data-density="comfy"]',
+        '[data-theme="dark"][data-variant="field"]',
+    ):
+        assert selector in styles
 
 
 def test_queue_and_job_detail_can_clear_failed_jobs() -> None:
@@ -210,7 +252,7 @@ def test_spa_auth_config_and_protected_fetch_are_wired() -> None:
     source = read("hooks/useAuth.tsx")
     main = read("main.tsx")
     settings = read("pages/Settings.tsx")
-    library = read("pages/Library.tsx")
+    command_palette = read("components/CommandPalette.tsx")
     transcript = read("pages/Transcript.tsx")
 
     assert 'fetch("/api/auth/config"' in source
@@ -230,7 +272,7 @@ def test_spa_auth_config_and_protected_fetch_are_wired() -> None:
     assert "protectedFetch" in source
     assert "AuthProvider" in main
     assert 'auth.protectedFetch("/api/config"' in settings
-    assert 'auth.protectedFetch("/jobs"' in library
+    assert 'auth.protectedFetch("/jobs"' in command_palette
     assert "`/transcripts/${id}/resummarize`" in transcript
 
 
@@ -353,6 +395,11 @@ def test_tweaks_defaults_persist_and_apply_to_html_dataset() -> None:
     assert 'theme: "light"' in source
     assert 'density: "compact"' in source
     assert 'libraryLayout: "feed"' in source
+    for value in ('"paper"', '"terminal"', '"console"', '"field"'):
+        assert value in source
+    assert '"dark"' in source
+    assert '"cozy"' in source
+    assert '"comfy"' in source
     assert "localStorage.getItem(STORAGE_KEY)" in source
     assert "localStorage.setItem(STORAGE_KEY" in source
     assert "parsed.variant" in source
@@ -371,28 +418,18 @@ def test_tweaks_defaults_persist_and_apply_to_html_dataset() -> None:
     assert "dataset.libraryLayout = tweaks.libraryLayout" in source
 
 
-def test_appearance_settings_do_not_expose_debug_variant_or_density_controls() -> None:
-    settings = read("pages/Settings.tsx")
-
-    assert 'label="Variant"' not in settings
-    assert 'label="Density"' not in settings
-    assert '"paper"' not in settings
-    assert '"terminal"' not in settings
-    assert '"console"' not in settings
-    assert '"cozy"' not in settings
-    assert '"comfy"' not in settings
-
-
-def test_field_light_foundation_does_not_expose_theme_toggle() -> None:
+def test_tweaks_panel_exposes_design_variant_theme_density_controls() -> None:
     hooks = read("hooks/useTweaks.ts")
     topbar = read("components/TopBar.tsx")
-    settings = read("pages/Settings.tsx")
-    source = hooks + topbar + settings
+    panel = read("components/TweaksPanel.tsx")
 
-    assert 'export type ScribeTheme = "light";' in hooks
-    assert '"dark"' not in source
-    assert "onThemeChange" not in topbar
-    assert 'label="Theme"' not in settings
+    assert 'export type ScribeTheme = "light" | "dark";' in hooks
+    for value in ('"paper"', '"terminal"', '"console"', '"field"'):
+        assert value in panel
+    assert 'const themeOptions: ScribeTheme[] = ["light", "dark"]' in panel
+    assert 'const densityOptions: ScribeDensity[] = ["compact", "cozy", "comfy"]' in panel
+    assert "Toggle theme" in topbar
+    assert "replaceTweaks({ ...tweaks, theme:" in topbar
 
 
 def test_sidebar_routes_protected_fetch_without_mock_fallback() -> None:

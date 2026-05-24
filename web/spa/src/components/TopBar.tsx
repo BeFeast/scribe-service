@@ -1,20 +1,22 @@
 import { CMDK_OPEN_EVENT } from "../constants";
 import { useAuth } from "../hooks/useAuth";
-import type { Route } from "../hooks/useRoute";
-import { routeLabel } from "../hooks/useRoute";
-import { IconRSS, IconSearch } from "./ShellIcons";
+import type { Tweaks } from "../hooks/useTweaks";
+import { IconMoon, IconRSS, IconSearch, IconSun } from "./ShellIcons";
 
 type TopBarProps = {
-	route: Route;
+	tweaks: Tweaks;
+	replaceTweaks: (value: Tweaks) => void;
 };
 
 function publishCmdkOpen(): void {
 	document.dispatchEvent(new CustomEvent(CMDK_OPEN_EVENT));
 }
 
-export function TopBar({ route }: TopBarProps) {
+export function TopBar({ tweaks, replaceTweaks }: TopBarProps) {
 	const auth = useAuth();
-	const screenLabel = routeLabel(route);
+	const isDark = tweaks.theme === "dark";
+	const toggleTheme = () =>
+		replaceTweaks({ ...tweaks, theme: isDark ? "light" : "dark" });
 
 	return (
 		<header className="topbar">
@@ -46,12 +48,29 @@ export function TopBar({ route }: TopBarProps) {
 				type="button"
 				className="cmdk"
 				onClick={publishCmdkOpen}
-				aria-label={`Open command palette from ${screenLabel}`}
+				aria-label="Open command palette"
 			>
 				<IconSearch size={14} />
-				<span>{screenLabel} / Paste URL or search transcripts...</span>
+				<span>Paste URL or search transcripts...</span>
 				<span className="kbd">⌘K</span>
 			</button>
+			<button
+				type="button"
+				className="iconbtn"
+				title="Toggle theme"
+				aria-label="Toggle theme"
+				onClick={toggleTheme}
+			>
+				{isDark ? <IconSun size={16} /> : <IconMoon size={16} />}
+			</button>
+			<a
+				className="iconbtn"
+				href="/feed.xml"
+				title="RSS feed"
+				aria-label="RSS feed"
+			>
+				<IconRSS size={16} />
+			</a>
 			<div className="access-row topbar-access">
 				<span className="row-label">{auth.accessStatus}</span>
 				<div className="access-facts">
@@ -92,14 +111,6 @@ export function TopBar({ route }: TopBarProps) {
 					) : null}
 				</div>
 			</div>
-			<a
-				className="iconbtn"
-				href="/feed.xml"
-				title="RSS feed"
-				aria-label="RSS feed"
-			>
-				<IconRSS size={16} />
-			</a>
 		</header>
 	);
 }
