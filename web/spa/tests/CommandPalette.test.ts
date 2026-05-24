@@ -4,7 +4,7 @@ import {
 	isCommandPaletteShortcut,
 	isJobView,
 	parseVideoUrl,
-} from "../src/components/CommandPalette";
+} from "../src/design-app/command-utils.js";
 
 describe("parseVideoUrl", () => {
 	test("accepts YouTube URLs with reordered watch query params", () => {

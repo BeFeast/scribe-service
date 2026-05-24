@@ -1,0 +1,41 @@
+// biome-ignore-all lint: Claude Design source port; integration-only edits live in api/data/main.
+import React from "react";
+// Reusable icon components — single source so all variants share crisp 16px glyphs.
+// Stroke-based, currentColor; sized 14-18px in context.
+
+export const Icon = ({ size = 16, children, style }) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" fill="none"
+       stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+       style={style} aria-hidden="true">
+    {children}
+  </svg>
+);
+
+export const IconLibrary    = (p) => <Icon {...p}><rect x="2.5" y="2.5" width="3" height="11" rx="0.5"/><rect x="6.5" y="2.5" width="3" height="11" rx="0.5"/><path d="M10.5 3.6l2.4-.6 1.6 6.4-3 .6"/></Icon>;
+export const IconQueue      = (p) => <Icon {...p}><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2L9.8 10"/></Icon>;
+export const IconOps        = (p) => <Icon {...p}><path d="M2 13l3-3 2.5 2.5L11 7l3 3"/><path d="M2 13h12"/></Icon>;
+export const IconSettings   = (p) => <Icon {...p}><circle cx="8" cy="8" r="1.8"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></Icon>;
+export const IconSearch     = (p) => <Icon {...p}><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l3 3"/></Icon>;
+export const IconPlus       = (p) => <Icon {...p}><path d="M8 3v10M3 8h10"/></Icon>;
+export const IconCheck      = (p) => <Icon {...p}><path d="M3 8l3.5 3.5L13 4.5"/></Icon>;
+export const IconX          = (p) => <Icon {...p}><path d="M4 4l8 8M12 4l-8 8"/></Icon>;
+export const IconArrow      = (p) => <Icon {...p}><path d="M3 8h10M9 4l4 4-4 4"/></Icon>;
+export const IconExternal   = (p) => <Icon {...p}><path d="M9 3h4v4M13 3l-6 6"/><path d="M11 9v3.5a.5.5 0 01-.5.5h-7a.5.5 0 01-.5-.5v-7a.5.5 0 01.5-.5H7"/></Icon>;
+export const IconCopy       = (p) => <Icon {...p}><rect x="5" y="5" width="8" height="8" rx="1"/><path d="M3 11V4a1 1 0 011-1h7"/></Icon>;
+export const IconRefresh    = (p) => <Icon {...p}><path d="M13 4v3h-3"/><path d="M3 12v-3h3"/><path d="M13 7a5 5 0 00-9-1.5M3 9a5 5 0 009 1.5"/></Icon>;
+export const IconTable      = (p) => <Icon {...p}><rect x="2.5" y="3.5" width="11" height="9" rx="0.5"/><path d="M2.5 7h11M6 7v5.5"/></Icon>;
+export const IconFeed       = (p) => <Icon {...p}><path d="M3 4h10M3 8h10M3 12h7"/></Icon>;
+export const IconCards      = (p) => <Icon {...p}><rect x="2.5" y="2.5" width="5" height="5" rx="0.5"/><rect x="8.5" y="2.5" width="5" height="5" rx="0.5"/><rect x="2.5" y="8.5" width="5" height="5" rx="0.5"/><rect x="8.5" y="8.5" width="5" height="5" rx="0.5"/></Icon>;
+export const IconSun        = (p) => <Icon {...p}><circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8h1.5M13 8h1.5M3.5 3.5l1 1M11.5 11.5l1 1M3.5 12.5l1-1M11.5 4.5l1-1"/></Icon>;
+export const IconMoon       = (p) => <Icon {...p}><path d="M13 9.5A5.5 5.5 0 116.5 3a4.5 4.5 0 006.5 6.5z"/></Icon>;
+export const IconTerminal   = (p) => <Icon {...p}><rect x="2" y="3" width="12" height="10" rx="1"/><path d="M5 7l2 1.5L5 10M8.5 10.5h3"/></Icon>;
+export const IconLink       = (p) => <Icon {...p}><path d="M9.5 6.5l-3 3M7 5L9 3a2 2 0 012.8 2.8L9.8 7.8M9 11l-2 2a2 2 0 01-2.8-2.8L6.2 8.2"/></Icon>;
+export const IconRSS        = (p) => <Icon {...p}><circle cx="4" cy="12" r="1"/><path d="M3 8a5 5 0 015 5M3 4a9 9 0 019 9"/></Icon>;
+export const IconDot        = (p) => <Icon {...p}><circle cx="8" cy="8" r="2.5" fill="currentColor"/></Icon>;
+export const IconClock      = (p) => <Icon {...p}><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></Icon>;
+export const IconDownload   = (p) => <Icon {...p}><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></Icon>;
+export const IconWave       = (p) => <Icon {...p}><path d="M2 8h1M4 5v6M6 6v4M8 3v10M10 5v6M12 6v4M14 8h-1"/></Icon>;
+export const IconSparkle    = (p) => <Icon {...p}><path d="M8 2l1.4 4.2L13.5 8 9.4 9.8 8 14l-1.4-4.2L2.5 8 6.6 6.2 8 2z"/></Icon>;
+export const IconDollar     = (p) => <Icon {...p}><path d="M8 2v12M11 5H7a2 2 0 000 4h2a2 2 0 010 4H5"/></Icon>;
+export const IconAlert      = (p) => <Icon {...p}><path d="M8 2.5l6 11h-12l6-11z"/><path d="M8 7v3M8 12v.1"/></Icon>;
+
