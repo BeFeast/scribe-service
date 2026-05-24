@@ -450,6 +450,8 @@ async function waitForSelector(cdp, selector, timeoutMs = 2200) {
 		}
 		await sleep(50);
 	}
+	const url = await evaluate(cdp, "location.href").catch(() => "unknown URL");
+	console.warn(`Timed out waiting ${timeoutMs}ms for selector ${selector} on ${url}`);
 }
 
 async function main() {

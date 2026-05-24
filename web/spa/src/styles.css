@@ -89,6 +89,7 @@
 }
 
 [data-variant="paper"][data-theme="dark"] {
+	color-scheme: dark;
 	--bg: #16140f;
 	--bg-soft: #1e1b15;
 	--bg-card: #1a1813;

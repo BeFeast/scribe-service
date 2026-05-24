@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+import re
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -176,7 +177,9 @@ def test_variant_tokens_match_design_export_values() -> None:
     css = STYLES.read_text(encoding="utf-8")
 
     def block(selector: str) -> str:
-        start = css.index(selector)
+        match = re.search(rf"{re.escape(selector)}\s*\{{", css)
+        assert match is not None
+        start = match.start()
         return css[start : css.index("}", start)]
 
     assert "--bg-card: #fbf9f3" in block('[data-variant="paper"]')
