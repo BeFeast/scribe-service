@@ -786,7 +786,7 @@ function LibFeed({
 	return (
 		<div className="lib-feed">
 			{rows.map((row) => (
-				<article className="feed-item" key={row.id}>
+				<div className="feed-item" key={row.id}>
 					<div className="feed-num">#{row.id}</div>
 					<div className="feed-body">
 						<div className="feed-meta-top">
@@ -830,7 +830,7 @@ function LibFeed({
 							busy={deleteBusyId === row.id}
 						/>
 					</div>
-				</article>
+				</div>
 			))}
 		</div>
 	);
@@ -852,7 +852,7 @@ function LibCards({
 	return (
 		<div className="lib-cards">
 			{rows.map((row) => (
-				<article className="card" key={row.id}>
+				<div className="card" key={row.id}>
 					<div className="card-meta-top">
 						<span>#{row.id}</span>
 						<span className="sep">·</span>
@@ -891,7 +891,7 @@ function LibCards({
 							busy={deleteBusyId === row.id}
 						/>
 					</div>
-				</article>
+				</div>
 			))}
 		</div>
 	);

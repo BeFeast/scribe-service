@@ -167,7 +167,7 @@ def test_library_rejects_old_repainted_dom_and_default_only_tweaks() -> None:
         '[data-density="compact"]',
         '[data-density="cozy"]',
         '[data-density="comfy"]',
-        '[data-theme="dark"][data-variant="field"]',
+        '[data-variant="field"][data-theme="dark"]',
     ):
         assert selector in styles
 

@@ -553,7 +553,7 @@ function PartialNotice({
 	);
 }
 
-export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
+function TranscriptDetail({ id, displayCurrency, navigate }: TranscriptProps) {
 	const auth = useAuth();
 	const [record, setRecord] = React.useState<TranscriptRecord | null>(null);
 	const [loading, setLoading] = React.useState(true);
@@ -906,4 +906,8 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 			) : null}
 		</section>
 	);
+}
+
+export function Transcript(props: TranscriptProps) {
+	return <TranscriptDetail {...props} />;
 }
