@@ -298,7 +298,9 @@ def test_settings_access_region_uses_auth_me_role_as_visibility_source() -> None
     assert 'if (body?.role !== "admin") return [];' in api
     assert 'return fetchJson(auth, "/api/admin/users", controller.signal);' in api
     assert "currentUser: me" in api
+    assert 'setCore((previous) => ({ ...previous, currentUser: null, users: [] }));' in api
     assert 'if (!controller.signal.aborted) setCore((previous) => ({ ...previous, currentUser: me }));' in api
+    assert 'if (!controller.signal.aborted) setCore((previous) => ({ ...previous, currentUser: null, users: [] }));' in api
     assert "currentUser: runtime.currentUser" in main
     assert "currentUser={runtime.currentUser}" in main
     assert "export function canRenderAccessGroup(currentUser)" in settings

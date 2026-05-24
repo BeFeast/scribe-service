@@ -150,6 +150,7 @@ export function useScribeRuntime(auth, route) {
 		if (route.page !== "settings") return;
 		const controller = new AbortController();
 		let me = null;
+		setCore((previous) => ({ ...previous, currentUser: null, users: [] }));
 		fetchJson(auth, "/api/auth/me", controller.signal)
 			.then((body) => {
 				me = body;
@@ -160,7 +161,9 @@ export function useScribeRuntime(auth, route) {
 			.then((users) => {
 				if (!controller.signal.aborted) setCore((previous) => ({ ...previous, users: adaptUsers(me, users) }));
 			})
-			.catch(() => {});
+			.catch(() => {
+				if (!controller.signal.aborted) setCore((previous) => ({ ...previous, currentUser: null, users: [] }));
+			});
 		return () => controller.abort();
 	}, [auth, route.page]);
 
