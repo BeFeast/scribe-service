@@ -57,7 +57,7 @@ function App() {
 
 	return (
 		<div className="app-shell">
-			<TopBar />
+			<TopBar route={route} />
 			<div className="shell-body">
 				<Sidebar route={route} navigate={navigate} />
 				<main className="content-pane">

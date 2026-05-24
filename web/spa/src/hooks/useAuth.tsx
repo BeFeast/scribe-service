@@ -27,10 +27,16 @@ declare global {
 	}
 }
 
-type AccessStatus = "Trusted network" | "Signed in" | "Read-only";
+type AccessStatus =
+	| "Trusted network"
+	| "Signed in"
+	| "Read-only"
+	| "Sign in required"
+	| "Unauthorized";
 
 type AuthContextValue = {
 	accessStatus: AccessStatus;
+	signedIn: boolean;
 	canWrite: boolean;
 	clerkReady: boolean;
 	clerkConfigured: boolean;
@@ -221,6 +227,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 	const [config, setConfig] = React.useState<AuthConfig | null>(null);
 	const [clerkReady, setClerkReady] = React.useState(false);
 	const [signedIn, setSignedIn] = React.useState(false);
+	const [unauthorized, setUnauthorized] = React.useState(false);
 	const [authBlocked, setAuthBlocked] = React.useState<string | null>(null);
 	const [authRedirectInFlight, setAuthRedirectInFlight] = React.useState(() =>
 		hasFreshRedirectIntent(),
@@ -228,6 +235,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 	const navigationStartedRef = React.useRef(false);
 	const syncSignedIn = React.useCallback(() => {
 		setSignedIn(Boolean(window.Clerk?.session));
+		setUnauthorized(false);
 	}, []);
 
 	React.useEffect(() => {
@@ -294,6 +302,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			unsubscribe = window.Clerk?.addListener?.(({ session }) => {
 				setSignedIn(Boolean(session));
 				if (session) {
+					setUnauthorized(false);
 					clearRedirectIntent();
 					setAuthRedirectInFlight(false);
 				}
@@ -324,12 +333,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 	const trustedNetwork = config?.trusted_network === true;
 	const clerkConfigured = Boolean(config?.clerk_publishable_key);
-	const canWrite = trustedNetwork || signedIn;
+	const canWrite = trustedNetwork || (signedIn && !unauthorized);
 	const accessStatus: AccessStatus = trustedNetwork
 		? "Trusted network"
-		: signedIn
-			? "Signed in"
-			: "Read-only";
+		: unauthorized
+			? "Unauthorized"
+			: signedIn
+				? "Signed in"
+				: clerkConfigured
+					? "Sign in required"
+					: "Unauthorized";
 
 	const startRedirect = React.useCallback(
 		async (mode: "sign-in" | "sign-up") => {
@@ -386,6 +399,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 	const signOut = React.useCallback(async () => {
 		await window.Clerk?.signOut();
 		setSignedIn(false);
+		setUnauthorized(false);
 	}, []);
 
 	// Record one auth miss per browser session, but do not reopen Clerk
@@ -408,7 +422,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 	const protectedFetch = React.useCallback(
 		async (input: RequestInfo | URL, init: RequestInit = {}) => {
 			const token = await window.Clerk?.session?.getToken();
-			return fetch(input, token ? mergeAuthHeader(init, token) : init);
+			const response = await fetch(
+				input,
+				token ? mergeAuthHeader(init, token) : init,
+			);
+			if (response.status === 403) {
+				setUnauthorized(true);
+			} else if (response.ok) {
+				setUnauthorized(false);
+			}
+			return response;
 		},
 		[],
 	);
@@ -416,6 +439,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 	const value = React.useMemo(
 		() => ({
 			accessStatus,
+			signedIn,
 			canWrite,
 			clerkReady,
 			clerkConfigured,
@@ -430,6 +454,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		}),
 		[
 			accessStatus,
+			signedIn,
 			canWrite,
 			clerkReady,
 			clerkConfigured,

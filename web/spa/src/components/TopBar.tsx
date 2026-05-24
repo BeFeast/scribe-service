@@ -1,81 +1,105 @@
 import { CMDK_OPEN_EVENT } from "../constants";
 import { useAuth } from "../hooks/useAuth";
+import type { Route } from "../hooks/useRoute";
+import { routeLabel } from "../hooks/useRoute";
+import { IconRSS, IconSearch } from "./ShellIcons";
+
+type TopBarProps = {
+	route: Route;
+};
 
 function publishCmdkOpen(): void {
 	document.dispatchEvent(new CustomEvent(CMDK_OPEN_EVENT));
 }
 
-export function TopBar() {
+export function TopBar({ route }: TopBarProps) {
 	const auth = useAuth();
+	const screenLabel = routeLabel(route);
 
 	return (
-		<header className="topbar">
+		<div className="topbar">
 			<a className="brand" href="#/library" aria-label="Scribe library">
 				<span className="brand-mark" aria-hidden="true">
-					<svg viewBox="0 0 32 32" focusable="false" aria-hidden="true">
-						<path d="M7 6.5h18v3H10v5h12v3H10v5h15v3H7z" />
-						<path d="M13 12.5h12v3H13z" />
+					<svg
+						viewBox="0 0 24 24"
+						width="14"
+						height="14"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2"
+						strokeLinecap="round"
+						aria-hidden="true"
+						focusable="false"
+					>
+						<line x1="4" y1="9" x2="4" y2="15" />
+						<line x1="7.5" y1="6" x2="7.5" y2="18" />
+						<line x1="11" y1="8.5" x2="11" y2="15.5" />
+						<line x1="14" y1="8" x2="20" y2="8" />
+						<line x1="14" y1="12" x2="20" y2="12" />
+						<line x1="14" y1="16" x2="18" y2="16" />
 					</svg>
 				</span>
-				<span className="brand-copy">
-					<strong>Scribe</strong>
-					<span>video notes</span>
-				</span>
+				<span>scribe</span>
 			</a>
+			<div className="grow" />
 			<button
 				type="button"
-				className="cmdk-button"
+				className="cmdk"
 				onClick={publishCmdkOpen}
-				aria-label="Open command palette"
+				aria-label={`Open command palette from ${screenLabel}`}
 			>
-				<span>Search or jump</span>
-				<kbd>⌘K</kbd>
+				<IconSearch size={14} />
+				<span>{screenLabel} / Paste URL or search transcripts...</span>
+				<span className="kbd">⌘K</span>
 			</button>
-			<nav className="topbar-actions" aria-label="Global">
-				<span className="topbar-access-status">{auth.accessStatus}</span>
-				{!auth.canWrite && auth.clerkConfigured ? (
-					<>
-						<button
-							type="button"
-							className="auth-button"
-							onClick={() => void auth.signUp()}
-							disabled={!auth.clerkReady || auth.authRedirectInFlight}
-							title={
-								auth.authBlockedMessage ??
-								(auth.clerkReady
-									? "Create account with Clerk"
-									: "Sign in loading")
-							}
-						>
-							Sign up
+			<div className="access-row topbar-access">
+				<span className="row-label">{auth.accessStatus}</span>
+				<div className="access-facts">
+					{!auth.canWrite && auth.clerkConfigured && !auth.signedIn ? (
+						<>
+							<button
+								type="button"
+								className="btn"
+								onClick={() => void auth.signUp()}
+								disabled={!auth.clerkReady || auth.authRedirectInFlight}
+								title={
+									auth.authBlockedMessage ??
+									(auth.clerkReady
+										? "Create account with Clerk"
+										: "Sign in loading")
+								}
+							>
+								Sign up
+							</button>
+							<button
+								type="button"
+								className="btn ghost"
+								onClick={() => void auth.signIn()}
+								disabled={!auth.clerkReady || auth.authRedirectInFlight}
+								title={
+									auth.authBlockedMessage ??
+									(auth.clerkReady ? "Sign in with Clerk" : "Sign in loading")
+								}
+							>
+								Sign in
+							</button>
+						</>
+					) : null}
+					{auth.signedIn ? (
+						<button type="button" className="btn ghost" onClick={auth.signOut}>
+							Sign out
 						</button>
-						<button
-							type="button"
-							className="auth-button ghost"
-							onClick={() => void auth.signIn()}
-							disabled={!auth.clerkReady || auth.authRedirectInFlight}
-							title={
-								auth.authBlockedMessage ??
-								(auth.clerkReady ? "Sign in with Clerk" : "Sign in loading")
-							}
-						>
-							Sign in
-						</button>
-					</>
-				) : null}
-				{auth.accessStatus === "Signed in" ? (
-					<button
-						type="button"
-						className="auth-button ghost"
-						onClick={auth.signOut}
-					>
-						Sign out
-					</button>
-				) : null}
-				<a className="icon-button" href="/feed.xml" aria-label="RSS feed">
-					RSS
-				</a>
-			</nav>
-		</header>
+					) : null}
+				</div>
+			</div>
+			<a
+				className="iconbtn"
+				href="/feed.xml"
+				title="RSS feed"
+				aria-label="RSS feed"
+			>
+				<IconRSS size={16} />
+			</a>
+		</div>
 	);
 }
