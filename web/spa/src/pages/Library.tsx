@@ -1,284 +1,935 @@
-// Library — list of all transcripts. Layout switchable: table / feed / cards.
-// Also surfaces in-flight jobs as a thin strip at the top.
+import React from "react";
 
-function InFlightStrip({ navigate }) {
-  if (!ACTIVE_JOBS.length) return null;
-  return (
-    <div style={{
-      display: "flex", flexDirection: "column", gap: 0,
-      border: "var(--rule)",
-      borderRadius: "var(--radius-lg)",
-      background: "var(--bg-card)",
-      marginBottom: 24,
-      overflow: "hidden",
-    }}>
-      <div style={{
-        display: "flex", alignItems: "center", gap: 10,
-        padding: "10px 16px",
-        background: "var(--bg-soft)",
-        borderBottom: "1px solid var(--border-soft)",
-        fontFamily: "var(--font-mono)", fontSize: 11,
-        textTransform: "uppercase", letterSpacing: "0.06em",
-        color: "var(--muted)", fontWeight: 600,
-        whiteSpace: "nowrap",
-      }}>
-        <span className="live-dot"/>
-        <span>In flight</span>
-        <span className="muted" style={{fontWeight: 400, textTransform: "none", letterSpacing: 0}}>
-          · {ACTIVE_JOBS.length} job{ACTIVE_JOBS.length > 1 ? "s" : ""}
-        </span>
-        <div className="spacer"/>
-        <a onClick={() => navigate("queue")} style={{cursor: "pointer", color: "var(--link)"}}>open queue →</a>
-      </div>
-      {ACTIVE_JOBS.map(j => <InFlightRow key={j.id} job={j} navigate={navigate}/>)}
-    </div>
-  );
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { PrivateShareLinks } from "../components/PrivateShareLinks";
+import { useAuth } from "../hooks/useAuth";
+import { usePoll } from "../hooks/usePoll";
+import {
+	type Route,
+	handleRouteAnchorClick,
+	routeToHref,
+} from "../hooks/useRoute";
+import type { LibraryLayout } from "../hooks/useTweaks";
+import { isAuthStatus } from "../lib/auth";
+import type { DisplayCurrency } from "../lib/currency";
+import { formatUsdCost } from "../lib/currency";
+import type { ShareTarget } from "../shareTargets";
+
+type LibraryRow = {
+	id: number;
+	video_id: string;
+	title: string;
+	tags: string[] | null;
+	lang: string | null;
+	duration_seconds: number | null;
+	vast_cost: number | null;
+	created_at: string;
+	source_url: string | null;
+	source_label: string | null;
+	summary_excerpt: string;
+	is_partial: boolean;
+};
+
+type LibraryResponse = {
+	rows: LibraryRow[];
+	total: number;
+	limit: number;
+	offset: number;
+};
+
+type JobStage = {
+	state: string;
+	started_at?: string;
+	finished_at?: string;
+	duration_s?: number;
+	progress?: number;
+	note?: string;
+};
+
+type ActiveJob = {
+	id: number;
+	video_id: string;
+	url: string;
+	source_url?: string | null;
+	source_label?: string | null;
+	title?: string | null;
+	status: string;
+	source?: string | null;
+	started_at: string;
+	elapsed_s: number;
+	stages: Record<string, JobStage>;
+};
+
+type ActiveJobsResponse = {
+	jobs: ActiveJob[];
+};
+
+type JobView = {
+	job_id: number;
+	video_id: string;
+	status: string;
+	deduplicated?: boolean;
+};
+
+type LibraryProps = {
+	layout: LibraryLayout;
+	displayCurrency: DisplayCurrency;
+	route: Route;
+	navigate: (route: Route) => void;
+};
+
+const terminalStatuses = new Set(["done", "failed", "cancelled", "canceled"]);
+const stageLabels = ["queued", "downloading", "transcribing", "summarizing"];
+const libraryPageSize = 50;
+const pageCopyKinds = new Set<ShareTarget["kind"]>(["page"]);
+const completeShareTargetKinds = new Set<ShareTarget["kind"]>([
+	"page",
+	"summary",
+	"transcript",
+]);
+const partialShareTargetKinds = new Set<ShareTarget["kind"]>([
+	"page",
+	"transcript",
+]);
+
+function formatDate(value: string): string {
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) {
+		return "date n/a";
+	}
+	return new Intl.DateTimeFormat(undefined, {
+		month: "short",
+		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+	}).format(date);
 }
 
-function InFlightRow({ job, navigate }) {
-  const stages = ["queued","downloading","transcribing","summarizing"];
-  return (
-    <div onClick={() => navigate("job", { id: job.id })}
-         style={{
-           display: "grid", gridTemplateColumns: "1fr auto auto", gap: 16,
-           alignItems: "center",
-           padding: "12px 16px",
-           borderBottom: "1px solid var(--border-soft)",
-           cursor: "pointer",
-         }}>
-      <div>
-        <div style={{fontWeight: 550, fontSize: 14, marginBottom: 4, display: "flex", alignItems: "center", gap: 8}}>
-          {job.title}
-        </div>
-        <div style={{display: "flex", gap: 4, alignItems: "center"}}>
-          {stages.map((s, i) => {
-            const st = job.stages[s];
-            const c = st.state === "done" ? "var(--ok)"
-                    : st.state === "active" ? "var(--accent)"
-                    : "var(--border)";
-            return (
-              <React.Fragment key={s}>
-                <div title={s} style={{
-                  width: 32, height: 4, borderRadius: 999,
-                  background: c,
-                  position: "relative",
-                  opacity: st.state === "pending" ? 0.5 : 1,
-                }}>
-                  {st.state === "active" && st.progress != null && (
-                    <div style={{
-                      position: "absolute", inset: 0,
-                      background: "var(--accent)",
-                      width: `${st.progress * 100}%`,
-                      borderRadius: 999,
-                      boxShadow: `0 0 8px ${st.state === "active" ? "var(--accent)" : "transparent"}`,
-                    }}/>
-                  )}
-                </div>
-              </React.Fragment>
-            );
-          })}
-        </div>
-      </div>
-      <div className="mono muted" style={{fontSize: 11.5}}>
-        {job.status === "queued" ? "queued"
-         : job.status === "downloading" ? "downloading…"
-         : job.status === "transcribing" ? `transcribing · ${Math.round((job.stages.transcribing.progress || 0) * 100)}%`
-         : job.status === "summarizing" ? `summarizing · ${Math.round((job.stages.summarizing.progress || 0) * 100)}%`
-         : job.status}
-      </div>
-      <div className="mono muted" style={{fontSize: 11.5}}>
-        {fmtElapsed(job.elapsed_s)}
-      </div>
-    </div>
-  );
+function formatDuration(seconds: number | null): string {
+	if (seconds === null) {
+		return "duration n/a";
+	}
+	const minutes = Math.floor(seconds / 60);
+	const rest = Math.floor(seconds % 60);
+	return `${minutes}:${String(rest).padStart(2, "0")}`;
 }
 
-function LibraryPage({ navigate, t, setTweak }) {
-  const [q, setQ] = React.useState("");
-  const [tag, setTag] = React.useState(null);
-  const layout = t.libraryLayout || "table";
-
-  const filtered = React.useMemo(() => {
-    let rows = TRANSCRIPTS.filter(t => t.summary_md != null || t === TRANSCRIPTS[0]);
-    if (q) rows = rows.filter(r => r.title.toLowerCase().includes(q.toLowerCase()));
-    if (tag) rows = rows.filter(r => (r.tags||[]).includes(tag));
-    return rows;
-  }, [q, tag]);
-
-  return (
-    <div className="pane">
-      <div className="pane-header">
-        <div>
-          <h1 className="pane-h1">Library</h1>
-          <div className="pane-sub">
-            {filtered.length} transcript{filtered.length !== 1 && "s"}
-            {tag && <> · tag <code style={{padding: "1px 6px", background: "var(--bg-soft)", borderRadius: 3}}>{tag}</code>
-              <a onClick={() => setTag(null)} style={{marginLeft: 8, cursor: "pointer", color: "var(--link)"}}>clear</a></>}
-          </div>
-        </div>
-        <div className="pane-actions">
-          <button className="btn primary" onClick={() => navigate(null, { openCmdk: true })}>
-            <IconPlus size={14}/> Submit URL
-          </button>
-        </div>
-      </div>
-
-      <InFlightStrip navigate={navigate}/>
-
-      <div className="lib-toolbar">
-        <div className="search">
-          <IconSearch size={14}/>
-          <input placeholder="Search titles + transcripts…" value={q}
-                 onChange={(e) => setQ(e.target.value)}/>
-        </div>
-        <div className="seg" role="tablist" aria-label="Layout">
-          <button className={layout === "table" ? "active" : ""}
-                  onClick={() => setTweak("libraryLayout", "table")}
-                  title="Table layout">
-            <IconTable size={14}/>
-          </button>
-          <button className={layout === "feed" ? "active" : ""}
-                  onClick={() => setTweak("libraryLayout", "feed")}
-                  title="Feed layout">
-            <IconFeed size={14}/>
-          </button>
-          <button className={layout === "cards" ? "active" : ""}
-                  onClick={() => setTweak("libraryLayout", "cards")}
-                  title="Cards layout">
-            <IconCards size={14}/>
-          </button>
-        </div>
-      </div>
-
-      {layout === "table" && <LibTable rows={filtered} navigate={navigate} onTag={setTag}/>}
-      {layout === "feed"  && <LibFeed  rows={filtered} navigate={navigate} onTag={setTag}/>}
-      {layout === "cards" && <LibCards rows={filtered} navigate={navigate} onTag={setTag}/>}
-    </div>
-  );
+function formatElapsed(seconds: number): string {
+	const minutes = Math.floor(seconds / 60);
+	const rest = seconds % 60;
+	return minutes > 0 ? `${minutes}m ${rest}s` : `${rest}s`;
 }
 
-function LibTable({ rows, navigate, onTag }) {
-  return (
-    <table className="lib-table">
-      <thead>
-        <tr>
-          <th className="col-num">#</th>
-          <th>Title</th>
-          <th className="col-tags">Tags</th>
-          <th className="col-len">Length</th>
-          <th className="col-time">Created</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map(r => (
-          <tr key={r.id} onClick={() => navigate("transcript", { id: r.id })}>
-            <td className="col-num">{r.id}</td>
-            <td className="col-title">
-              {r.summary_md == null && <span className="chip warn" style={{marginRight: 8}}>partial</span>}
-              {r.title}
-            </td>
-            <td className="col-tags">
-              <div className="row-tags">
-                {(r.tags||[]).map(tg => (
-                  <span key={tg} className="tag" onClick={(e) => { e.stopPropagation(); onTag(tg); }}>
-                    {tg}
-                  </span>
-                ))}
-              </div>
-            </td>
-            <td className="col-meta col-len">{fmtDuration(r.duration_seconds)}</td>
-            <td className="col-meta col-time">{fmtRelative(r.created_at)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
+function buildLibraryUrl(
+	query: string,
+	tag: string | undefined,
+	limit: number,
+	offset: number,
+): string {
+	const params = new URLSearchParams([
+		["q", query],
+		["tag", tag ?? ""],
+		["limit", String(limit)],
+		["offset", String(offset)],
+	]);
+	return `/api/library?${params.toString()}`;
 }
 
-function LibFeed({ rows, navigate, onTag }) {
-  return (
-    <div className="lib-feed">
-      {rows.map(r => (
-        <div key={r.id} className="feed-item" onClick={() => navigate("transcript", { id: r.id })}>
-          <div className="feed-num">#{r.id}</div>
-          <div>
-            <div className="feed-meta-top">
-              <span>{fmtRelative(r.created_at)}</span>
-              <span className="sep">·</span>
-              <span>{fmtDuration(r.duration_seconds)}</span>
-              <span className="sep">·</span>
-              <span>{r.lang || "—"}</span>
-              {r.summary_md == null && <>
-                <span className="sep">·</span>
-                <span className="chip warn" style={{padding: "1px 6px"}}>partial</span>
-              </>}
-            </div>
-            <h2 className="feed-title">{r.title}</h2>
-            <p className="feed-excerpt">{previewSummary(r)}</p>
-            <div className="feed-tags">
-              {(r.tags||[]).map(tg => (
-                <span key={tg} className="tag" onClick={(e) => { e.stopPropagation(); onTag(tg); }}
-                      style={{fontFamily: "var(--font-mono)", fontSize: 11, padding: "1px 7px",
-                              background: "var(--bg-soft)", border: "1px solid var(--border-soft)",
-                              borderRadius: 999, color: "var(--fg-soft)", cursor: "pointer"}}>
-                  {tg}
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
+function hasNonTerminalJob(jobs: ActiveJob[]): boolean {
+	return jobs.some((job) => !terminalStatuses.has(job.status));
 }
 
-function LibCards({ rows, navigate, onTag }) {
-  return (
-    <div className="lib-cards">
-      {rows.map(r => (
-        <div key={r.id} className="card" onClick={() => navigate("transcript", { id: r.id })}>
-          <div className="card-meta-top">
-            <span>#{r.id}</span>
-            <span style={{opacity: 0.4}}>·</span>
-            <span>{fmtRelative(r.created_at)}</span>
-            <span style={{opacity: 0.4}}>·</span>
-            <span>{fmtDuration(r.duration_seconds)}</span>
-            {r.summary_md == null && <>
-              <div className="spacer"/>
-              <span className="chip warn">partial</span>
-            </>}
-          </div>
-          <h3 className="card-title">{r.title}</h3>
-          <p className="card-excerpt">{previewSummary(r)}</p>
-          <div className="card-foot">
-            {(r.tags||[]).slice(0,3).map(tg => (
-              <span key={tg} className="tag" onClick={(e) => { e.stopPropagation(); onTag(tg); }}
-                    style={{fontFamily: "var(--font-mono)", fontSize: 10.5, padding: "1px 7px",
-                            background: "var(--bg-soft)", border: "1px solid var(--border-soft)",
-                            borderRadius: 999, color: "var(--fg-soft)", cursor: "pointer"}}>
-                {tg}
-              </span>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
+async function readErrorMessage(response: Response): Promise<string> {
+	try {
+		const body = (await response.json()) as unknown;
+		if (
+			typeof body === "object" &&
+			body !== null &&
+			"detail" in body &&
+			typeof body.detail === "string"
+		) {
+			return body.detail;
+		}
+	} catch {
+		// Fall back to the response status.
+	}
+	return `HTTP ${response.status} ${response.statusText}`.trim();
 }
 
-function previewSummary(r) {
-  if (!r.summary_md) return "Whisper finished; summary regeneration pending. POST /transcripts/{id}/resummarize to retry.";
-  // Pull first paragraph after "## TL;DR", strip markdown syntax for clean excerpt.
-  const m = r.summary_md.match(/##\s*TL;DR\s*\n([^\n]+(?:\n[^\n#][^\n]*)*)/);
-  const raw = m ? m[1] : r.summary_md;
-  const clean = raw
-    .replace(/\*\*(.+?)\*\*/g, "$1")
-    .replace(/\*(.+?)\*/g, "$1")
-    .replace(/`(.+?)`/g, "$1")
-    .replace(/^#+\s*/gm, "")
-    .replace(/\n+/g, " ")
-    .trim();
-  return clean.slice(0, 240);
+function submitErrorMessage(status: number, body: unknown): string {
+	if (
+		typeof body === "object" &&
+		body !== null &&
+		"detail" in body &&
+		typeof body.detail === "string"
+	) {
+		return body.detail;
+	}
+	return `Submit failed: ${status}`;
 }
 
-Object.assign(window, { LibraryPage });
+type LibraryError = { kind: "auth" } | { kind: "service"; message: string };
+
+export function Library({
+	layout,
+	displayCurrency,
+	route,
+	navigate,
+}: LibraryProps) {
+	const auth = useAuth();
+	const selectedTag = route.params.tag;
+	const [query, setQuery] = React.useState("");
+	const [submitUrl, setSubmitUrl] = React.useState("");
+	const [submitState, setSubmitState] = React.useState<
+		| { state: "idle" }
+		| { state: "submitting" }
+		| { state: "success"; job: JobView }
+		| { state: "error"; message: string }
+	>({ state: "idle" });
+	const [debouncedQuery, setDebouncedQuery] = React.useState("");
+	const [rows, setRows] = React.useState<LibraryRow[]>([]);
+	const [total, setTotal] = React.useState(0);
+	const [offset, setOffset] = React.useState(0);
+	const [retryTick, setRetryTick] = React.useState(0);
+	const [isLoading, setIsLoading] = React.useState(true);
+	const [error, setError] = React.useState<LibraryError | null>(null);
+	const [deleteBusyId, setDeleteBusyId] = React.useState<number | null>(null);
+	const [deleteCandidate, setDeleteCandidate] =
+		React.useState<LibraryRow | null>(null);
+
+	React.useEffect(() => {
+		const timer = window.setTimeout(() => setDebouncedQuery(query), 200);
+		return () => window.clearTimeout(timer);
+	}, [query]);
+
+	React.useEffect(() => {
+		void debouncedQuery;
+		void selectedTag;
+		setOffset(0);
+	}, [debouncedQuery, selectedTag]);
+
+	const loadLibrary = React.useCallback(
+		async (signal: AbortSignal) => {
+			setIsLoading(true);
+			setError(null);
+			try {
+				const response = await auth.protectedFetch(
+					buildLibraryUrl(debouncedQuery, selectedTag, libraryPageSize, offset),
+					{ signal },
+				);
+				if (isAuthStatus(response.status)) {
+					setRows([]);
+					setTotal(0);
+					setError({ kind: "auth" });
+					auth.maybeAutoSignIn();
+					return;
+				}
+				if (!response.ok) {
+					setRows([]);
+					setTotal(0);
+					setError({
+						kind: "service",
+						message: `Service temporarily unavailable (HTTP ${response.status}).`,
+					});
+					return;
+				}
+				const body = (await response.json()) as LibraryResponse;
+				setRows(body.rows);
+				setTotal(body.total);
+			} catch (loadError) {
+				if (!signal.aborted) {
+					setRows([]);
+					setTotal(0);
+					setError({
+						kind: "service",
+						message:
+							loadError instanceof Error
+								? loadError.message
+								: "Service temporarily unavailable.",
+					});
+				}
+			} finally {
+				if (!signal.aborted) {
+					setIsLoading(false);
+				}
+			}
+		},
+		[auth, debouncedQuery, offset, selectedTag],
+	);
+
+	React.useEffect(() => {
+		void retryTick;
+		const abort = new AbortController();
+		void loadLibrary(abort.signal);
+		return () => abort.abort();
+	}, [loadLibrary, retryTick]);
+
+	const retry = () => setRetryTick((value) => value + 1);
+	const canPageBack = offset > 0;
+	const canPageForward = offset + rows.length < total;
+	const pageStart = total === 0 ? 0 : offset + 1;
+	const pageEnd = offset + rows.length;
+	const previousPage = () =>
+		setOffset((value) => Math.max(0, value - libraryPageSize));
+	const nextPage = () => setOffset((value) => value + libraryPageSize);
+	const requestDeleteTranscript = (row: LibraryRow) => {
+		if (deleteBusyId === null) {
+			setDeleteCandidate(row);
+		}
+	};
+	const confirmDeleteTranscript = async () => {
+		if (deleteCandidate === null || deleteBusyId !== null) {
+			return;
+		}
+		const row = deleteCandidate;
+		setDeleteBusyId(row.id);
+		setError(null);
+		try {
+			const response = await auth.protectedFetch(
+				`/admin/transcripts/${row.id}`,
+				{ method: "DELETE" },
+			);
+			if (!response.ok) {
+				throw new Error(await readErrorMessage(response));
+			}
+			setRows((current) => current.filter((item) => item.id !== row.id));
+			setTotal((current) => Math.max(0, current - 1));
+			setDeleteCandidate(null);
+		} catch (deleteError) {
+			setError({
+				kind: "service",
+				message:
+					deleteError instanceof Error ? deleteError.message : "Delete failed",
+			});
+		} finally {
+			setDeleteBusyId(null);
+		}
+	};
+	const authRequired = error?.kind === "auth";
+	const submitTrimmed = submitUrl.trim();
+	const canSubmitUrl =
+		submitTrimmed.length > 0 &&
+		submitState.state !== "submitting" &&
+		!authRequired;
+	const submitMessage =
+		submitState.state === "success"
+			? `Queued job #${submitState.job.job_id}`
+			: submitState.state === "error"
+				? submitState.message
+				: null;
+	const submitClass =
+		submitState.state === "error"
+			? "library-submit-status err-msg"
+			: "library-submit-status muted";
+	const submitJob = async (event: React.FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		if (!canSubmitUrl) {
+			return;
+		}
+		setSubmitState({ state: "submitting" });
+		try {
+			const response = await auth.protectedFetch("/jobs", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ url: submitTrimmed, source: "manual" }),
+			});
+			const body = (await response.json()) as unknown;
+			if (!response.ok) {
+				setSubmitState({
+					state: "error",
+					message: submitErrorMessage(response.status, body),
+				});
+				return;
+			}
+			setSubmitUrl("");
+			setSubmitState({ state: "success", job: body as JobView });
+			retry();
+		} catch (submitError) {
+			setSubmitState({
+				state: "error",
+				message:
+					submitError instanceof Error ? submitError.message : "Submit failed",
+			});
+		}
+	};
+
+	return (
+		<section className="library-page pane">
+			<header className="library-hero">
+				<div className="library-title">
+					<p className="section-label">Library</p>
+					<h1 className="pane-h1">Transcripts</h1>
+					<div className="library-meta">
+						<span className="chip info">{total} transcripts</span>
+						{selectedTag !== undefined ? (
+							<a
+								className="chip"
+								href={routeToHref({ page: "library", params: {} })}
+								onClick={(event) =>
+									handleRouteAnchorClick(
+										event,
+										{ page: "library", params: {} },
+										navigate,
+									)
+								}
+							>
+								tag: {selectedTag}
+							</a>
+						) : null}
+						{isLoading ? (
+							<span className="muted" aria-live="polite">
+								Loading rows...
+							</span>
+						) : null}
+					</div>
+				</div>
+				<div className="library-actions">
+					<label className="library-search">
+						<span>Search</span>
+						<input
+							type="search"
+							value={query}
+							onChange={(event) => setQuery(event.currentTarget.value)}
+							placeholder="Title or summary"
+							disabled={authRequired}
+						/>
+					</label>
+					<form className="library-submit" onSubmit={submitJob}>
+						<label>
+							<span>Submit URL</span>
+							<input
+								type="url"
+								value={submitUrl}
+								onChange={(event) => {
+									setSubmitUrl(event.currentTarget.value);
+									if (submitState.state !== "idle") {
+										setSubmitState({ state: "idle" });
+									}
+								}}
+								placeholder="https://youtu.be/..."
+								disabled={authRequired}
+							/>
+						</label>
+						<button
+							type="submit"
+							className="btn primary"
+							disabled={!canSubmitUrl}
+						>
+							{submitState.state === "submitting" ? "Submitting" : "Submit"}
+						</button>
+						{submitMessage !== null ? (
+							<p className={submitClass}>{submitMessage}</p>
+						) : null}
+					</form>
+				</div>
+			</header>
+
+			<InFlightStrip navigate={navigate} />
+
+			{error?.kind === "auth" ? (
+				<div
+					className="library-state library-auth-gate"
+					data-state="auth-required"
+					aria-live="polite"
+				>
+					<span className="chip info">Sign in required</span>
+					<p className="feed-title">Your library is signed-in only</p>
+					<p className="feed-excerpt">
+						{auth.authBlockedMessage ??
+							"Library entries are owner-scoped. Sign in with your Scribe account to see your transcripts."}
+					</p>
+					<div className="auth-choice-row">
+						<button
+							type="button"
+							className="btn primary"
+							onClick={() => void auth.signUp()}
+							disabled={
+								auth.clerkConfigured &&
+								(!auth.clerkReady || auth.authRedirectInFlight)
+							}
+						>
+							Sign up
+						</button>
+						<button
+							type="button"
+							className="btn ghost"
+							onClick={() => void auth.signIn()}
+							disabled={
+								auth.clerkConfigured &&
+								(!auth.clerkReady || auth.authRedirectInFlight)
+							}
+						>
+							Sign in
+						</button>
+					</div>
+				</div>
+			) : null}
+
+			{error?.kind === "service" ? (
+				<div className="library-state failure-row error-state">
+					<span className="chip err">error</span>
+					<p className="err-title">Service temporarily unavailable</p>
+					<p className="err-msg">{error.message}</p>
+					<button type="button" className="btn" onClick={retry}>
+						Retry
+					</button>
+				</div>
+			) : null}
+
+			{!isLoading && error === null && rows.length === 0 ? (
+				<div className="library-state empty-state">
+					<span className="chip info">0 transcripts</span>
+					<p className="feed-title">
+						{debouncedQuery || selectedTag
+							? "No matching transcripts"
+							: "Nothing in the library yet"}
+					</p>
+					<p className="feed-excerpt">
+						{debouncedQuery || selectedTag
+							? "Try another search or clear the selected tag."
+							: "Submitted video URLs will appear here after transcription starts."}
+					</p>
+				</div>
+			) : null}
+
+			{rows.length > 0 ? (
+				<div className="library-results">
+					<div className="library-pager">
+						<span className="chip info">
+							{pageStart}-{pageEnd} of {total}
+						</span>
+						<div className="pager-actions">
+							<button
+								type="button"
+								className="btn"
+								onClick={previousPage}
+								disabled={!canPageBack || isLoading}
+							>
+								Previous
+							</button>
+							<button
+								type="button"
+								className="btn"
+								onClick={nextPage}
+								disabled={!canPageForward || isLoading}
+							>
+								Next
+							</button>
+						</div>
+					</div>
+					{layout === "table" ? (
+						<LibTable
+							rows={rows}
+							displayCurrency={displayCurrency}
+							navigate={navigate}
+							onDelete={requestDeleteTranscript}
+							deleteBusyId={deleteBusyId}
+						/>
+					) : null}
+					{layout === "feed" ? (
+						<LibFeed
+							rows={rows}
+							displayCurrency={displayCurrency}
+							navigate={navigate}
+							onDelete={requestDeleteTranscript}
+							deleteBusyId={deleteBusyId}
+						/>
+					) : null}
+					{layout === "cards" ? (
+						<LibCards
+							rows={rows}
+							displayCurrency={displayCurrency}
+							navigate={navigate}
+							onDelete={requestDeleteTranscript}
+							deleteBusyId={deleteBusyId}
+						/>
+					) : null}
+				</div>
+			) : null}
+
+			{deleteCandidate !== null ? (
+				<ConfirmDialog
+					title="Delete transcript"
+					body={`Delete "${deleteCandidate.title}"? This also removes its job record.`}
+					confirmLabel="Delete"
+					busyLabel="Deleting"
+					busy={deleteBusyId === deleteCandidate.id}
+					onCancel={() => setDeleteCandidate(null)}
+					onConfirm={confirmDeleteTranscript}
+				/>
+			) : null}
+		</section>
+	);
+}
+
+function InFlightStrip({ navigate }: { navigate: (route: Route) => void }) {
+	const auth = useAuth();
+	const [jobs, setJobs] = React.useState<ActiveJob[]>([]);
+	const [error, setError] = React.useState(false);
+	const interval = hasNonTerminalJob(jobs) ? 5000 : 30000;
+
+	const poll = React.useCallback(
+		async (signal: AbortSignal) => {
+			try {
+				const response = await auth.protectedFetch("/api/jobs/active", {
+					signal,
+				});
+				if (isAuthStatus(response.status)) {
+					setJobs([]);
+					setError(false);
+					return;
+				}
+				if (!response.ok) {
+					throw new Error("active jobs request failed");
+				}
+				const body = (await response.json()) as ActiveJobsResponse;
+				setJobs(body.jobs);
+				setError(false);
+			} catch (loadError) {
+				if (!signal.aborted) {
+					setError(true);
+				}
+			}
+		},
+		[auth],
+	);
+
+	usePoll(poll, interval);
+
+	if (jobs.length === 0) {
+		return null;
+	}
+
+	return (
+		<section className="inflight-strip" aria-label="In-flight jobs">
+			<div className="inflight-head">
+				<span className="live-dot" aria-hidden="true" />
+				<strong>In flight</strong>
+				<span className="muted">
+					{jobs.length} job{jobs.length === 1 ? "" : "s"}
+				</span>
+				{error ? <span className="chip warn">poll delayed</span> : null}
+			</div>
+			{jobs.map((job) => (
+				<InFlightRow key={job.id} job={job} navigate={navigate} />
+			))}
+		</section>
+	);
+}
+
+function InFlightRow({
+	job,
+	navigate,
+}: {
+	job: ActiveJob;
+	navigate: (route: Route) => void;
+}) {
+	const jobRoute: Route = { page: "job", params: { id: job.id } };
+	const activeStage =
+		stageLabels.find((stage) => job.stages[stage]?.state === "active") ??
+		job.status;
+	const doneCount = stageLabels.filter(
+		(stage) => job.stages[stage]?.state === "done",
+	).length;
+	const activeProgress = job.stages[activeStage]?.progress;
+	const progress = Math.max(
+		8,
+		Math.min(
+			100,
+			((doneCount +
+				(typeof activeProgress === "number" ? activeProgress : 0.5)) /
+				stageLabels.length) *
+				100,
+		),
+	);
+
+	return (
+		<a
+			className="inflight-row"
+			href={routeToHref(jobRoute)}
+			onClick={(event) => handleRouteAnchorClick(event, jobRoute, navigate)}
+		>
+			<span className="inflight-copy">
+				<strong>{job.title ?? job.source_label ?? job.video_id}</strong>
+				<span>
+					job {job.id} / {activeStage} / {formatElapsed(job.elapsed_s)}
+				</span>
+			</span>
+			<span className="bar-track" aria-label={`${activeStage} progress`}>
+				<span style={{ width: `${progress}%` }} />
+			</span>
+			<span className="chip run">{job.status}</span>
+		</a>
+	);
+}
+
+function LibTable({
+	rows,
+	displayCurrency,
+	navigate,
+	onDelete,
+	deleteBusyId,
+}: {
+	rows: LibraryRow[];
+	displayCurrency: DisplayCurrency;
+	navigate: (route: Route) => void;
+	onDelete: (row: LibraryRow) => void;
+	deleteBusyId: number | null;
+}) {
+	return (
+		<div className="table-wrap">
+			<table className="lib-table">
+				<colgroup>
+					<col className="lib-table-title-col" />
+					<col className="lib-table-tags-col" />
+					<col className="lib-table-meta-col" />
+					<col className="lib-table-created-col" />
+				</colgroup>
+				<thead>
+					<tr>
+						<th>Title</th>
+						<th>Tags</th>
+						<th>Meta</th>
+						<th>Created</th>
+					</tr>
+				</thead>
+				<tbody>
+					{rows.map((row) => (
+						<tr key={row.id}>
+							<td>
+								<a
+									className="link-button table-title"
+									href={routeToHref({
+										page: "transcript",
+										params: { id: row.id },
+									})}
+									onClick={(event) =>
+										handleRouteAnchorClick(
+											event,
+											{ page: "transcript", params: { id: row.id } },
+											navigate,
+										)
+									}
+								>
+									{row.title}
+								</a>
+								<p className="feed-excerpt">{row.summary_excerpt}</p>
+								{row.is_partial ? (
+									<span className="chip warn">partial</span>
+								) : null}
+								<RowLinks
+									row={row}
+									onDelete={onDelete}
+									busy={deleteBusyId === row.id}
+								/>
+							</td>
+							<td>
+								<TagList row={row} navigate={navigate} />
+							</td>
+							<td className="muted">
+								<div className="table-meta-stack">
+									<span>{formatDuration(row.duration_seconds)}</span>
+									<span>{row.lang ?? "lang n/a"}</span>
+									<span>{formatUsdCost(row.vast_cost, displayCurrency)}</span>
+								</div>
+							</td>
+							<td className="tnum">{formatDate(row.created_at)}</td>
+						</tr>
+					))}
+				</tbody>
+			</table>
+		</div>
+	);
+}
+
+function LibFeed({
+	rows,
+	displayCurrency,
+	navigate,
+	onDelete,
+	deleteBusyId,
+}: {
+	rows: LibraryRow[];
+	displayCurrency: DisplayCurrency;
+	navigate: (route: Route) => void;
+	onDelete: (row: LibraryRow) => void;
+	deleteBusyId: number | null;
+}) {
+	return (
+		<div className="lib-feed">
+			{rows.map((row) => (
+				<article className="feed-item library-feed-row" key={row.id}>
+					<div className="feed-num">#{row.id}</div>
+					<div className="feed-body">
+						<div className="feed-meta-top detail-meta">
+							<span className="tnum">{formatDate(row.created_at)}</span>
+							<span>{formatDuration(row.duration_seconds)}</span>
+							<span>{row.lang ?? "lang n/a"}</span>
+							<span>{formatUsdCost(row.vast_cost, displayCurrency)}</span>
+							{row.is_partial ? (
+								<span className="chip warn">partial</span>
+							) : null}
+						</div>
+						<a
+							className="link-button feed-title"
+							href={routeToHref({
+								page: "transcript",
+								params: { id: row.id },
+							})}
+							onClick={(event) =>
+								handleRouteAnchorClick(
+									event,
+									{ page: "transcript", params: { id: row.id } },
+									navigate,
+								)
+							}
+						>
+							{row.title}
+						</a>
+						<p className="feed-excerpt">{row.summary_excerpt}</p>
+						<TagList row={row} navigate={navigate} />
+						<RowLinks
+							row={row}
+							onDelete={onDelete}
+							busy={deleteBusyId === row.id}
+						/>
+					</div>
+				</article>
+			))}
+		</div>
+	);
+}
+
+function LibCards({
+	rows,
+	displayCurrency,
+	navigate,
+	onDelete,
+	deleteBusyId,
+}: {
+	rows: LibraryRow[];
+	displayCurrency: DisplayCurrency;
+	navigate: (route: Route) => void;
+	onDelete: (row: LibraryRow) => void;
+	deleteBusyId: number | null;
+}) {
+	return (
+		<div className="lib-cards">
+			{rows.map((row) => (
+				<article className="card lib-card" key={row.id}>
+					<div className="card-meta-top detail-meta">
+						<span>#{row.id}</span>
+						<span>{formatDate(row.created_at)}</span>
+						{row.is_partial ? <span className="chip warn">partial</span> : null}
+					</div>
+					<a
+						className="link-button feed-title"
+						href={routeToHref({
+							page: "transcript",
+							params: { id: row.id },
+						})}
+						onClick={(event) =>
+							handleRouteAnchorClick(
+								event,
+								{ page: "transcript", params: { id: row.id } },
+								navigate,
+							)
+						}
+					>
+						{row.title}
+					</a>
+					<p className="feed-excerpt">{row.summary_excerpt}</p>
+					<TagList row={row} navigate={navigate} />
+					<RowMeta row={row} displayCurrency={displayCurrency} />
+					<RowLinks
+						row={row}
+						onDelete={onDelete}
+						busy={deleteBusyId === row.id}
+					/>
+				</article>
+			))}
+		</div>
+	);
+}
+
+function TagList({
+	row,
+	navigate,
+}: {
+	row: LibraryRow;
+	navigate: (route: Route) => void;
+}) {
+	if (row.tags === null || row.tags.length === 0) {
+		return <span className="muted">untagged</span>;
+	}
+	return (
+		<div className="detail-tags">
+			{row.tags.map((tag) => {
+				const tagRoute: Route = { page: "library", params: { tag } };
+				return (
+					<a
+						className="tag tag-button"
+						key={tag}
+						href={routeToHref(tagRoute)}
+						onClick={(event) =>
+							handleRouteAnchorClick(event, tagRoute, navigate)
+						}
+					>
+						{tag}
+					</a>
+				);
+			})}
+		</div>
+	);
+}
+
+function RowMeta({
+	row,
+	displayCurrency,
+}: {
+	row: LibraryRow;
+	displayCurrency: DisplayCurrency;
+}) {
+	return (
+		<div className="detail-meta">
+			<span>{formatDuration(row.duration_seconds)}</span>
+			<span>{row.lang ?? "lang n/a"}</span>
+			<span>{formatUsdCost(row.vast_cost, displayCurrency)}</span>
+		</div>
+	);
+}
+
+function RowLinks({
+	row,
+	onDelete,
+	busy,
+}: {
+	row: LibraryRow;
+	onDelete: (row: LibraryRow) => void;
+	busy: boolean;
+}) {
+	return (
+		<div className="row-links">
+			{row.source_url !== null ? (
+				<a href={row.source_url} target="_blank" rel="noreferrer">
+					{row.source_label ?? "Source"}
+				</a>
+			) : null}
+			<PrivateShareLinks
+				id={row.id}
+				copyKinds={pageCopyKinds}
+				targetKinds={
+					row.is_partial ? partialShareTargetKinds : completeShareTargetKinds
+				}
+			/>
+			<button
+				type="button"
+				className="link-button danger-link"
+				onClick={() => onDelete(row)}
+				disabled={busy}
+			>
+				{busy ? "Deleting" : "Delete"}
+			</button>
+		</div>
+	);
+}
