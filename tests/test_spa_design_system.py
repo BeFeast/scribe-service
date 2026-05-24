@@ -231,7 +231,7 @@ def test_live_visual_qa_script_covers_required_routes_and_responsive_viewports()
     package = PACKAGE_JSON.read_text(encoding="utf-8")
 
     assert '"visual:qa": "bun ../../scripts/live-visual-qa.mjs"' in package
-    assert 'http://10.10.0.13:13120/' in script
+    assert "SCRIBE_VISUAL_QA_BASE_URL" in script
     for route in (
         "#/library",
         "#/queue",
@@ -276,8 +276,9 @@ def test_responsive_shell_and_route_surfaces_prevent_viewport_overflow() -> None
     ):
         assert "min-width: 0" in rule_block(selector)
 
-    for selector in (".table-wrap", ".access-table-wrap", ".pipeline.compact"):
+    for selector in (".table-wrap", ".pipeline.compact"):
         assert "overflow-x: auto" in rule_block(selector)
+    assert "overflow: auto" in rule_block(".access-table-wrap")
 
     narrow = css[css.index("@media (max-width: 820px)") :]
     assert ".shell-body" in narrow

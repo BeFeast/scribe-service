@@ -142,6 +142,15 @@ class Cdp {
 		const handlers = this.events.get(method) ?? [];
 		handlers.push(handler);
 		this.events.set(method, handlers);
+		return () => {
+			const current = this.events.get(method) ?? [];
+			const next = current.filter((candidate) => candidate !== handler);
+			if (next.length > 0) {
+				this.events.set(method, next);
+			} else {
+				this.events.delete(method);
+			}
+		};
 	}
 
 	async send(method, params = {}) {
@@ -173,15 +182,15 @@ async function evaluate(cdp, expression) {
 
 async function captureRoute(cdp, route, viewport) {
 	const consoleErrors = [];
-	cdp.on("Runtime.consoleAPICalled", (event) => {
+	const unsubscribeConsole = cdp.on("Runtime.consoleAPICalled", (event) => {
 		if (event.type === "error") {
 			consoleErrors.push(event.args?.map((arg) => arg.value ?? arg.description).join(" "));
 		}
 	});
-	cdp.on("Runtime.exceptionThrown", (event) => {
+	const unsubscribeException = cdp.on("Runtime.exceptionThrown", (event) => {
 		consoleErrors.push(event.exceptionDetails?.text ?? "Runtime exception");
 	});
-	cdp.on("Log.entryAdded", (event) => {
+	const unsubscribeLog = cdp.on("Log.entryAdded", (event) => {
 		if (event.entry?.level === "error") {
 			consoleErrors.push(
 				event.entry.url ? `${event.entry.text} (${event.entry.url})` : event.entry.text,
@@ -189,65 +198,71 @@ async function captureRoute(cdp, route, viewport) {
 		}
 	});
 
-	await cdp.send("Emulation.setDeviceMetricsOverride", {
-		width: viewport.width,
-		height: viewport.height,
-		deviceScaleFactor: 1,
-		mobile: viewport.mobile,
-	});
-	await cdp.send("Page.navigate", { url: absolute(route.hash) });
-	await waitForLoad(cdp);
-	await sleep(WAIT_MS);
+	try {
+		await cdp.send("Emulation.setDeviceMetricsOverride", {
+			width: viewport.width,
+			height: viewport.height,
+			deviceScaleFactor: 1,
+			mobile: viewport.mobile,
+		});
+		await cdp.send("Page.navigate", { url: absolute(route.hash) });
+		await waitForLoad(cdp);
+		await sleep(WAIT_MS);
 
-	if (route.commandPalette) {
-		await openCommandPalette(cdp);
-		await sleep(500);
+		if (route.commandPalette) {
+			await openCommandPalette(cdp);
+			await sleep(500);
+		}
+
+		const state = await evaluate(
+			cdp,
+			`(() => {
+				const doc = document.documentElement;
+				const scrolling = document.scrollingElement;
+				const overflowing = Array.from(document.body.querySelectorAll("*"))
+					.map((node) => {
+						const rect = node.getBoundingClientRect();
+						const style = getComputedStyle(node);
+						return {
+							tag: node.tagName.toLowerCase(),
+							className: String(node.className || ""),
+							text: String(node.textContent || "").trim().slice(0, 80),
+							left: Math.round(rect.left),
+							right: Math.round(rect.right),
+							width: Math.round(rect.width),
+							position: style.position,
+						};
+					})
+					.filter((item) => item.width > 0 && item.left < window.innerWidth && item.right > window.innerWidth + 1)
+					.slice(0, 10);
+				return {
+					url: location.href,
+					title: document.title,
+					dataset: {
+						variant: doc.dataset.variant || "",
+						theme: doc.dataset.theme || "",
+						density: doc.dataset.density || "",
+						libraryLayout: doc.dataset.libraryLayout || "",
+					},
+					bodyScrollWidth: scrolling?.scrollWidth ?? 0,
+					innerWidth: window.innerWidth,
+					horizontalOverflow: (scrolling?.scrollWidth ?? 0) > window.innerWidth + 1,
+					overflowing,
+					commandPaletteOpen: Boolean(document.querySelector(".cmdk-modal")),
+				};
+			})()`,
+		);
+		const screenshot = await cdp.send("Page.captureScreenshot", {
+			format: "png",
+			fromSurface: true,
+			captureBeyondViewport: false,
+		});
+		return { state, consoleErrors, screenshot: screenshot.data };
+	} finally {
+		unsubscribeConsole();
+		unsubscribeException();
+		unsubscribeLog();
 	}
-
-	const state = await evaluate(
-		cdp,
-		`(() => {
-			const doc = document.documentElement;
-			const scrolling = document.scrollingElement;
-			const overflowing = Array.from(document.body.querySelectorAll("*"))
-				.map((node) => {
-					const rect = node.getBoundingClientRect();
-					const style = getComputedStyle(node);
-					return {
-						tag: node.tagName.toLowerCase(),
-						className: String(node.className || ""),
-						text: String(node.textContent || "").trim().slice(0, 80),
-						left: Math.round(rect.left),
-						right: Math.round(rect.right),
-						width: Math.round(rect.width),
-						position: style.position,
-					};
-				})
-				.filter((item) => item.width > 0 && item.left < window.innerWidth && item.right > window.innerWidth + 1)
-				.slice(0, 10);
-			return {
-				url: location.href,
-				title: document.title,
-				dataset: {
-					variant: doc.dataset.variant || "",
-					theme: doc.dataset.theme || "",
-					density: doc.dataset.density || "",
-					libraryLayout: doc.dataset.libraryLayout || "",
-				},
-				bodyScrollWidth: scrolling?.scrollWidth ?? 0,
-				innerWidth: window.innerWidth,
-				horizontalOverflow: (scrolling?.scrollWidth ?? 0) > window.innerWidth + 1,
-				overflowing,
-				commandPaletteOpen: Boolean(document.querySelector(".cmdk-modal")),
-			};
-		})()`,
-	);
-	const screenshot = await cdp.send("Page.captureScreenshot", {
-		format: "png",
-		fromSurface: true,
-		captureBeyondViewport: false,
-	});
-	return { state, consoleErrors, screenshot: screenshot.data };
 }
 
 async function openCommandPalette(cdp) {
@@ -288,6 +303,8 @@ async function waitForLoad(cdp) {
 		}
 		await sleep(100);
 	}
+	const url = await evaluate(cdp, "location.href").catch(() => "unknown URL");
+	console.warn(`Timed out waiting for document.readyState=complete on ${url}`);
 }
 
 async function main() {
