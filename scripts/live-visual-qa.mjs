@@ -536,6 +536,19 @@ async function main() {
 		);
 		const overflowRows = manifest.routes.filter((route) => route.state.horizontalOverflow);
 		const tweaksPanelRows = manifest.routes.filter((route) => !route.state.tweaksPanelAbsent);
+		const variantMatrixCountMismatch =
+			manifest.variantMatrix.length !==
+			VARIANTS.length * THEMES.length * DENSITIES.length * LIBRARY_LAYOUTS.length
+				? {
+						expected:
+							VARIANTS.length * THEMES.length * DENSITIES.length * LIBRARY_LAYOUTS.length,
+						actual: manifest.variantMatrix.length,
+						variants: VARIANTS,
+						themes: THEMES,
+						densities: DENSITIES,
+						libraryLayouts: LIBRARY_LAYOUTS,
+					}
+				: null;
 		const libraryContentRows = manifest.routes.filter(
 			(route) =>
 				route.key === "library" &&
@@ -576,6 +589,7 @@ async function main() {
 			commandPaletteMismatch.length > 0 ||
 			overflowRows.length > 0 ||
 			tweaksPanelRows.length > 0 ||
+			variantMatrixCountMismatch !== null ||
 			libraryContentRows.length > 0 ||
 			transcriptContentRows.length > 0 ||
 			variantMatrixFailures.length > 0
@@ -589,6 +603,7 @@ async function main() {
 						commandPaletteMismatch,
 						overflowRows,
 						tweaksPanelRows,
+						variantMatrixCountMismatch,
 						libraryContentRows,
 						transcriptContentRows,
 						variantMatrixFailures,

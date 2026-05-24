@@ -215,6 +215,40 @@ def test_template_and_visual_qa_script_still_cover_routes_and_variants() -> None
     assert "Page.captureScreenshot" in script
 
 
+def test_live_visual_qa_contract_covers_required_runtime_surface() -> None:
+    script = LIVE_VISUAL_QA.read_text(encoding="utf-8")
+
+    assert '{ name: "desktop", width: 1440, height: 1000, mobile: false }' in script
+    assert '{ name: "mobile", width: 390, height: 900, mobile: true }' in script
+    for key in (
+        'key: "library"',
+        'key: "queue"',
+        'key: "ops"',
+        'key: "settings"',
+        'key: `transcript-${id}`',
+        'key: `job-${id}`',
+        'key: "command-palette"',
+    ):
+        assert key in script
+
+    assert 'const VARIANTS = ["paper", "terminal", "console", "field"]' in script
+    assert 'const THEMES = ["light", "dark"]' in script
+    assert 'const DENSITIES = ["compact", "cozy", "comfy"]' in script
+    assert 'const LIBRARY_LAYOUTS = ["table", "feed", "cards"]' in script
+    assert "variant matrix: ${manifest.variantMatrix.length} combinations" in script
+    assert "variantMatrixCountMismatch" in script
+    assert "VARIANTS.length * THEMES.length * DENSITIES.length * LIBRARY_LAYOUTS.length" in script
+    assert "expected:\n" in script
+    assert ".tweaks-panel" in script
+    assert "realContent" in script
+    assert "hasTitle" in script
+    assert "hasBody" in script
+    assert 'route.state.dataset.variant !== "field"' in script
+    assert 'route.state.dataset.theme !== "light"' in script
+    assert 'route.state.dataset.density !== "compact"' in script
+    assert 'route.state.dataset.libraryLayout !== "feed"' in script
+
+
 def test_source_css_gzip_size_budget() -> None:
     css = STYLES.read_bytes()
 
