@@ -62,14 +62,16 @@ def test_confirm_dialog_is_in_app_not_browser_prompt() -> None:
 
 def test_transcript_page_fetches_json_and_renders_markdown_locally() -> None:
     source = read("pages/Transcript.tsx")
+    markdown = read("components/Markdown.tsx")
 
     assert 'auth.protectedFetch(`/transcripts/${id}`' in source
     assert "`/transcripts/${id}/resummarize`" in source
     assert "`/admin/transcripts/${record.id}`" in source
     assert 'headers: { Accept: "application/json" }' in source
-    assert "function parseMd" in source
-    assert "function inline" in source
-    assert "navigator.clipboard.writeText" in source
+    assert 'import { Markdown } from "../components/Markdown";' in source
+    assert "function parseBlocks" in markdown
+    assert "function renderInline" in markdown
+    assert "copyTextToClipboard" in source
     assert "Run summarizer" in source
     assert "Delete transcript" in source
     assert "record.source_url" in source
@@ -83,7 +85,6 @@ def test_transcript_markdown_autolinks_plain_urls_safely() -> None:
     source = transcript + shared
 
     assert "plainUrlPattern = /https?:\\/\\/" in source
-    assert "pushTextTokens(tokens, text.slice(cursor, match.index))" in transcript
     assert "pushTextParts(parts, rest)" in shared
     assert '| { type: "link"; text: string; href: string }' in source
     assert 'target="_blank"' in source
@@ -440,7 +441,7 @@ def test_spa_internal_navigation_uses_real_relative_anchors() -> None:
     assert "row.transcript_shortlink" not in library
     assert "record.summary_shortlink" not in transcript
     assert "PrivateShareLinks" in library
-    assert "PrivateShareLinks" in transcript
+    assert "copyTextToClipboard" in transcript
     assert 'href={`/transcripts/${record.id}/summary.md`}' in transcript
     assert 'href={`/transcripts/${record.id}/transcript.md`}' in transcript
     assert "handleRouteAnchorClick" in source
@@ -478,7 +479,9 @@ def test_transcript_and_library_share_ui_use_managed_share_links() -> None:
     assert "targetKinds" in share
     assert "row.source_url" in library
     assert "record.source_url" in transcript
-    assert "PrivateShareLinks id={record.id}" in transcript
+    assert "`/api/transcripts/${transcript.id}/share-links`" in transcript
+    assert "`/api/share-links/${link.id}/revoke`" in transcript
+    assert "created.share_url" in transcript
 
 
 def test_private_share_links_are_compact_and_have_clipboard_fallback() -> None:
