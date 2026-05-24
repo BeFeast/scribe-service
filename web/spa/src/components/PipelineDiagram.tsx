@@ -11,12 +11,12 @@ export type StageView = {
 
 export type StageMap = Record<string, StageView>;
 
-const STAGES: Array<{ key: string; label: string }> = [
-	{ key: "queued", label: "Queue" },
-	{ key: "downloading", label: "Download" },
-	{ key: "transcribing", label: "Whisper" },
-	{ key: "summarizing", label: "Summarize" },
-	{ key: "done", label: "Done" },
+const STAGES: Array<{ key: string; label: string; sublabel: string }> = [
+	{ key: "queued", label: "Queue", sublabel: "Waiting for a worker slot" },
+	{ key: "downloading", label: "Download", sublabel: "Fetching source media" },
+	{ key: "transcribing", label: "Transcribe", sublabel: "Worker audio pass" },
+	{ key: "summarizing", label: "Summarize", sublabel: "Summary generation" },
+	{ key: "done", label: "Publish", sublabel: "Transcript and hooks" },
 ];
 
 type PipelineDiagramProps = {
@@ -53,6 +53,31 @@ function stageMeta(stage?: StageView) {
 	return stage.state;
 }
 
+function stateGlyph(state: StageState) {
+	if (state === "active") {
+		return <span className="spinner" aria-hidden="true" />;
+	}
+	if (state === "done") {
+		return (
+			<span className="status-glyph" aria-hidden="true">
+				✓
+			</span>
+		);
+	}
+	if (state === "failed") {
+		return (
+			<span className="status-glyph" aria-hidden="true">
+				✗
+			</span>
+		);
+	}
+	return (
+		<span className="status-glyph" aria-hidden="true">
+			○
+		</span>
+	);
+}
+
 export function PipelineDiagram({
 	stages,
 	compact = false,
@@ -63,23 +88,40 @@ export function PipelineDiagram({
 				const view = stages?.[stage.key];
 				const state = view?.state ?? "pending";
 				const progress =
-					state === "done"
-						? 100
-						: state === "active"
-							? (view?.progress ?? 0) * 100
-							: 0;
+					view?.progress !== null && view?.progress !== undefined
+						? view.progress * 100
+						: null;
 				return (
 					<div className={`stage ${state}`} key={stage.key}>
-						<div className="stage-head">
-							<span className="stage-index">{index + 1}</span>
-							<strong>{stage.label}</strong>
+						<div className="stage-num">stage {index + 1}</div>
+						<div className="stage-name">
+							{stateGlyph(state)}
+							<span>{stage.label}</span>
 						</div>
-						<span className="stage-state">{stageMeta(view)}</span>
 						{compact ? null : (
-							<div className="bar-track" aria-hidden="true">
+							<>
+								<div className="stage-sub">{stage.sublabel}</div>
+								<div className="stage-state">{stageMeta(view)}</div>
+								{view?.note ? (
+									<div className="stage-note">{view.note}</div>
+								) : null}
+							</>
+						)}
+						{state === "active" && progress !== null ? (
+							<div className="progressbar" aria-hidden="true">
 								<span style={{ width: `${progress}%` }} />
 							</div>
-						)}
+						) : null}
+						{state === "done" &&
+						view?.duration_s !== null &&
+						view?.duration_s !== undefined ? (
+							<div className="stage-note done-note">
+								completed in {formatDuration(view.duration_s)}
+							</div>
+						) : null}
+						{compact ? (
+							<span className="stage-state">{stageMeta(view)}</span>
+						) : null}
 					</div>
 				);
 			})}

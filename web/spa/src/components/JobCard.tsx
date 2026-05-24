@@ -10,6 +10,8 @@ export type JobCardJob = {
 	id: number;
 	video_id: string;
 	url: string;
+	source_url?: string | null;
+	source_label?: string | null;
 	title?: string | null;
 	status: string;
 	source?: string | null;
@@ -39,28 +41,25 @@ export function JobCard({
 	cancelDisabled = false,
 }: JobCardProps) {
 	const jobRoute: Route = { page: "job", params: { id: job.id } };
+	const source = job.source ?? job.source_label ?? "direct";
 	return (
 		<div className="job-card">
-			<a
-				className="job-card-open"
-				href={routeToHref(jobRoute)}
-				onClick={(event) => handleRouteAnchorClick(event, jobRoute, navigate)}
-			>
-				<div className="job-card-top">
-					<div>
-						<h2>{job.title ?? job.video_id}</h2>
-						<p className="detail-meta">
-							<span>job {job.id}</span>
-							<span>{job.source ?? "direct"}</span>
-							<span>{formatElapsed(job.elapsed_s)}</span>
-						</p>
-					</div>
-					<StatusChip status={job.status} />
+			<div className="job-card-header">
+				<div className="mono muted">
+					job_id <span className="soft">{job.id}</span>
 				</div>
-				<PipelineDiagram stages={job.stages} compact />
-			</a>
-			{onCancel ? (
-				<div className="job-card-actions">
+				<div className="mono muted">via {source}</div>
+				<div className="spacer" />
+				<StatusChip status={job.status} />
+				<span className="mono muted">{formatElapsed(job.elapsed_s)}</span>
+				<a
+					className="btn ghost"
+					href={routeToHref(jobRoute)}
+					onClick={(event) => handleRouteAnchorClick(event, jobRoute, navigate)}
+				>
+					Open
+				</a>
+				{onCancel ? (
 					<button
 						type="button"
 						className="btn ghost job-card-cancel"
@@ -70,8 +69,16 @@ export function JobCard({
 					>
 						{cancelBusy ? "Cancelling" : "Cancel"}
 					</button>
-				</div>
-			) : null}
+				) : null}
+			</div>
+			<a
+				className="job-card-open"
+				href={routeToHref(jobRoute)}
+				onClick={(event) => handleRouteAnchorClick(event, jobRoute, navigate)}
+			>
+				<h2>{job.title ?? job.video_id}</h2>
+				<PipelineDiagram stages={job.stages} compact />
+			</a>
 		</div>
 	);
 }

@@ -3,6 +3,7 @@ import React from "react";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { type FailureJob, FailureRow } from "../components/FailureRow";
 import { JobCard, type JobCardJob } from "../components/JobCard";
+import { CMDK_OPEN_EVENT } from "../constants";
 import { useAuth } from "../hooks/useAuth";
 import { usePoll } from "../hooks/usePoll";
 import type { Route } from "../hooks/useRoute";
@@ -172,10 +173,30 @@ export function Queue({ navigate }: QueueProps) {
 		<section className="pane queue-page">
 			<header className="pane-header">
 				<div>
-					<p className="eyebrow">Queue</p>
-					<h1 className="pane-h1">Active jobs</h1>
+					<h1 className="pane-h1">Queue</h1>
+					<div className="pane-sub">
+						{active.length} in flight &middot;{" "}
+						<span className="live-dot" aria-hidden="true" /> live
+					</div>
 				</div>
-				<span className="queue-count">{active.length}</span>
+				<div className="pane-actions">
+					<button
+						type="button"
+						className="btn"
+						onClick={() => void load(new AbortController().signal)}
+					>
+						Poll now
+					</button>
+					<button
+						type="button"
+						className="btn primary"
+						onClick={() =>
+							document.dispatchEvent(new CustomEvent(CMDK_OPEN_EVENT))
+						}
+					>
+						Submit URL
+					</button>
+				</div>
 			</header>
 
 			{error ? (
@@ -188,7 +209,10 @@ export function Queue({ navigate }: QueueProps) {
 				{loading ? <p className="muted">Loading queue...</p> : null}
 				{!loading && active.length === 0 ? (
 					<div className="empty-queue">
-						queue is clear &middot; scribe is idle
+						<div>
+							<strong>Queue is idle</strong>
+							<span>No active jobs are currently in flight.</span>
+						</div>
 					</div>
 				) : (
 					<div className="job-card-list">
@@ -209,8 +233,15 @@ export function Queue({ navigate }: QueueProps) {
 			</section>
 
 			<section className="queue-section">
-				<div className="section-heading">
-					<h2>Recent failures</h2>
+				<div className="section-label split">
+					<span>Recent terminal jobs &middot; failed</span>
+					<button
+						type="button"
+						className="text-link"
+						onClick={() => navigate({ page: "ops", params: {} })}
+					>
+						all failures
+					</button>
 				</div>
 				{failures.length > 0 ? (
 					<div className="failure-list">
