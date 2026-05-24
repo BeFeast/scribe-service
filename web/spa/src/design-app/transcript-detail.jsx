@@ -26,6 +26,7 @@ export function TranscriptDetail({ id, navigate, onRefresh }) {
     }
   }
   async function copyFromEndpoint(path, key, fallback) {
+    setActionError(null);
     try {
       const response = await auth.protectedFetch(path, { cache: "no-store" });
       if (!response.ok) throw new Error("HTTP " + response.status);
@@ -40,6 +41,7 @@ export function TranscriptDetail({ id, navigate, onRefresh }) {
     }
   }
   async function download(kind) {
+    setActionError(null);
     const filename = `scribe-${t.id}-${kind}.md`;
     const path = "/transcripts/" + t.id + "/" + kind + ".md";
     try {
@@ -76,12 +78,16 @@ export function TranscriptDetail({ id, navigate, onRefresh }) {
   }
   async function deleteTranscript() {
     setActionError(null);
-    const response = await auth.protectedFetch("/admin/transcripts/" + t.id, { method: "DELETE" });
-    if (response.ok) {
-      onRefresh && onRefresh();
-      navigate("library");
-    } else {
-      setActionError("HTTP " + response.status);
+    try {
+      const response = await auth.protectedFetch("/admin/transcripts/" + t.id, { method: "DELETE" });
+      if (response.ok) {
+        onRefresh && onRefresh();
+        navigate("library");
+      } else {
+        setActionError("HTTP " + response.status);
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -222,6 +228,7 @@ function ShareSheet({ t, onClose, copy, copyFromEndpoint, download, auth, copied
   const [shareUrl, setShareUrl] = React.useState(null);
   const fullUrl = `scribe.oklabs.uk/transcripts/${t.id}`;
   const shortlink = (t.summary_shortlink || `go.oklabs.uk/${t.id}s`).replace(/^https?:\/\//, "");
+  const displayShareUrl = splitShareUrl(shareUrl, shortlink);
 
   React.useEffect(() => {
     function onDoc(e) {
@@ -277,8 +284,8 @@ function ShareSheet({ t, onClose, copy, copyFromEndpoint, download, auth, copied
 
       {/* Primary action: the shortlink */}
       <div className="sh-url">
-        <span className="scheme">{shareUrl ? shareUrl.replace(/\/[^/]*$/, "/") : "go.oklabs.uk/"}</span>
-        <span className="path">{shareUrl ? shareUrl.split("/").at(-1) : shortlink.replace(/^go\.oklabs\.uk\//, "")}</span>
+        <span className="scheme">{displayShareUrl.scheme}</span>
+        <span className="path">{displayShareUrl.path}</span>
         <button className="btn primary"
                 onClick={() => void copyShareLink()}
                 style={{fontSize: 12, padding: "5px 10px"}}>
@@ -363,6 +370,29 @@ function ShareSheet({ t, onClose, copy, copyFromEndpoint, download, auth, copied
       </div>
     </div>
   );
+}
+
+function splitShareUrl(shareUrl, fallbackShortlink) {
+  if (!shareUrl) {
+    return {
+      scheme: "go.oklabs.uk/",
+      path: fallbackShortlink.replace(/^go\.oklabs\.uk\//, ""),
+    };
+  }
+  try {
+    const url = new URL(shareUrl);
+    const pathname = url.pathname === "/" ? "" : url.pathname.replace(/^\//, "");
+    return {
+      scheme: url.origin + "/",
+      path: pathname || url.hostname,
+    };
+  } catch {
+    const parts = shareUrl.split("/");
+    return {
+      scheme: parts.length > 1 ? parts.slice(0, -1).join("/") + "/" : "",
+      path: parts.at(-1) || shareUrl,
+    };
+  }
 }
 
 function PartialNotice({ transcript, onRegen, regenerating }) {
