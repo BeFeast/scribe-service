@@ -39,6 +39,10 @@ _SPA_MANIFEST_PATH = _SPA_STATIC_DIR / ".vite" / "manifest.json"
 # years of accretion; older entries are still reachable by tag/search.
 _LIST_LIMIT = 200
 _FEED_LIMIT = 40
+_FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<rect width="32" height="32" rx="6" fill="#f5f6f9"/>
+<path d="M8 12v8M12 9v14M16 12v8M20 11h6M20 16h6M20 21h4" stroke="#657153" stroke-width="2.4" stroke-linecap="round"/>
+</svg>"""
 
 
 @functools.cache
@@ -97,6 +101,15 @@ def spa_shell(request: Request, spa_path: str = "") -> HTMLResponse:
         request,
         "spa.html",
         {"scripts": assets["scripts"], "styles": assets["styles"]},
+    )
+
+
+@router.get("/favicon.ico", include_in_schema=False)
+def favicon() -> Response:
+    return Response(
+        _FAVICON_SVG,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
     )
 
 

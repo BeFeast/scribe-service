@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { isJobView, parseVideoUrl } from "../src/components/CommandPalette";
+import {
+	isCommandPaletteShortcut,
+	isJobView,
+	parseVideoUrl,
+} from "../src/components/CommandPalette";
 
 describe("parseVideoUrl", () => {
 	test("accepts YouTube URLs with reordered watch query params", () => {
@@ -47,6 +51,40 @@ describe("isJobView", () => {
 		expect(isJobView({ job_id: 42, video_id: "jNQXAC9IVRw" })).toBe(false);
 		expect(
 			isJobView({ job_id: "42", video_id: "jNQXAC9IVRw", status: "queued" }),
+		).toBe(false);
+	});
+});
+
+describe("isCommandPaletteShortcut", () => {
+	const keyEvent = (
+		value: Pick<KeyboardEvent, "code" | "ctrlKey" | "key" | "metaKey">,
+	): KeyboardEvent => value as KeyboardEvent;
+
+	test("accepts Ctrl+K and Cmd+K, including code fallback", () => {
+		expect(
+			isCommandPaletteShortcut(
+				keyEvent({ key: "k", code: "", ctrlKey: true, metaKey: false }),
+			),
+		).toBe(true);
+		expect(
+			isCommandPaletteShortcut(
+				keyEvent({ key: "K", code: "", ctrlKey: false, metaKey: true }),
+			),
+		).toBe(true);
+		expect(
+			isCommandPaletteShortcut(
+				keyEvent({
+					key: "Unidentified",
+					code: "KeyK",
+					ctrlKey: true,
+					metaKey: false,
+				}),
+			),
+		).toBe(true);
+		expect(
+			isCommandPaletteShortcut(
+				keyEvent({ key: "k", code: "", ctrlKey: false, metaKey: false }),
+			),
 		).toBe(false);
 	});
 });

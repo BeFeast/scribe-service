@@ -32,6 +32,11 @@ def test_spa_shell_uses_vite_manifest(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     assert "<title>Scribe SPA</title>" in response.text
+    assert (
+        '<html lang="en" data-variant="field" data-theme="light" '
+        'data-density="compact" data-library-layout="feed">'
+    ) in response.text
+    assert '<link rel="icon" href="/favicon.ico" sizes="any">' in response.text
     assert '<div id="root"></div>' in response.text
     assert 'href="/static/spa/assets/index-def456.css"' in response.text
     assert 'src="/static/spa/assets/index-abc123.js"' in response.text
@@ -42,6 +47,14 @@ def test_spa_shell_uses_vite_manifest(monkeypatch, tmp_path):
     alias_response = client.get("/__spa__/")
     assert alias_response.status_code == 200
     assert '<div id="root"></div>' in alias_response.text
+
+
+def test_favicon_route_serves_icon_response():
+    response = TestClient(app).get("/favicon.ico")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+    assert "<svg" in response.text
 
 
 def test_classic_transcript_list_remains_explicit():
