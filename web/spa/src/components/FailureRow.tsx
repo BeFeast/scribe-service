@@ -49,13 +49,20 @@ export function FailureRow({
 					<p className="err-title">{job.title ?? job.video_id}</p>
 					<p className="err-msg">{job.error ?? "Job failed."}</p>
 					<p className="err-meta">
-						job {job.id} &middot; {job.source ?? "direct"} &middot;{" "}
+						job_id {job.id} &middot; {job.source ?? "direct"} &middot;{" "}
 						{formatFailedAt(job.failed_at)}
 					</p>
 				</div>
 			</a>
 			<div className="failure-row-actions">
 				<StatusChip status="failed" />
+				<a
+					className="btn ghost"
+					href={routeToHref(jobRoute)}
+					onClick={(event) => handleRouteAnchorClick(event, jobRoute, navigate)}
+				>
+					Open
+				</a>
 				<button
 					type="button"
 					className="btn ghost"

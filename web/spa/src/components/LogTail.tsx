@@ -70,15 +70,18 @@ export function LogTail({ jobId, status, error }: LogTailProps) {
 						msg:
 							status === "failed"
 								? (error ?? "job failed")
-								: "waiting for worker logs",
+								: "log stream connected; waiting for worker output",
 					},
 				];
 
 	return (
 		<section className="log-tail" aria-label="Log tail">
 			<div className="section-heading">
-				<h2>Log tail</h2>
-				{!terminal ? <span className="live-dot" aria-hidden="true" /> : null}
+				<h2>Pipeline log</h2>
+				<span className="mono muted">
+					{!terminal ? <span className="live-dot" aria-hidden="true" /> : null}
+					{!terminal ? " tailing" : " terminal"}
+				</span>
 			</div>
 			<pre>
 				{displayLines.map((line, index) => (

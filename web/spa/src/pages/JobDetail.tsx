@@ -1,5 +1,6 @@
 import React from "react";
 
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { LogTail } from "../components/LogTail";
 import { PipelineDiagram, type StageMap } from "../components/PipelineDiagram";
 import { StatusChip } from "../components/StatusChip";
@@ -54,6 +55,8 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 	const [error, setError] = React.useState<string | null>(null);
 	const [busy, setBusy] = React.useState<string | null>(null);
 	const [copied, setCopied] = React.useState(false);
+	const [cancelCandidate, setCancelCandidate] =
+		React.useState<JobDetailPayload | null>(null);
 	const isTerminal = job !== null && TERMINAL.has(job.status);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: id changes should clear the previous job detail.
@@ -187,9 +190,21 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 
 	return (
 		<section className="pane job-detail-page">
+			<a
+				className="queue-back"
+				href={routeToHref({ page: "queue", params: {} })}
+				onClick={(event) =>
+					handleRouteAnchorClick(event, { page: "queue", params: {} }, navigate)
+				}
+			>
+				← Queue
+			</a>
 			<header className="pane-header">
 				<div>
-					<p className="eyebrow">Job {id}</p>
+					<p className="eyebrow">
+						job_id <span className="soft">{id}</span>
+						{job ? ` · via ${job.source_label ?? "direct"}` : ""}
+					</p>
 					<h1 className="pane-h1">
 						{transcriptRoute && linkedTranscript ? (
 							<a
@@ -207,7 +222,7 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 					{job ? (
 						<p className="detail-meta">
 							<span>{job.video_id}</span>
-							<span>{formatElapsed(job.elapsed_s)}</span>
+							<span>{formatElapsed(job.elapsed_s)} elapsed</span>
 							<a
 								href={job.source_url ?? job.url}
 								target="_blank"
@@ -225,14 +240,20 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 
 			{job ? (
 				<>
+					<section className="job-panel">
+						<div className="section-label">
+							<h2>Pipeline</h2>
+						</div>
+						<PipelineDiagram stages={job.stages} />
+						{job.error ? <p className="error-banner">{job.error}</p> : null}
+					</section>
+
+					<LogTail jobId={job.job_id} status={job.status} error={job.error} />
+
+					<div className="section-label">Job actions</div>
 					<div className="job-actions">
-						<button
-							type="button"
-							className="btn"
-							onClick={cancelJob}
-							disabled={TERMINAL.has(job.status) || busy !== null}
-						>
-							Cancel
+						<button type="button" className="btn" onClick={copyJson}>
+							{copied ? "Copied" : "Copy job JSON"}
 						</button>
 						<button
 							type="button"
@@ -240,7 +261,7 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 							onClick={retryJob}
 							disabled={!TERMINAL.has(job.status) || busy !== null}
 						>
-							Retry
+							{busy === "retry" ? "Retrying" : "Retry job"}
 						</button>
 						<button
 							type="button"
@@ -250,32 +271,34 @@ export function JobDetail({ id, navigate }: JobDetailProps) {
 						>
 							{busy === "clear" ? "Clearing" : "Clear failure"}
 						</button>
-						<button type="button" className="btn ghost" onClick={copyJson}>
-							{copied ? "Copied" : "Copy JSON"}
-						</button>
-						<a
-							className="btn ghost"
-							href="/metrics"
-							target="_blank"
-							rel="noreferrer"
+						<button
+							type="button"
+							className="btn ghost danger"
+							onClick={() => setCancelCandidate(job)}
+							disabled={TERMINAL.has(job.status) || busy !== null}
 						>
-							Open in Prometheus
-						</a>
+							{busy === "cancel" ? "Cancelling" : "Cancel job"}
+						</button>
 					</div>
-
-					<section className="job-panel">
-						<div className="section-heading">
-							<h2>Pipeline</h2>
-						</div>
-						<PipelineDiagram stages={job.stages} />
-						{job.error ? <p className="error-banner">{job.error}</p> : null}
-					</section>
-
-					<LogTail jobId={job.job_id} status={job.status} error={job.error} />
 				</>
 			) : (
 				<p className="muted">Loading job...</p>
 			)}
+
+			{cancelCandidate !== null ? (
+				<ConfirmDialog
+					title="Cancel job"
+					body={`Cancel job ${cancelCandidate.job_id} (${cancelCandidate.transcript?.title ?? cancelCandidate.video_id})? The current pipeline stage may still finish, but the job will be marked failed.`}
+					confirmLabel="Cancel job"
+					busyLabel="Cancelling"
+					busy={busy === "cancel"}
+					onCancel={() => setCancelCandidate(null)}
+					onConfirm={async () => {
+						await cancelJob();
+						setCancelCandidate(null);
+					}}
+				/>
+			) : null}
 		</section>
 	);
 }
