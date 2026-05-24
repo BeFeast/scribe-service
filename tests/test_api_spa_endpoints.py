@@ -721,6 +721,28 @@ def test_api_ops_happy_path(client, db_session, tmp_path, monkeypatch):
     }
 
 
+def test_api_ops_worker_rollcall_warns_on_unclamped_active_count(client, db_session, tmp_path, monkeypatch):
+    path = Path(tmp_path / "_last_success_ts")
+    path.write_text(str(int(time.time())))
+    monkeypatch.setattr(settings, "backup_status_path", str(path))
+    monkeypatch.setattr(settings, "worker_concurrency", 2)
+
+    jobs = [
+        Job(url=f"https://youtu.be/opsbusy{i}", video_id=f"opsbusy{i}", status=JobStatus.transcribing)
+        for i in range(3)
+    ]
+    db_session.add_all(jobs)
+    db_session.commit()
+
+    body = client.get("/api/ops").json()
+    assert body["worker_pool"] == {"active": 2, "total": 2}
+    assert next(row for row in body["system"] if row["label"] == "Worker") == {
+        "label": "Worker",
+        "value": "3/2 busy",
+        "status": "warn",
+    }
+
+
 def _auth_headers(subject: str, email: str | None = None) -> dict[str, str]:
     return {
         "x-scribe-test-clerk-sub": subject,

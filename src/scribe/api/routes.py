@@ -1702,6 +1702,7 @@ def _system_snapshot(
     *,
     backup: BackupSnapshot,
     worker_pool: WorkerPoolSnapshot,
+    worker_active_count: int,
     spend_24h: float,
     daily_cap: float,
 ) -> list[SystemSnapshot]:
@@ -1733,8 +1734,8 @@ def _system_snapshot(
         SystemSnapshot(label="scribe-service", value=_service_version(), status="ok"),
         SystemSnapshot(
             label="Worker",
-            value=f"{worker_pool.active}/{worker_pool.total} busy",
-            status="ok" if worker_pool.active <= worker_pool.total else "warn",
+            value=f"{worker_active_count}/{worker_pool.total} busy",
+            status="ok" if worker_active_count < worker_pool.total else "warn",
         ),
         SystemSnapshot(label="Postgres", value="request query succeeded", status="ok"),
         SystemSnapshot(
@@ -1852,6 +1853,7 @@ def api_ops(
         system=_system_snapshot(
             backup=backup,
             worker_pool=worker_pool,
+            worker_active_count=int(active_workers),
             spend_24h=spend_24h,
             daily_cap=settings.daily_spend_cap_usd,
         ),
