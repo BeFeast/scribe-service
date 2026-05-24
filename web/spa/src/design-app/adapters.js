@@ -101,6 +101,16 @@ export function adaptOps(body) {
 	};
 }
 
+export function adaptConfig(config) {
+	const values = Object.fromEntries(
+		Object.entries(config ?? {}).map(([key, entry]) => [key, entry?.value]),
+	);
+	return {
+		display_currency: normalizeDisplayCurrency(values.display_currency),
+		public_base_url: values.public_base_url ?? "",
+	};
+}
+
 export function adaptUsers(me, users) {
 	const rows = Array.isArray(users) ? users : [];
 	if (rows.length === 0 && me?.email) {
@@ -137,6 +147,13 @@ function adaptUser(user, me) {
 				(me?.user_id && me.user_id === user.id),
 		),
 	};
+}
+
+function normalizeDisplayCurrency(value) {
+	const normalized = String(value || "")
+		.trim()
+		.toUpperCase();
+	return ["ILS", "USD", "EUR"].includes(normalized) ? normalized : "ILS";
 }
 
 function normalizeStages(stages, status) {

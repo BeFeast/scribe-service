@@ -35,6 +35,7 @@ def test_infisical_disabled_uses_env_and_defaults(monkeypatch: pytest.MonkeyPatc
 
     assert settings.worker_concurrency == 5
     assert settings.daily_spend_cap_usd == 0.0
+    assert settings.display_currency == "ILS"
 
 
 def test_successful_infisical_load_overlays_expected_keys() -> None:
