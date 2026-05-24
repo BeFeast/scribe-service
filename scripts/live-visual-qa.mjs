@@ -21,6 +21,10 @@ const ROUTES = [
 	{ key: "ops", hash: "#/ops" },
 	{ key: "settings", hash: "#/settings" },
 ];
+const VARIANTS = ["paper", "terminal", "console", "field"];
+const THEMES = ["light", "dark"];
+const DENSITIES = ["compact", "cozy", "comfy"];
+const LIBRARY_LAYOUTS = ["table", "feed", "cards"];
 
 function absolute(hash) {
 	return new URL(hash, BASE_URL).href;
@@ -212,6 +216,9 @@ async function captureRoute(cdp, route, viewport) {
 		if (route.commandPalette) {
 			await openCommandPalette(cdp);
 			await sleep(500);
+		} else {
+			await closeCommandPalette(cdp);
+			await sleep(150);
 		}
 
 		const state = await evaluate(
@@ -265,6 +272,21 @@ async function captureRoute(cdp, route, viewport) {
 	}
 }
 
+async function closeCommandPalette(cdp) {
+	await cdp.send("Input.dispatchKeyEvent", {
+		type: "rawKeyDown",
+		key: "Escape",
+		code: "Escape",
+		windowsVirtualKeyCode: 27,
+	});
+	await cdp.send("Input.dispatchKeyEvent", {
+		type: "keyUp",
+		key: "Escape",
+		code: "Escape",
+		windowsVirtualKeyCode: 27,
+	});
+}
+
 async function openCommandPalette(cdp) {
 	await cdp.send("Input.dispatchKeyEvent", {
 		type: "rawKeyDown",
@@ -293,6 +315,79 @@ async function openCommandPalette(cdp) {
 		code: "ControlLeft",
 		windowsVirtualKeyCode: 17,
 	});
+}
+
+async function clickTweaksButton(cdp, rowLabel, value) {
+	return await evaluate(
+		cdp,
+		`(() => {
+			const rows = Array.from(document.querySelectorAll(".tweak-row"));
+			const row = rows.find((candidate) => candidate.querySelector(":scope > span")?.textContent?.trim() === ${JSON.stringify(rowLabel)});
+			if (!row) return false;
+			const button = Array.from(row.querySelectorAll("button")).find((candidate) => candidate.textContent?.trim() === ${JSON.stringify(value)});
+			if (!button) return false;
+			button.click();
+			return true;
+		})()`,
+	);
+}
+
+async function smokeVariantMatrix(cdp) {
+	await cdp.send("Emulation.setDeviceMetricsOverride", {
+		width: 1440,
+		height: 1000,
+		deviceScaleFactor: 1,
+		mobile: false,
+	});
+	await cdp.send("Page.navigate", { url: absolute("#/library") });
+	await waitForLoad(cdp);
+	await sleep(WAIT_MS);
+	await closeCommandPalette(cdp);
+
+	const results = [];
+	for (const variant of VARIANTS) {
+		for (const theme of THEMES) {
+			for (const density of DENSITIES) {
+				for (const libraryLayout of LIBRARY_LAYOUTS) {
+					const clicks = [
+						await clickTweaksButton(cdp, "Variant", variant),
+					];
+					await sleep(30);
+					clicks.push(await clickTweaksButton(cdp, "Theme", theme));
+					await sleep(30);
+					clicks.push(await clickTweaksButton(cdp, "Density", density));
+					await sleep(30);
+					clicks.push(await clickTweaksButton(cdp, "Library", libraryLayout));
+					await sleep(80);
+					const state = await evaluate(
+						cdp,
+						`(() => {
+							const doc = document.documentElement;
+							const scrolling = document.scrollingElement;
+							const panel = document.querySelector(".tweaks-panel");
+							const layoutSelector = ${JSON.stringify(libraryLayout === "table" ? ".lib-table" : libraryLayout === "feed" ? ".lib-feed" : ".lib-cards")};
+							const activeButtons = Array.from(document.querySelectorAll(".tweaks-panel .seg.active")).map((button) => button.textContent?.trim());
+							const panelRect = panel?.getBoundingClientRect();
+							return {
+								dataset: {
+									variant: doc.dataset.variant || "",
+									theme: doc.dataset.theme || "",
+									density: doc.dataset.density || "",
+									libraryLayout: doc.dataset.libraryLayout || "",
+								},
+								activeButtons,
+								layoutVisible: Boolean(document.querySelector(layoutSelector)),
+								controlsReachable: Boolean(panelRect && panelRect.width > 0 && panelRect.height > 0 && panelRect.left < window.innerWidth && panelRect.top < window.innerHeight && panelRect.right > 0 && panelRect.bottom > 0),
+								horizontalOverflow: (scrolling?.scrollWidth ?? 0) > window.innerWidth + 1,
+							};
+						})()`,
+					);
+					results.push({ variant, theme, density, libraryLayout, clicks, state });
+				}
+			}
+		}
+	}
+	return results;
 }
 
 async function waitForLoad(cdp) {
@@ -344,6 +439,7 @@ async function main() {
 			capturedAt: new Date().toISOString(),
 			missing,
 			routes: [],
+			variantMatrix: [],
 		};
 
 		for (const viewport of WIDTHS) {
@@ -362,6 +458,8 @@ async function main() {
 				console.log(`${viewport.name} ${route.key}: ${filename}`);
 			}
 		}
+		manifest.variantMatrix = await smokeVariantMatrix(cdp);
+		console.log(`variant matrix: ${manifest.variantMatrix.length} combinations`);
 
 		await writeFile(join(OUT_DIR, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 		cdp.close();
@@ -379,13 +477,31 @@ async function main() {
 			(route) => route.key === "command-palette" && !route.state.commandPaletteOpen,
 		);
 		const overflowRows = manifest.routes.filter((route) => route.state.horizontalOverflow);
+		const variantMatrixFailures = manifest.variantMatrix.filter((row) => {
+			const state = row.state;
+			return (
+				row.clicks.some((clicked) => !clicked) ||
+				state.dataset.variant !== row.variant ||
+				state.dataset.theme !== row.theme ||
+				state.dataset.density !== row.density ||
+				state.dataset.libraryLayout !== row.libraryLayout ||
+				!state.activeButtons.includes(row.variant) ||
+				!state.activeButtons.includes(row.theme) ||
+				!state.activeButtons.includes(row.density) ||
+				!state.activeButtons.includes(row.libraryLayout) ||
+				!state.layoutVisible ||
+				!state.controlsReachable ||
+				state.horizontalOverflow
+			);
+		});
 
 		if (
 			missing.length > 0 ||
 			runtimeErrors.length > 0 ||
 			defaultMismatch.length > 0 ||
 			commandPaletteMismatch.length > 0 ||
-			overflowRows.length > 0
+			overflowRows.length > 0 ||
+			variantMatrixFailures.length > 0
 		) {
 			console.error(
 				JSON.stringify(
@@ -395,6 +511,7 @@ async function main() {
 						defaultMismatch,
 						commandPaletteMismatch,
 						overflowRows,
+						variantMatrixFailures,
 					},
 					null,
 					2,

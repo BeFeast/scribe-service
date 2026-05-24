@@ -188,6 +188,17 @@ def test_playground_route_and_font_links_are_wired() -> None:
     assert 'data-variant={variant}' in playground
     assert 'data-theme={theme}' in playground
     assert 'data-density={density}' in playground
+    assert 'type Variant = "paper" | "terminal" | "console" | "field";' in playground
+    assert 'type Theme = "light" | "dark";' in playground
+    assert 'type Density = "compact" | "cozy" | "comfy";' in playground
+    assert (
+        'const variants: Variant[] = ["paper", "terminal", "console", "field"]'
+        in playground
+    )
+    assert 'const themes: Theme[] = ["light", "dark"]' in playground
+    assert 'const densities: Density[] = ["compact", "cozy", "comfy"]' in playground
+    assert "themes.flatMap" in playground
+    assert "densities.map" in playground
     for family in ("Inter", "JetBrains+Mono", "Geist", "Geist+Mono"):
         assert family in template
 
@@ -246,7 +257,19 @@ def test_live_visual_qa_script_covers_required_routes_and_responsive_viewports()
     assert "Runtime.consoleAPICalled" in script
     assert "Runtime.exceptionThrown" in script
     assert "horizontalOverflow" in script
+    assert "variantMatrix" in script
+    assert 'const VARIANTS = ["paper", "terminal", "console", "field"]' in script
+    assert 'const THEMES = ["light", "dark"]' in script
+    assert 'const DENSITIES = ["compact", "cozy", "comfy"]' in script
+    assert 'const LIBRARY_LAYOUTS = ["table", "feed", "cards"]' in script
+    assert "smokeVariantMatrix" in script
+    assert "clickTweaksButton" in script
+    assert "await sleep(30);" in script
+    assert "variantMatrixFailures" in script
+    assert "closeCommandPalette" in script
     assert "commandPaletteMismatch" in script
+    assert "panelRect.right > 0" in script
+    assert "panelRect.bottom > 0" in script
     assert 'dataset.variant !== "field"' in script
     assert 'dataset.theme !== "light"' in script
     assert 'dataset.density !== "compact"' in script
