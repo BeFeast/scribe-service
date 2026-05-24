@@ -51,7 +51,8 @@ def test_design_app_runtime_routes_auth_failures_through_shared_fetch_glue() -> 
     assert "auth.protectedFetch" in api
     assert "response.status === 401 || response.status === 403" in api
     assert "auth.maybeAutoSignIn()" in api
-    assert "throw new Error(await responseMessage(response))" in api
+    assert "throw new HttpError(response.status, await responseMessage(response))" in api
+    assert "isTransientFetchError" in api
 
 
 def test_shared_auth_helper_covers_401_and_403() -> None:

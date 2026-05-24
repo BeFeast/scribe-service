@@ -5,9 +5,10 @@ import { RECENT_FAILURES, SPEND_SERIES, STATS, fmtRelative, fmtUsd } from "./dat
 import { FailureRow } from "./job-pages.jsx";
 // Ops dashboard — spend, queue, backups, recent failures, sparkline.
 
-export function OpsPage({ navigate, loading, error, onRefresh }) {
-  const spendPct = Math.min(1, STATS.vast_spend_24h / STATS.daily_spend_cap_usd);
+export function OpsPage({ navigate, loading, error, onRefresh, onRetryJob }) {
+  const spendPct = STATS.daily_spend_cap_usd > 0 ? Math.min(1, STATS.vast_spend_24h / STATS.daily_spend_cap_usd) : 0;
   const spendCls = spendPct > 0.85 ? "err" : spendPct > 0.6 ? "warn" : "";
+  const system = Array.isArray(STATS.system) ? STATS.system : [];
 
   return (
     <div className="pane">
@@ -96,19 +97,18 @@ export function OpsPage({ navigate, loading, error, onRefresh }) {
           {RECENT_FAILURES.length} failed · last 24h: <span style={{color: "var(--err)"}} className="tnum">{RECENT_FAILURES.filter(f => f.failed_at.startsWith("2026-05-16")).length}</span>
         </span>
       </div>
-      {RECENT_FAILURES.map(f => <FailureRow key={f.id} f={f}/>)}
+      {RECENT_FAILURES.length > 0
+        ? RECENT_FAILURES.map(f => <FailureRow key={f.id} f={f} navigate={navigate} onRetryJob={onRetryJob}/>)
+        : <div className="empty"><div className="empty-title">No recent failures</div><div>Failed jobs from the last 7 days will appear here.</div></div>}
 
       <div className="section-label" style={{marginTop: 36}}>
         <span>System</span>
       </div>
       <div style={{display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12,
                    fontFamily: "var(--font-mono)", fontSize: 12.5}}>
-        <SystemRow label="Service" value="scribe-service · v0.4.2" status="ok"/>
-        <SystemRow label="Worker" value="2 threads · loop tick 50ms" status="ok"/>
-        <SystemRow label="Postgres" value="14.10 · queue ok · 23 connections" status="ok"/>
-        <SystemRow label="Vast.ai" value="warm pool · 1 instance · est. \$0.34/h" status="ok"/>
-        <SystemRow label="Chhoto shortlinks" value="go.oklabs.uk · responsive" status="ok"/>
-        <SystemRow label="codex CLI" value="model gpt-5 · last call 2m ago" status="ok"/>
+        {system.length > 0
+          ? system.map((row) => <SystemRow key={row.label} label={row.label} value={row.value} status={row.status}/>)
+          : <div className="empty" style={{gridColumn: "1 / -1"}}><div className="empty-title">System snapshot unavailable</div><div>Refresh to request a fresh ops snapshot.</div></div>}
       </div>
     </div>
   );
@@ -141,7 +141,7 @@ function Sparkline({ series, cap }) {
 
 function StatusBars({ stats }) {
   const entries = Object.entries(stats).sort((a, b) => b[1] - a[1]);
-  const max = Math.max(...entries.map(e => e[1]));
+  const max = Math.max(1, ...entries.map(e => e[1]));
   const colorOf = (s) => ({
     done: "var(--ok)", failed: "var(--err)",
     queued: "var(--info)", downloading: "var(--accent)",
@@ -180,4 +180,3 @@ function SystemRow({ label, value, status }) {
     </div>
   );
 }
-

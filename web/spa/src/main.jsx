@@ -47,6 +47,7 @@ function ScribeApp() {
 			loading: runtime.currentJob.loading,
 			error: runtime.currentJob.error,
 		},
+		currentJobLog: runtime.currentJobLog,
 	});
 
 	const setTweak = React.useCallback(
@@ -98,11 +99,29 @@ function ScribeApp() {
 					loading={runtime.loading}
 					error={runtime.error}
 					onRefresh={runtime.refreshCore}
+					onRetryJob={async (id) => {
+						const job = await runtime.retryJob(id);
+						navigateDesign("job", { id: job.id });
+						return job;
+					}}
 				/>
 			);
 			break;
 		case "job":
-			page = <JobDetail id={route.params.id} navigate={navigateDesign} />;
+			page = (
+				<JobDetail
+					id={route.params.id}
+					navigate={navigateDesign}
+					log={runtime.currentJobLog}
+					onRefresh={runtime.refreshJob}
+					onCancelJob={runtime.cancelJob}
+					onRetryJob={async (id) => {
+						const job = await runtime.retryJob(id);
+						navigateDesign("job", { id: job.id });
+						return job;
+					}}
+				/>
+			);
 			break;
 		case "ops":
 			page = (
@@ -111,6 +130,11 @@ function ScribeApp() {
 					loading={runtime.loading}
 					error={runtime.error}
 					onRefresh={runtime.refreshCore}
+					onRetryJob={async (id) => {
+						const job = await runtime.retryJob(id);
+						navigateDesign("job", { id: job.id });
+						return job;
+					}}
 				/>
 			);
 			break;

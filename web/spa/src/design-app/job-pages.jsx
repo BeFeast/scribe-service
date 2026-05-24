@@ -1,7 +1,8 @@
 // biome-ignore-all lint: Claude Design source port; integration-only edits live in api/data/main.
 import React from "react";
+import { isInFlight } from "./api.jsx";
 import { IconArrow, IconClock, IconCopy, IconExternal, IconPlus, IconRefresh, IconX } from "./icons.jsx";
-import { ACTIVE_JOBS, CURRENT_JOB, CURRENT_JOB_STATE, RECENT_FAILURES, STATS, fmtElapsed, fmtRelative, fmtUsd } from "./data.js";
+import { ACTIVE_JOBS, CURRENT_JOB, CURRENT_JOB_LOG, CURRENT_JOB_STATE, RECENT_FAILURES, STATS, fmtElapsed, fmtRelative, fmtUsd } from "./data.js";
 // Job-in-flight detail — real-time pipeline diagram.
 // Shows all 5 stages, current stage animated, logs panel, kill / retry actions.
 
@@ -21,7 +22,7 @@ const STAGE_SUBLABEL = {
   done: "Shortlinks · webhook · DB write",
 };
 
-export function QueuePage({ navigate, loading, error, onRefresh }) {
+export function QueuePage({ navigate, loading, error, onRefresh, onRetryJob }) {
   return (
     <div className="pane">
       <div className="pane-header">
@@ -53,7 +54,7 @@ export function QueuePage({ navigate, loading, error, onRefresh }) {
               all failures →
             </a>
           </div>
-          {RECENT_FAILURES.slice(0, 2).map(f => <FailureRow key={f.id} f={f}/>)}
+          {RECENT_FAILURES.slice(0, 2).map(f => <FailureRow key={f.id} f={f} navigate={navigate} onRetryJob={onRetryJob}/>)}
         </>
       )}
     </div>
@@ -157,8 +158,37 @@ export function PipelineDiagram({ job, compact }) {
   );
 }
 
-export function JobDetail({ id, navigate }) {
+export function JobDetail({ id, navigate, log = CURRENT_JOB_LOG, onRefresh, onCancelJob, onRetryJob }) {
   const job = CURRENT_JOB || ACTIVE_JOBS.find((j) => j.id === id);
+  const [actionState, setActionState] = React.useState({ pending: null, message: null, error: null });
+  const actionAbortRef = React.useRef(null);
+  React.useEffect(() => () => actionAbortRef.current?.abort(), []);
+  const runAction = async (name, task) => {
+    actionAbortRef.current?.abort();
+    const controller = new AbortController();
+    actionAbortRef.current = controller;
+    setActionState({ pending: name, message: null, error: null });
+    try {
+      await task(controller.signal);
+      if (!controller.signal.aborted) setActionState({ pending: null, message: `${name} complete`, error: null });
+    } catch (error) {
+      if (!controller.signal.aborted) setActionState({ pending: null, message: null, error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      if (actionAbortRef.current === controller) actionAbortRef.current = null;
+    }
+  };
+  const copyJob = () => runAction("copy", async () => {
+    await navigator.clipboard.writeText(JSON.stringify(job, null, 2));
+  });
+  const cancelJob = () => runAction("cancel", async (signal) => {
+    await onCancelJob?.(job.id, signal);
+  });
+  const retryJob = () => runAction("retry", async (signal) => {
+    await onRetryJob?.(job.id, signal);
+  });
+  const refreshJob = () => runAction("refresh", async (signal) => {
+    await onRefresh?.(job.id, signal);
+  });
   if (CURRENT_JOB_STATE.loading) return <div className="pane"><div className="empty"><div className="empty-title">Loading job</div><div>Fetching /jobs/{id}.</div></div></div>;
   if (!job || CURRENT_JOB_STATE.error) return <div className="pane"><a onClick={() => navigate("queue")} style={{display: "inline-flex", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--muted)", cursor: "pointer", marginBottom: 18}}>← Queue</a><div className="empty"><div className="empty-title">Job unavailable</div><div>{CURRENT_JOB_STATE.error || "No job is loaded."}</div></div></div>;
 
@@ -198,18 +228,25 @@ export function JobDetail({ id, navigate }) {
           <span className="live-dot"/> tailing
         </span>
       </div>
-      <LogTail job={job}/>
+      <LogTail job={job} log={log}/>
 
       <div className="section-label">
         <span>Job actions</span>
       </div>
       <div className="row" style={{gap: 8, flexWrap: "wrap"}}>
-        <button className="btn"><IconCopy size={14}/> Copy job JSON</button>
-        <button className="btn"><IconExternal size={14}/> Open in Prometheus</button>
-        <button className="btn" style={{color: "var(--err)", borderColor: "color-mix(in oklab, var(--err) 32%, var(--border))"}}>
+        <button className="btn" onClick={copyJob} disabled={actionState.pending === "copy"}><IconCopy size={14}/> Copy job JSON</button>
+        <a className="btn" href="/metrics" target="_blank" rel="noreferrer"><IconExternal size={14}/> Open in Prometheus</a>
+        <button className="btn" onClick={refreshJob} disabled={actionState.pending === "refresh"}><IconRefresh size={14}/> Poll now</button>
+        {job.status === "failed" && <button className="btn" onClick={retryJob} disabled={actionState.pending === "retry"}><IconRefresh size={14}/> Retry job</button>}
+        {isInFlight(job.status) && <button className="btn" onClick={cancelJob} disabled={actionState.pending === "cancel"} style={{color: "var(--err)", borderColor: "color-mix(in oklab, var(--err) 32%, var(--border))"}}>
           <IconX size={14}/> Cancel job
-        </button>
+        </button>}
       </div>
+      {(actionState.message || actionState.error) && (
+        <div className="mono muted" style={{fontSize: 11.5, marginTop: 10, color: actionState.error ? "var(--err)" : "var(--ok)"}}>
+          {actionState.error || actionState.message}
+        </div>
+      )}
 
       <div className="hr"/>
       <div className="mono muted" style={{fontSize: 11.5, lineHeight: 1.7}}>
@@ -221,8 +258,8 @@ export function JobDetail({ id, navigate }) {
   );
 }
 
-function LogTail({ job }) {
-  const lines = buildLog(job);
+function LogTail({ job, log }) {
+  const lines = log?.lines?.length ? log.lines.map(adaptLogLine) : buildLog(job);
   return (
     <div style={{
       fontFamily: "var(--font-mono)",
@@ -245,10 +282,17 @@ function LogTail({ job }) {
       ))}
       <div style={{color: "var(--accent)", marginTop: 4}}>
         <span style={{color: "var(--muted)"}}>{currentT()}</span>{"  "}
-        <span className="live-dot"/> waiting for next update…
+        <span className="live-dot"/> {log?.connected ? "tailing live stream…" : log?.error || "waiting for next update…"}
       </div>
     </div>
   );
+}
+function adaptLogLine(line) {
+  const ts = line.ts ? new Date(line.ts).toISOString().slice(11,19) : currentT();
+  const level = line.lvl ? `[${String(line.lvl).toLowerCase()}]` : "[log]";
+  const tag = line.stage ? `[${line.stage}]` : level;
+  const color = line.lvl === "ERROR" ? "var(--err)" : line.lvl === "WARNING" ? "var(--warn)" : "var(--fg-soft)";
+  return { t: ts, tag, msg: line.msg || JSON.stringify(line), color };
 }
 function currentT() {
   return new Date().toISOString().slice(11,19);
@@ -291,19 +335,30 @@ function buildLog(job) {
   return lines;
 }
 
-export function FailureRow({ f }) {
+export function FailureRow({ f, navigate, onRetryJob }) {
+  const [state, setState] = React.useState({ pending: false, error: null });
+  const retry = async () => {
+    if (!onRetryJob) return;
+    setState({ pending: true, error: null });
+    try {
+      await onRetryJob(f.id);
+      setState({ pending: false, error: null });
+    } catch (error) {
+      setState({ pending: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  };
   return (
     <div className="failure-row">
       <div>
         <div className="err-title">{f.title}</div>
         <div className="err-msg">{f.error}</div>
         <div className="err-meta">job_id {f.id} · {fmtRelative(f.failed_at)} · via {f.source}</div>
+        {state.error && <div className="err-meta" style={{color: "var(--err)"}}>{state.error}</div>}
       </div>
       <div className="row" style={{gap: 6}}>
-        <button className="btn"><IconRefresh size={12}/> Retry</button>
-        <button className="btn ghost"><IconExternal size={12}/></button>
+        <button className="btn" onClick={retry} disabled={state.pending || !onRetryJob}><IconRefresh size={12}/> Retry</button>
+        <button className="btn ghost" onClick={() => navigate?.("job", { id: f.id })}><IconExternal size={12}/></button>
       </div>
     </div>
   );
 }
-

@@ -5,6 +5,7 @@ export function useScribeRuntime(auth, route) {
 	const [core, setCore] = React.useState({ loading: true, error: null, transcripts: [], activeJobs: [], failures: [], stats: adaptOps(null), spendSeries: [], users: [] });
 	const [currentTranscript, setCurrentTranscript] = React.useState({ loading: false, error: null, value: null });
 	const [currentJob, setCurrentJob] = React.useState({ loading: false, error: null, value: null });
+	const [currentJobLog, setCurrentJobLog] = React.useState({ connected: false, error: null, lines: [] });
 
 	const refreshCore = React.useCallback(async (signal) => {
 		try {
@@ -63,17 +64,68 @@ export function useScribeRuntime(auth, route) {
 	React.useEffect(() => {
 		if (route.page !== "job" || route.params.id === undefined) {
 			setCurrentJob({ loading: false, error: null, value: null });
+			setCurrentJobLog({ connected: false, error: null, lines: [] });
 			return;
 		}
 		const controller = new AbortController();
-		setCurrentJob({ loading: true, error: null, value: null });
-		fetchJson(auth, "/jobs/" + route.params.id, controller.signal)
-			.then((body) => setCurrentJob({ loading: false, error: null, value: adaptJob(body) }))
+		let timer = 0;
+		setCurrentJob((previous) => ({ loading: true, error: null, value: previous.value?.id === route.params.id ? previous.value : null }));
+		const load = async () => {
+			try {
+				const body = await fetchJson(auth, "/jobs/" + route.params.id, controller.signal);
+				const job = adaptJob(body);
+				setCurrentJob({ loading: false, error: null, value: job });
+				if (!controller.signal.aborted && isInFlight(job.status)) {
+					timer = window.setTimeout(load, 2000);
+				}
+			} catch (error) {
+				if (!controller.signal.aborted) {
+					setCurrentJob((previous) => ({ loading: false, error: messageOf(error), value: previous.value }));
+					if (isTransientFetchError(error)) {
+						timer = window.setTimeout(load, 2000);
+					}
+				}
+			}
+		};
+		void load();
+		return () => {
+			controller.abort();
+			window.clearTimeout(timer);
+		};
+	}, [auth, route.page, route.params.id]);
+
+	React.useEffect(() => {
+		if (
+			route.page !== "job" ||
+			route.params.id === undefined ||
+			currentJob.loading ||
+			currentJob.error ||
+			currentJob.value?.id !== route.params.id
+		) {
+			setCurrentJobLog({ connected: false, error: null, lines: [] });
+			return;
+		}
+		const controller = new AbortController();
+		setCurrentJobLog({ connected: false, error: null, lines: [] });
+		void streamJobLog(auth, route.params.id, controller.signal, (line) => {
+			setCurrentJobLog((previous) => ({
+				connected: true,
+				error: null,
+				lines: [...previous.lines, line].slice(-200),
+			}));
+		})
+			.then(() => {
+				if (!controller.signal.aborted) {
+					setCurrentJobLog((previous) => ({ ...previous, connected: false }));
+				}
+			})
 			.catch((error) => {
-				if (!controller.signal.aborted) setCurrentJob({ loading: false, error: messageOf(error), value: null });
+				if (!controller.signal.aborted) {
+					setCurrentJobLog((previous) => ({ ...previous, connected: false, error: messageOf(error) }));
+				}
 			});
 		return () => controller.abort();
-	}, [auth, route.page, route.params.id]);
+	}, [auth, route.page, route.params.id, currentJob.loading, currentJob.error, currentJob.value?.id]);
 
 	React.useEffect(() => {
 		if (route.page !== "settings") return;
@@ -96,9 +148,27 @@ export function useScribeRuntime(auth, route) {
 		...core,
 		currentTranscript,
 		currentJob,
+		currentJobLog,
 		refreshCore: () => {
 			const controller = new AbortController();
 			void refreshCore(controller.signal);
+		},
+		refreshJob: async (id, signal) => {
+			const job = adaptJob(await fetchJson(auth, "/jobs/" + id, signal));
+			if (!signal?.aborted) setCurrentJob({ loading: false, error: null, value: job });
+			return job;
+		},
+		cancelJob: async (id, signal) => {
+			const job = adaptJob(await fetchJson(auth, "/admin/jobs/" + id + "/cancel", signal, { method: "POST" }));
+			if (!signal?.aborted) setCurrentJob({ loading: false, error: null, value: job });
+			await refreshCore(new AbortController().signal);
+			return job;
+		},
+		retryJob: async (id, signal) => {
+			const job = adaptJob(await fetchJson(auth, "/admin/jobs/" + id + "/retry", signal, { method: "POST" }));
+			if (!signal?.aborted) setCurrentJob({ loading: false, error: null, value: job });
+			await refreshCore(new AbortController().signal);
+			return job;
 		},
 	};
 }
@@ -106,8 +176,38 @@ export function useScribeRuntime(auth, route) {
 export async function fetchJson(auth, url, signal, init = {}) {
 	const response = await auth.protectedFetch(url, { cache: "no-store", signal, ...init });
 	if (response.status === 401 || response.status === 403) auth.maybeAutoSignIn();
-	if (!response.ok) throw new Error(await responseMessage(response));
+	if (!response.ok) throw new HttpError(response.status, await responseMessage(response));
 	return response.json();
+}
+
+async function streamJobLog(auth, id, signal, onLine) {
+	const response = await auth.protectedFetch("/api/jobs/" + id + "/log/stream", { cache: "no-store", signal });
+	if (response.status === 401 || response.status === 403) auth.maybeAutoSignIn();
+	if (!response.ok) throw new HttpError(response.status, await responseMessage(response));
+	if (!response.body) throw new Error("log stream unavailable");
+
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = "";
+	while (!signal.aborted) {
+		const { value, done } = await reader.read();
+		if (done) break;
+		buffer += decoder.decode(value, { stream: true });
+		const events = buffer.split("\n\n");
+		buffer = events.pop() ?? "";
+		for (const event of events) {
+			for (const line of event.split("\n")) {
+				if (line.startsWith("data:")) onLine(parseLogLine(line.slice(5).trimStart()));
+			}
+		}
+	}
+}
+
+class HttpError extends Error {
+	constructor(status, message) {
+		super(message);
+		this.status = status;
+	}
 }
 
 async function responseMessage(response) {
@@ -121,4 +221,20 @@ async function responseMessage(response) {
 
 function messageOf(error) {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function isTransientFetchError(error) {
+	return error instanceof HttpError && (error.status === 408 || error.status === 429 || error.status >= 500);
+}
+
+export function isInFlight(status) {
+	return ["queued", "downloading", "transcribing", "summarizing"].includes(status);
+}
+
+function parseLogLine(raw) {
+	try {
+		return JSON.parse(raw);
+	} catch {
+		return { ts: new Date().toISOString(), lvl: "INFO", msg: raw };
+	}
 }

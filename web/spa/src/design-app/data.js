@@ -23,6 +23,7 @@ export const FALLBACK_STATS = {
 		path: "",
 	},
 	worker_pool: { active: 0, total: 0 },
+	system: [],
 };
 
 export let TRANSCRIPTS = [];
@@ -35,6 +36,7 @@ export let CURRENT_TRANSCRIPT = null;
 export let CURRENT_TRANSCRIPT_STATE = { loading: false, error: null };
 export let CURRENT_JOB = null;
 export let CURRENT_JOB_STATE = { loading: false, error: null };
+export let CURRENT_JOB_LOG = { connected: false, error: null, lines: [] };
 
 export function setRuntimeData(next) {
 	TRANSCRIPTS = next.transcripts ?? TRANSCRIPTS;
@@ -50,6 +52,11 @@ export function setRuntimeData(next) {
 	};
 	CURRENT_JOB = next.currentJob ?? null;
 	CURRENT_JOB_STATE = next.currentJobState ?? { loading: false, error: null };
+	CURRENT_JOB_LOG = next.currentJobLog ?? {
+		connected: false,
+		error: null,
+		lines: [],
+	};
 	if (
 		CURRENT_TRANSCRIPT &&
 		!TRANSCRIPTS.some((row) => row.id === CURRENT_TRANSCRIPT.id)
