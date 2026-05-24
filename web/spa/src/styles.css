@@ -1873,6 +1873,7 @@ a {
 	overflow: auto;
 	border: var(--rule);
 	border-radius: var(--radius);
+	background: var(--bg-card);
 }
 
 .access-table {
@@ -1908,6 +1909,288 @@ a {
 	font-family: var(--font-mono);
 	font-size: 0.78rem;
 	color: var(--muted);
+}
+
+.access-me {
+	display: flex;
+	align-items: center;
+	gap: 0.85rem;
+	padding: 0.85rem 1rem;
+	border: var(--rule);
+	border-radius: var(--radius);
+	background: var(--bg-card);
+}
+
+.access-me .avatar,
+.users-table .u-avatar {
+	display: grid;
+	place-items: center;
+	flex-shrink: 0;
+	border-radius: 999px;
+	font-family: var(--font-display);
+	font-weight: 700;
+}
+
+.access-me .avatar {
+	width: 2.25rem;
+	height: 2.25rem;
+	background: var(--accent);
+	color: var(--accent-fg);
+	font-size: 0.9rem;
+}
+
+.access-me .info {
+	display: grid;
+	min-width: 0;
+	gap: 0.15rem;
+}
+
+.access-me .name {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.45rem;
+	font-weight: 700;
+}
+
+.access-me .email {
+	overflow: hidden;
+	color: var(--muted);
+	font-family: var(--font-mono);
+	font-size: 0.78rem;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.access-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.6rem;
+}
+
+.access-toolbar .stat {
+	color: var(--muted);
+	font-family: var(--font-mono);
+	font-size: 0.75rem;
+}
+
+.access-toolbar .stat strong {
+	color: var(--fg-soft);
+}
+
+.access-toolbar .stat .dot {
+	display: inline-block;
+	width: 0.35rem;
+	height: 0.35rem;
+	margin-inline: 0.25rem;
+	border-radius: 999px;
+	background: var(--muted);
+	vertical-align: middle;
+}
+
+.add-user-form {
+	display: grid;
+	grid-template-columns: minmax(12rem, 1.4fr) minmax(10rem, 1fr) minmax(
+			7rem,
+			auto
+		) auto;
+	gap: 0.5rem;
+	align-items: center;
+	padding: 0.75rem;
+	border: 1px dashed var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-soft);
+}
+
+.add-user-form[aria-disabled="true"] {
+	opacity: 0.72;
+}
+
+.users-table {
+	width: 100%;
+	min-width: 58rem;
+	border-collapse: collapse;
+	font-size: 0.82rem;
+	table-layout: fixed;
+}
+
+.users-table col.c-user {
+	width: auto;
+}
+
+.users-table col.c-role,
+.users-table col.c-state {
+	width: 7rem;
+}
+
+.users-table col.c-activity {
+	width: 12rem;
+}
+
+.users-table col.c-clerk {
+	width: 13rem;
+}
+
+.users-table col.c-act {
+	width: 7rem;
+}
+
+.users-table th,
+.users-table td {
+	padding: 0.7rem 0.65rem;
+	border-bottom: 1px solid var(--border-soft);
+	text-align: left;
+	vertical-align: middle;
+}
+
+.users-table th {
+	color: var(--muted);
+	font-size: 0.68rem;
+	text-transform: uppercase;
+}
+
+.users-table tr:last-child td {
+	border-bottom: 0;
+}
+
+.users-table tr.disabled td {
+	opacity: 0.58;
+}
+
+.users-table td:last-child {
+	text-align: right;
+}
+
+.users-table .u-id {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+	gap: 0.7rem;
+}
+
+.users-table .u-avatar {
+	width: 1.9rem;
+	height: 1.9rem;
+	border: 1px solid var(--border-soft);
+	background: var(--bg-soft);
+	color: var(--fg-soft);
+	font-size: 0.78rem;
+}
+
+.users-table .u-id.me .u-avatar {
+	border-color: var(--accent);
+	background: var(--accent);
+	color: var(--accent-fg);
+}
+
+.users-table .u-copy,
+.users-table .u-name {
+	min-width: 0;
+}
+
+.users-table .u-name {
+	display: flex;
+	align-items: center;
+	gap: 0.35rem;
+	font-weight: 700;
+	white-space: nowrap;
+}
+
+.users-table .u-name > span:first-child,
+.users-table .u-email {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.users-table .u-email {
+	margin-top: 0.05rem;
+	color: var(--muted);
+	font-family: var(--font-mono);
+	font-size: 0.72rem;
+	white-space: nowrap;
+}
+
+.users-table .u-you {
+	flex-shrink: 0;
+	color: var(--accent);
+	font-size: 0.62rem;
+	font-weight: 800;
+	text-transform: uppercase;
+}
+
+.role-chip {
+	display: inline-flex;
+	align-items: center;
+	width: fit-content;
+	padding: 0.15rem 0.5rem;
+	border: 1px solid var(--border-soft);
+	border-radius: 999px;
+	background: var(--bg-soft);
+	color: var(--fg-soft);
+	font-family: var(--font-mono);
+	font-size: 0.68rem;
+	font-weight: 800;
+	text-transform: uppercase;
+}
+
+.role-chip.admin,
+.role-chip.lan,
+.role-chip.machine {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+
+.users-table .state-cell {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+	color: var(--fg-soft);
+}
+
+.users-table .state-cell .dot {
+	width: 0.45rem;
+	height: 0.45rem;
+	border-radius: 999px;
+	background: var(--ok);
+}
+
+.users-table .state-cell.disabled {
+	color: var(--muted);
+}
+
+.users-table .state-cell.disabled .dot {
+	background: var(--muted);
+	opacity: 0.5;
+}
+
+.users-table .u-subject,
+.u-subject-pending {
+	color: var(--muted);
+	font-family: var(--font-mono);
+	font-size: 0.72rem;
+}
+
+.users-table .u-subject.linked {
+	display: inline-flex;
+	max-width: 100%;
+	overflow: hidden;
+	padding: 0.15rem 0.45rem;
+	border: 1px solid var(--border-soft);
+	border-radius: 999px;
+	background: var(--bg-soft);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.u-subject-pending {
+	font-style: italic;
+}
+
+.users-table .row-actions {
+	display: flex;
+	justify-content: flex-end;
 }
 
 .settings-row {
@@ -2177,6 +2460,7 @@ a {
 @media (max-width: 720px) {
 	.pane-header,
 	.settings-row,
+	.add-user-form,
 	.section-head,
 	.partial-notice {
 		align-items: start;

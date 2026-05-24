@@ -240,7 +240,7 @@ def test_settings_creates_extension_tokens_without_browser_prompts() -> None:
     assert 'auth.protectedFetch("/api/auth/extension-token"' in settings
     assert "Chrome extension token" in settings
     assert "Extension token created" in settings
-    assert "scribe.extensionToken" in settings
+    assert "localStorage" not in settings
     assert "window.prompt" not in settings
     assert "/api/config/rotate-token" not in settings
     assert "Rotate API token" not in settings

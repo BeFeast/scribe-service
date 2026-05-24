@@ -1,564 +1,1533 @@
-// Settings page — config values that map to scribe/config.py settings.
+import React from "react";
 
-const DEFAULT_PROMPT = `You are a careful, ruthless reader. Given a transcript of a YouTube video, produce a Markdown summary with the following sections:
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Markdown } from "../components/Markdown";
+import { useAuth } from "../hooks/useAuth";
+import type { LibraryLayout, Tweaks } from "../hooks/useTweaks";
+import { isAuthStatus } from "../lib/auth";
+import type { DisplayCurrency } from "../lib/currency";
+import { displayCurrencies } from "../lib/currency";
 
-## TL;DR
-2-4 sentences — the core argument or finding. No throat-clearing.
+type ConfigValue = boolean | number | string;
 
-## Key moves / The N points
-A numbered list of the substantive claims. Use the speaker's framing where they actually used numbered points; otherwise infer them.
+type ConfigEntry = {
+	value: ConfigValue;
+	source: "env" | "db" | string;
+	mutable: boolean;
+};
 
-## Notable callouts
-Memorable lines, references, surprising specifics. One bullet each.
+type ConfigResponse = {
+	config: Record<string, ConfigEntry>;
+	restart_required: string[];
+};
 
-## What I took away
-A short personal-knowledge takeaway — what changes about how I work tomorrow.
+type PromptVersion = {
+	id: PromptVersionId;
+	len_chars: number;
+	len_tokens_est: number;
+	first_line: string;
+	is_active: boolean;
+};
 
-Style:
-- No filler ("the speaker discusses…", "this video covers…"). Just say what they said.
-- Preserve concrete numbers, names, and exact phrasings.
-- If you don't know something, omit it. Do not hedge.
-- Markdown only. No HTML.`;
+type PromptListResponse = {
+	active_version: PromptVersionId;
+	versions: PromptVersion[];
+};
 
-function SettingsPage({ t, setTweak }) {
-  const [prompt, setPrompt] = React.useState(DEFAULT_PROMPT);
-  const [cap, setCap] = React.useState(STATS.daily_spend_cap_usd);
-  const [webhook, setWebhook] = React.useState("https://telegram.oklabs.uk/webhook/scribe");
-  const [publicBase, setPublicBase] = React.useState("https://scribe.oklabs.uk");
-  const [keepBotwallRetries, setKeepBotwallRetries] = React.useState(true);
-  const [embedTranscript, setEmbedTranscript] = React.useState(true);
+type ExtensionTokenResponse = {
+	token: string;
+	token_type: string;
+};
 
-  return (
-    <div className="pane" style={{maxWidth: 960}}>
-      <div className="pane-header">
-        <div>
-          <h1 className="pane-h1">Settings</h1>
-          <div className="pane-sub">Reads <code>.env</code> · changes write back via <code>POST /admin/config</code></div>
-        </div>
-        <div className="pane-actions">
-          <button className="btn ghost">Discard</button>
-          <button className="btn primary">Save changes</button>
-        </div>
-      </div>
+type CurrentUser = {
+	authenticated: boolean;
+	kind: string;
+	role: string;
+	user_id: number | null;
+	owner_id: number | null;
+	email: string | null;
+	display_name: string | null;
+};
 
-      <div className="settings-group">
-        <h2>Pipeline</h2>
-        <p className="group-sub">How scribe acquires audio, transcribes, and writes back.</p>
+type AdminUser = {
+	id: number;
+	owner_id: number;
+	clerk_subject: string | null;
+	primary_email: string;
+	display_name: string | null;
+	role: "admin" | "user" | string;
+	disabled: boolean;
+	created_at: string;
+	updated_at: string;
+};
 
-        <div className="settings-row">
-          <div className="row-label">
-            Daily Vast.ai spend cap
-            <span className="hint">Rolling 24h. New <code>POST /jobs</code> returns 429 above the cap; retries and resummarize bypass it.</span>
-          </div>
-          <div className="row-control">
-            <div className="row" style={{gap: 8}}>
-              <input type="number" step="0.25" min="0" value={cap}
-                     onChange={(e) => setCap(parseFloat(e.target.value) || 0)}
-                     style={{width: 100}}/>
-              <span className="muted mono" style={{fontSize: 12}}>USD</span>
-              <span className="muted" style={{fontSize: 12, marginLeft: 16}}>
-                Current 24h spend: <span className="tnum" style={{color: "var(--fg-soft)"}}>{fmtUsd(STATS.vast_spend_24h)}</span>
-                {" "}({((STATS.vast_spend_24h / cap) * 100).toFixed(0)}%)
-              </span>
-            </div>
-            <div className="bar-track" style={{maxWidth: 260}}>
-              <div style={{width: `${Math.min(100, (STATS.vast_spend_24h / cap) * 100)}%`}}/>
-            </div>
-          </div>
-        </div>
+type UserRole = "user" | "admin";
 
-        <div className="settings-row">
-          <div className="row-label">
-            Worker concurrency
-            <span className="hint">Postgres queue uses <code>FOR UPDATE SKIP LOCKED</code> so workers don't fight for jobs.</span>
-          </div>
-          <div className="row-control">
-            <div className="seg" style={{width: "fit-content"}}>
-              {[1, 2, 4, 8].map(n => (
-                <button key={n} className={n === 2 ? "active" : ""}>{n}</button>
-              ))}
-            </div>
-            <span className="muted mono" style={{fontSize: 12}}>
-              currently <span className="tnum" style={{color: "var(--fg-soft)"}}>{STATS.worker_pool.total}</span> workers
-            </span>
-          </div>
-        </div>
+type PromptVersionId = "v1" | "v2" | "v3";
+type ConfigKey =
+	| "daily_spend_cap_usd"
+	| "worker_concurrency"
+	| "bot_wall_retry"
+	| "public_base_url"
+	| "display_currency"
+	| "short_description_language"
+	| "webhook_default"
+	| "webhook_embed_transcript";
 
-        <div className="settings-row">
-          <div className="row-label">
-            yt-dlp bot-wall retry
-            <span className="hint">When YouTube returns "sign in to confirm you're not a bot", scribe cycles client= android-vr → web → mweb → tv with backoff.</span>
-          </div>
-          <div className="row-control">
-            <div className="row" style={{gap: 12, alignItems: "center"}}>
-              <span className={"toggle " + (keepBotwallRetries ? "on" : "")}
-                    onClick={() => setKeepBotwallRetries(v => !v)}/>
-              <span className="muted" style={{fontSize: 12.5}}>
-                {keepBotwallRetries ? "On — try 4 fallback clients before failing" : "Off — fail on first bot-wall"}
-              </span>
-            </div>
-          </div>
-        </div>
+type SettingsProps = {
+	tweaks: Tweaks;
+	replaceTweaks: (value: Tweaks) => void;
+};
 
-        <div className="settings-row">
-          <div className="row-label">
-            Public base URL
-            <span className="hint">Used to mint Chhoto shortlinks. Path is <code>/transcripts/&#123;id&#125;</code>.</span>
-          </div>
-          <div className="row-control">
-            <input type="url" value={publicBase}
-                   onChange={(e) => setPublicBase(e.target.value)}/>
-            <span className="muted mono" style={{fontSize: 11.5}}>
-              shortlinks resolve to <code>go.oklabs.uk/&lt;slug&gt;</code> → <code>{publicBase}/transcripts/142</code>
-            </span>
-          </div>
-        </div>
+type SettingsRowProps = {
+	label: string;
+	hint: string;
+	source?: string;
+	children: React.ReactNode;
+};
 
-        <div className="settings-row">
-          <div className="row-label">
-            Webhook callback
-            <span className="hint">scribe POSTs <code>JobView</code> JSON here on terminal status. Per-job <code>callback_url</code> overrides this.</span>
-          </div>
-          <div className="row-control">
-            <input type="url" value={webhook}
-                   onChange={(e) => setWebhook(e.target.value)}/>
-            <div className="row" style={{gap: 12, alignItems: "center"}}>
-              <span className={"toggle " + (embedTranscript ? "on" : "")}
-                    onClick={() => setEmbedTranscript(v => !v)}/>
-              <span className="muted" style={{fontSize: 12.5}}>
-                Embed <code>transcript</code> object in webhook payload
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
+const CONFIG_SAVED_EVENT = "scribe-config-saved";
+const configKeys: ConfigKey[] = [
+	"daily_spend_cap_usd",
+	"worker_concurrency",
+	"bot_wall_retry",
+	"public_base_url",
+	"display_currency",
+	"short_description_language",
+	"webhook_default",
+	"webhook_embed_transcript",
+];
+const promptVersions: PromptVersionId[] = ["v1", "v2", "v3"];
 
-      <div className="settings-group">
-        <h2>Summary prompt</h2>
-        <p className="group-sub">
-          Edited live · saved as <code>src/scribe/prompts/transcript-summary.md</code>.
-          Changes apply to new jobs and to <code>POST /resummarize</code>.
-        </p>
+export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
+	const auth = useAuth();
+	const [config, setConfig] = React.useState<Record<string, ConfigEntry>>({});
+	const [draft, setDraft] = React.useState<Record<ConfigKey, ConfigValue>>(
+		{} as Record<ConfigKey, ConfigValue>,
+	);
+	const [savedTweaks, setSavedTweaks] = React.useState<Tweaks>(tweaks);
+	const [dirtyKeys, setDirtyKeys] = React.useState<Set<ConfigKey>>(new Set());
+	const [restartKeys, setRestartKeys] = React.useState<string[]>([]);
+	const [extensionToken, setExtensionToken] = React.useState("");
+	const [promptList, setPromptList] = React.useState<PromptListResponse | null>(
+		null,
+	);
+	const [promptVersion, setPromptVersion] =
+		React.useState<PromptVersionId>("v1");
+	const [promptBody, setPromptBody] = React.useState("");
+	const [savedPromptBody, setSavedPromptBody] = React.useState("");
+	const [savedPromptVersion, setSavedPromptVersion] =
+		React.useState<PromptVersionId>("v1");
+	const [dryRunTranscriptId, setDryRunTranscriptId] = React.useState("");
+	const [dryRunMarkdown, setDryRunMarkdown] = React.useState<string | null>(
+		null,
+	);
+	const [status, setStatus] = React.useState<string | null>(null);
+	const [error, setError] = React.useState<string | null>(null);
+	const [loading, setLoading] = React.useState(true);
+	const [saving, setSaving] = React.useState(false);
+	const [dryRunning, setDryRunning] = React.useState(false);
+	const [creatingExtensionToken, setCreatingExtensionToken] =
+		React.useState(false);
+	const [showExtensionToken, setShowExtensionToken] = React.useState(false);
+	const [currentUser, setCurrentUser] = React.useState<CurrentUser | null>(
+		null,
+	);
+	const [adminUsers, setAdminUsers] = React.useState<AdminUser[]>([]);
+	const [accessLoading, setAccessLoading] = React.useState(true);
+	const [accessError, setAccessError] = React.useState<string | null>(null);
+	const [adminRequired, setAdminRequired] = React.useState(false);
+	const [userEmail, setUserEmail] = React.useState("");
+	const [userDisplayName, setUserDisplayName] = React.useState("");
+	const [userRole, setUserRole] = React.useState<UserRole>("user");
+	const [savingUser, setSavingUser] = React.useState(false);
+	const [disableTarget, setDisableTarget] = React.useState<AdminUser | null>(
+		null,
+	);
+	const [disablingUser, setDisablingUser] = React.useState(false);
 
-        <div className="settings-row" style={{gridTemplateColumns: "1fr"}}>
-          <div className="row-control">
-            <div className="row" style={{justifyContent: "space-between"}}>
-              <div className="row" style={{gap: 12}}>
-                <span className="chip">v3 · active</span>
-                <span className="chip" style={{cursor: "pointer"}}>v2</span>
-                <span className="chip" style={{cursor: "pointer"}}>v1</span>
-              </div>
-              <div className="row" style={{gap: 8}}>
-                <button className="btn ghost" style={{fontSize: 12, padding: "4px 8px"}}>
-                  <IconSparkle size={12}/> Dry-run
-                </button>
-                <span className="muted mono" style={{fontSize: 11.5}}>
-                  {prompt.length} chars · ~{Math.round(prompt.length / 4)} tokens
-                </span>
-              </div>
-            </div>
-            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)}
-                      spellCheck={false}/>
-          </div>
-        </div>
-      </div>
+	const promptDirty =
+		promptBody !== savedPromptBody || promptVersion !== savedPromptVersion;
+	const appearanceDirty = !tweaksEqual(tweaks, savedTweaks);
+	const hasUnsavedChanges =
+		dirtyKeys.size > 0 || promptDirty || appearanceDirty;
 
-      <div className="settings-group">
-        <h2>Appearance</h2>
-        <p className="group-sub">
-          Theme tweaks also live in the floating Tweaks panel — useful when you're sharing a shortlink with a friend whose taste differs from yours.
-        </p>
+	const loadSettings = React.useCallback(async () => {
+		setLoading(true);
+		setError(null);
+		try {
+			const [configResponse, promptsResponse] = await Promise.all([
+				auth.protectedFetch("/api/config"),
+				auth.protectedFetch("/api/prompts"),
+			]);
+			if (!configResponse.ok) {
+				if (isAuthStatus(configResponse.status)) {
+					throw new Error("Sign in required to load operator settings.");
+				}
+				throw new Error(await responseMessage(configResponse));
+			}
+			if (!promptsResponse.ok) {
+				if (isAuthStatus(promptsResponse.status)) {
+					throw new Error("Sign in required to load operator settings.");
+				}
+				throw new Error(await responseMessage(promptsResponse));
+			}
+			const configBody = (await configResponse.json()) as ConfigResponse;
+			const promptsBody = (await promptsResponse.json()) as PromptListResponse;
+			const activeVersion = promptsBody.active_version;
+			const promptResponse = await auth.protectedFetch(
+				`/api/prompts/${activeVersion}`,
+			);
+			if (!promptResponse.ok) {
+				throw new Error(await responseMessage(promptResponse));
+			}
+			const body = await promptResponse.text();
+			setConfig(configBody.config);
+			setDraft(draftFromConfig(configBody.config));
+			setDirtyKeys(new Set());
+			setRestartKeys(configBody.restart_required);
+			setPromptList(promptsBody);
+			setPromptVersion(activeVersion);
+			setSavedPromptVersion(activeVersion);
+			setPromptBody(body);
+			setSavedPromptBody(body);
+			setStatus(null);
+			return true;
+		} catch (loadError) {
+			setError(loadError instanceof Error ? loadError.message : "load failed");
+			return false;
+		} finally {
+			setLoading(false);
+		}
+	}, [auth]);
 
-        <div className="settings-row">
-          <div className="row-label">Theme</div>
-          <div className="row-control">
-            <div className="seg" style={{width: "fit-content"}}>
-              <button className={t.theme === "light" ? "active" : ""}
-                      onClick={() => setTweak("theme", "light")}>
-                <IconSun size={13}/> Light
-              </button>
-              <button className={t.theme === "dark" ? "active" : ""}
-                      onClick={() => setTweak("theme", "dark")}>
-                <IconMoon size={13}/> Dark
-              </button>
-            </div>
-          </div>
-        </div>
+	React.useEffect(() => {
+		void loadSettings();
+	}, [loadSettings]);
 
-        <div className="settings-row">
-          <div className="row-label">
-            Visual variant
-            <span className="hint">Three takes on the same product. They share data and layout — only the type system, palette, and chrome change.</span>
-          </div>
-          <div className="row-control">
-            <div className="seg" style={{width: "fit-content"}}>
-              <button className={t.variant === "paper" ? "active" : ""}
-                      onClick={() => setTweak("variant", "paper")}>Paper</button>
-              <button className={t.variant === "terminal" ? "active" : ""}
-                      onClick={() => setTweak("variant", "terminal")}>Terminal</button>
-              <button className={t.variant === "console" ? "active" : ""}
-                      onClick={() => setTweak("variant", "console")}>Console</button>
-              <button className={t.variant === "field" ? "active" : ""}
-                      onClick={() => setTweak("variant", "field")}>Field</button>
-            </div>
-          </div>
-        </div>
+	const loadAccess = React.useCallback(async () => {
+		setAccessLoading(true);
+		setAccessError(null);
+		setAdminRequired(false);
+		try {
+			const meResponse = await auth.protectedFetch("/api/auth/me");
+			if (!meResponse.ok) {
+				if (isAuthStatus(meResponse.status)) {
+					setCurrentUser(null);
+					setAdminUsers([]);
+					return false;
+				}
+				throw new Error(await responseMessage(meResponse));
+			}
+			const me = (await meResponse.json()) as CurrentUser;
+			setCurrentUser(me);
+			if (!canManageUsers(me)) {
+				setAdminUsers([]);
+				setAdminRequired(true);
+				return true;
+			}
+			const usersResponse = await auth.protectedFetch("/api/admin/users");
+			if (!usersResponse.ok) {
+				if (usersResponse.status === 403) {
+					setAdminUsers([]);
+					setAdminRequired(true);
+					return true;
+				}
+				throw new Error(await responseMessage(usersResponse));
+			}
+			setAdminUsers((await usersResponse.json()) as AdminUser[]);
+			return true;
+		} catch (loadError) {
+			setAccessError(
+				loadError instanceof Error ? loadError.message : "access load failed",
+			);
+			return false;
+		} finally {
+			setAccessLoading(false);
+		}
+	}, [auth]);
 
-        <div className="settings-row">
-          <div className="row-label">Library default layout</div>
-          <div className="row-control">
-            <div className="seg" style={{width: "fit-content"}}>
-              <button className={t.libraryLayout === "table" ? "active" : ""}
-                      onClick={() => setTweak("libraryLayout", "table")}>
-                <IconTable size={13}/> Table
-              </button>
-              <button className={t.libraryLayout === "feed" ? "active" : ""}
-                      onClick={() => setTweak("libraryLayout", "feed")}>
-                <IconFeed size={13}/> Feed
-              </button>
-              <button className={t.libraryLayout === "cards" ? "active" : ""}
-                      onClick={() => setTweak("libraryLayout", "cards")}>
-                <IconCards size={13}/> Cards
-              </button>
-            </div>
-          </div>
-        </div>
+	React.useEffect(() => {
+		void loadAccess();
+	}, [loadAccess]);
 
-        <div className="settings-row">
-          <div className="row-label">Density</div>
-          <div className="row-control">
-            <div className="seg" style={{width: "fit-content"}}>
-              {["compact","cozy","comfy"].map(d => (
-                <button key={d} className={t.density === d ? "active" : ""}
-                        onClick={() => setTweak("density", d)}>{d}</button>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
+	async function selectPromptVersion(next: string) {
+		const version = next as PromptVersionId;
+		setError(null);
+		try {
+			const response = await auth.protectedFetch(`/api/prompts/${version}`);
+			if (!response.ok) {
+				throw new Error(await responseMessage(response));
+			}
+			const body = await response.text();
+			setPromptVersion(version);
+			setPromptBody(body);
+			if (version === savedPromptVersion) {
+				setSavedPromptBody(body);
+			}
+		} catch (selectError) {
+			setError(
+				selectError instanceof Error
+					? selectError.message
+					: "prompt load failed",
+			);
+		}
+	}
 
-      <AccessGroup/>
+	function updateDraft(key: ConfigKey, value: ConfigValue) {
+		setDraft((current) => ({ ...current, [key]: value }));
+		setDirtyKeys((current) => {
+			const next = new Set(current);
+			const saved = config[key]?.value;
+			if (value === saved) {
+				next.delete(key);
+			} else {
+				next.add(key);
+			}
+			return next;
+		});
+	}
 
-      <div className="settings-group">
-        <h2>API access</h2>
-        <p className="group-sub">Used by the Telegram bot, Obsidian plugin, and curl-from-anywhere.</p>
+	async function save() {
+		setSaving(true);
+		setError(null);
+		setStatus(null);
+		try {
+			if (dirtyKeys.size > 0) {
+				const payload: Partial<Record<ConfigKey, ConfigValue>> = {};
+				for (const key of dirtyKeys) {
+					payload[key] = draft[key];
+				}
+				const response = await auth.protectedFetch("/api/config", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(payload),
+				});
+				if (!response.ok) {
+					throw new Error(await responseMessage(response));
+				}
+				const body = (await response.json()) as ConfigResponse;
+				setRestartKeys(body.restart_required);
+			}
+			if (promptBody !== savedPromptBody) {
+				const response = await auth.protectedFetch(
+					`/api/prompts/${promptVersion}`,
+					{
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ body: promptBody }),
+					},
+				);
+				if (!response.ok) {
+					throw new Error(await responseMessage(response));
+				}
+			}
+			if (promptVersion !== savedPromptVersion) {
+				const response = await auth.protectedFetch("/api/prompts/active", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ version: promptVersion }),
+				});
+				if (!response.ok) {
+					throw new Error(await responseMessage(response));
+				}
+			}
+			if (await loadSettings()) {
+				document.dispatchEvent(new CustomEvent(CONFIG_SAVED_EVENT));
+				setSavedTweaks(tweaks);
+				setStatus("Saved");
+			}
+		} catch (saveError) {
+			setError(saveError instanceof Error ? saveError.message : "save failed");
+		} finally {
+			setSaving(false);
+		}
+	}
 
-        <div className="settings-row">
-          <div className="row-label">
-            Bearer token
-            <span className="hint">Required for <code>POST /jobs</code>, <code>POST /resummarize</code>, and admin routes.</span>
-          </div>
-          <div className="row-control">
-            <div className="row" style={{gap: 8}}>
-              <input type="text" value="scribe_••••••••••••••••••••" readOnly style={{maxWidth: 320}}/>
-              <button className="btn"><IconCopy size={14}/> Copy</button>
-              <button className="btn">Rotate</button>
-            </div>
-            <span className="muted mono" style={{fontSize: 11.5}}>
-              last used 4m ago · 142 calls today
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+	async function dryRun() {
+		const transcriptId = Number.parseInt(dryRunTranscriptId, 10);
+		if (!Number.isFinite(transcriptId)) {
+			setError("Dry-run transcript id must be a number");
+			return;
+		}
+		setDryRunning(true);
+		setError(null);
+		try {
+			const response = await auth.protectedFetch("/api/prompts/dry-run", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					version: promptVersion,
+					transcript_id: transcriptId,
+					prompt_body: promptBody,
+				}),
+			});
+			if (!response.ok) {
+				throw new Error(await responseMessage(response));
+			}
+			const body = (await response.json()) as { summary_md: string };
+			setDryRunMarkdown(body.summary_md);
+		} catch (dryRunError) {
+			setError(
+				dryRunError instanceof Error ? dryRunError.message : "dry-run failed",
+			);
+		} finally {
+			setDryRunning(false);
+		}
+	}
+
+	function storeExtensionToken(nextToken: string) {
+		setExtensionToken(nextToken.trim());
+		setShowExtensionToken(true);
+	}
+
+	async function copyExtensionToken() {
+		if (!extensionToken) {
+			return;
+		}
+		if (await writeClipboard(extensionToken)) {
+			setStatus("Extension token copied");
+		} else {
+			setError("Could not copy token; select and copy it manually.");
+		}
+	}
+
+	async function createExtensionToken() {
+		setCreatingExtensionToken(true);
+		setError(null);
+		setStatus(null);
+		try {
+			const response = await auth.protectedFetch("/api/auth/extension-token", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ label: "Chrome extension" }),
+			});
+			if (!response.ok) {
+				throw new Error(await responseMessage(response));
+			}
+			const body = (await response.json()) as ExtensionTokenResponse;
+			storeExtensionToken(body.token);
+			if (await writeClipboard(body.token)) {
+				setStatus("Extension token created and copied");
+			} else {
+				setStatus("Extension token created; select and copy it manually.");
+			}
+		} catch (createError) {
+			setError(
+				createError instanceof Error
+					? createError.message
+					: "extension token creation failed",
+			);
+		} finally {
+			setCreatingExtensionToken(false);
+		}
+	}
+
+	async function saveUser() {
+		const email = userEmail.trim();
+		if (!email) {
+			setAccessError("Email is required.");
+			return;
+		}
+		setSavingUser(true);
+		setAccessError(null);
+		setStatus(null);
+		try {
+			const response = await auth.protectedFetch("/api/admin/users", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					email,
+					display_name: userDisplayName.trim() || null,
+					role: userRole,
+				}),
+			});
+			if (!response.ok) {
+				if (response.status === 403) {
+					setAdminRequired(true);
+					throw new Error("Admin role required to manage Scribe users.");
+				}
+				throw new Error(await responseMessage(response));
+			}
+			setUserEmail("");
+			setUserDisplayName("");
+			setUserRole("user");
+			await loadAccess();
+			setStatus("User saved");
+		} catch (saveError) {
+			setAccessError(
+				saveError instanceof Error ? saveError.message : "user save failed",
+			);
+		} finally {
+			setSavingUser(false);
+		}
+	}
+
+	function requestDisableUser(user: AdminUser) {
+		const reason = disableBlockedReason(user, currentUser, adminUsers);
+		if (reason !== null) {
+			setAccessError(reason);
+			return;
+		}
+		setDisableTarget(user);
+	}
+
+	async function disableUser() {
+		if (disableTarget === null) {
+			return;
+		}
+		const reason = disableBlockedReason(disableTarget, currentUser, adminUsers);
+		if (reason !== null) {
+			setDisableTarget(null);
+			setAccessError(reason);
+			return;
+		}
+		setDisablingUser(true);
+		setAccessError(null);
+		setStatus(null);
+		try {
+			const response = await auth.protectedFetch(
+				`/api/admin/users/${disableTarget.id}/disable`,
+				{ method: "POST" },
+			);
+			if (!response.ok) {
+				if (response.status === 403) {
+					setAdminRequired(true);
+					throw new Error("Admin role required to manage Scribe users.");
+				}
+				throw new Error(await responseMessage(response));
+			}
+			setDisableTarget(null);
+			await loadAccess();
+			setStatus("User disabled");
+		} catch (disableError) {
+			setAccessError(
+				disableError instanceof Error
+					? disableError.message
+					: "user disable failed",
+			);
+		} finally {
+			setDisablingUser(false);
+		}
+	}
+
+	return (
+		<section className="settings-page pane">
+			<header className="pane-header">
+				<div>
+					<p className="eyebrow">Settings</p>
+					<h1 className="pane-h1">Pipeline, summaries, appearance, access</h1>
+					<p className="pane-sub">
+						Runtime controls are saved in the service database and refreshed
+						from the API.
+					</p>
+				</div>
+				<div className="settings-actions">
+					<span className="access-status">{auth.accessStatus}</span>
+					{!auth.canWrite && auth.clerkConfigured ? (
+						<>
+							<button
+								className="btn"
+								type="button"
+								onClick={() => void auth.signUp()}
+								disabled={!auth.clerkReady || auth.authRedirectInFlight}
+								title={auth.authBlockedMessage ?? undefined}
+							>
+								Sign up
+							</button>
+							<button
+								className="btn ghost"
+								type="button"
+								onClick={() => void auth.signIn()}
+								disabled={!auth.clerkReady || auth.authRedirectInFlight}
+								title={auth.authBlockedMessage ?? undefined}
+							>
+								Sign in
+							</button>
+						</>
+					) : null}
+					{auth.accessStatus === "Signed in" ? (
+						<button className="btn ghost" type="button" onClick={auth.signOut}>
+							Sign out
+						</button>
+					) : null}
+					<button className="btn ghost" type="button" onClick={loadSettings}>
+						Refresh
+					</button>
+					<button
+						className="btn primary"
+						type="button"
+						disabled={saving || loading || !hasUnsavedChanges}
+						onClick={save}
+					>
+						{saving ? "Saving" : "Save"}
+					</button>
+				</div>
+			</header>
+
+			{restartKeys.includes("worker_concurrency") ||
+			dirtyKeys.has("worker_concurrency") ? (
+				<output className="settings-banner warn">
+					<span>Worker concurrency changes require a restart.</span>
+					<code>docker compose restart scribe</code>
+				</output>
+			) : null}
+
+			{error !== null ? (
+				<div className="settings-banner err" role="alert">
+					{error}
+				</div>
+			) : null}
+			{status !== null ? (
+				<output className="settings-banner ok">{status}</output>
+			) : null}
+
+			<div className="settings-layout" aria-busy={loading}>
+				<AccessSection
+					currentUser={currentUser}
+					users={adminUsers}
+					loading={accessLoading}
+					error={accessError ?? auth.authBlockedMessage}
+					adminRequired={adminRequired}
+					auth={auth}
+					email={userEmail}
+					displayName={userDisplayName}
+					role={userRole}
+					savingUser={savingUser}
+					onEmail={setUserEmail}
+					onDisplayName={setUserDisplayName}
+					onRole={setUserRole}
+					onSaveUser={saveUser}
+					onDisableRequest={requestDisableUser}
+					onRefresh={loadAccess}
+				/>
+
+				<section className="settings-group">
+					<h2 className="section-label">API access</h2>
+					<TokenRow
+						token={extensionToken}
+						showToken={showExtensionToken}
+						isCreating={creatingExtensionToken}
+						canCreate={auth.accessStatus === "Signed in"}
+						onCreate={createExtensionToken}
+						onCopy={copyExtensionToken}
+						onToggleShow={() => setShowExtensionToken((value) => !value)}
+					/>
+				</section>
+
+				<section className="settings-group">
+					<h2 className="section-label">Pipeline</h2>
+					<NumberRow
+						label="Daily spend cap"
+						hint="Rolling 24-hour Vast.ai cap in USD; 0 disables the cap."
+						source={config.daily_spend_cap_usd?.source}
+						value={numberDraft(draft.daily_spend_cap_usd)}
+						min={0}
+						step={0.25}
+						disabled={!isMutable(config.daily_spend_cap_usd)}
+						onChange={(value) => updateDraft("daily_spend_cap_usd", value)}
+					/>
+					<NumberRow
+						label="Worker concurrency"
+						hint="Number of local pipeline workers. Restart required."
+						source={config.worker_concurrency?.source}
+						value={numberDraft(draft.worker_concurrency)}
+						min={1}
+						step={1}
+						disabled={!isMutable(config.worker_concurrency)}
+						onChange={(value) => updateDraft("worker_concurrency", value)}
+					/>
+					<ToggleRow
+						label="Bot-wall retry"
+						hint="Enable alternate downloader retries when YouTube blocks a client."
+						source={config.bot_wall_retry?.source}
+						checked={booleanDraft(draft.bot_wall_retry)}
+						disabled={!isMutable(config.bot_wall_retry)}
+						onChange={(value) => updateDraft("bot_wall_retry", value)}
+					/>
+					<UrlRow
+						label="Public base URL"
+						hint="Used for generated web links and shortlink targets."
+						source={config.public_base_url?.source}
+						value={stringDraft(draft.public_base_url)}
+						disabled={!isMutable(config.public_base_url)}
+						onChange={(value) => updateDraft("public_base_url", value)}
+					/>
+					<LanguageRow
+						label="Card description language"
+						hint="Language used for generated short descriptions in the library feed."
+						source={config.short_description_language?.source}
+						value={stringDraft(draft.short_description_language)}
+						disabled={!isMutable(config.short_description_language)}
+						onChange={(value) =>
+							updateDraft("short_description_language", value)
+						}
+					/>
+					<CurrencyRow
+						label="Display currency"
+						hint="Display Vast costs in the UI. Stored costs and spend caps remain USD."
+						source={config.display_currency?.source}
+						value={stringDraft(draft.display_currency)}
+						disabled={!isMutable(config.display_currency)}
+						onChange={(value) => updateDraft("display_currency", value)}
+					/>
+					<UrlRow
+						label="Default webhook"
+						hint="Callback URL used when a job does not provide one."
+						source={config.webhook_default?.source}
+						value={stringDraft(draft.webhook_default)}
+						disabled={!isMutable(config.webhook_default)}
+						onChange={(value) => updateDraft("webhook_default", value)}
+					/>
+					<ToggleRow
+						label="Embed transcript"
+						hint="Include transcript markdown in webhook payloads."
+						source={config.webhook_embed_transcript?.source}
+						checked={booleanDraft(draft.webhook_embed_transcript)}
+						disabled={!isMutable(config.webhook_embed_transcript)}
+						onChange={(value) => updateDraft("webhook_embed_transcript", value)}
+					/>
+				</section>
+
+				<PromptEditor
+					promptList={promptList}
+					version={promptVersion}
+					body={promptBody}
+					transcriptId={dryRunTranscriptId}
+					isDirty={promptDirty}
+					isDryRunning={dryRunning}
+					onVersion={selectPromptVersion}
+					onBody={setPromptBody}
+					onTranscriptId={setDryRunTranscriptId}
+					onDryRun={dryRun}
+				/>
+
+				<section className="settings-group">
+					<h2 className="section-label">Appearance</h2>
+					<SegRow
+						label="Library layout"
+						hint="Default layout for transcript browsing."
+						value={tweaks.libraryLayout}
+						options={["feed", "table", "cards"]}
+						onChange={(value) =>
+							replaceTweaks({
+								...tweaks,
+								libraryLayout: value as LibraryLayout,
+							})
+						}
+					/>
+				</section>
+			</div>
+
+			{dryRunMarkdown !== null ? (
+				<div className="modal-backdrop" role="presentation">
+					<dialog className="settings-modal" aria-label="Dry-run summary" open>
+						<header>
+							<strong>Dry-run summary</strong>
+							<button
+								className="iconbtn"
+								type="button"
+								aria-label="Close dry-run"
+								onClick={() => setDryRunMarkdown(null)}
+							>
+								x
+							</button>
+						</header>
+						<Markdown body={dryRunMarkdown} />
+					</dialog>
+				</div>
+			) : null}
+			{disableTarget !== null ? (
+				<ConfirmDialog
+					title="Disable user"
+					body={`Disable ${userLabel(disableTarget)}? They will lose Scribe access until an admin adds them again.`}
+					confirmLabel="Disable"
+					busyLabel="Disabling"
+					busy={disablingUser}
+					onCancel={() => setDisableTarget(null)}
+					onConfirm={disableUser}
+				/>
+			) : null}
+		</section>
+	);
 }
 
-Object.assign(window, { SettingsPage });
+export function AccessSection({
+	currentUser,
+	users,
+	loading,
+	error,
+	adminRequired,
+	auth,
+	email,
+	displayName,
+	role,
+	savingUser,
+	onEmail,
+	onDisplayName,
+	onRole,
+	onSaveUser,
+	onDisableRequest,
+	onRefresh,
+}: {
+	currentUser: CurrentUser | null;
+	users: AdminUser[];
+	loading: boolean;
+	error: string | null;
+	adminRequired: boolean;
+	auth: ReturnType<typeof useAuth>;
+	email: string;
+	displayName: string;
+	role: UserRole;
+	savingUser: boolean;
+	onEmail: (value: string) => void;
+	onDisplayName: (value: string) => void;
+	onRole: (value: UserRole) => void;
+	onSaveUser: () => void;
+	onDisableRequest: (user: AdminUser) => void;
+	onRefresh: () => void;
+}) {
+	const signedOut =
+		currentUser === null &&
+		!loading &&
+		error === null &&
+		auth.authBlockedMessage === null;
+	const adminControlsEnabled =
+		currentUser !== null && canManageUsers(currentUser) && !adminRequired;
+	const activeUsers = users.filter((user) => !user.disabled).length;
+	const adminUsers = users.filter(
+		(user) => user.role === "admin" && !user.disabled,
+	).length;
+	const linkedUsers = users.filter(
+		(user) => user.clerk_subject !== null,
+	).length;
 
-// ─── Access group (users / authorization) ───────────────────────────────────
-function AccessGroup() {
-  const [users, setUsers] = React.useState(SCRIBE_USERS);
-  const [showAdd, setShowAdd] = React.useState(false);
-  const [draft, setDraft] = React.useState({ email: "", name: "", role: "user" });
-  const [refreshing, setRefreshing] = React.useState(false);
-  const [openMenu, setOpenMenu] = React.useState(null);
+	return (
+		<section className="settings-group access-group">
+			<div className="prompt-head">
+				<h2 className="section-label">Access</h2>
+				<button className="btn ghost" type="button" onClick={onRefresh}>
+					Refresh access
+				</button>
+			</div>
 
-  const me = users.find(u => u.is_me);
-  const total = users.length;
-  const active = users.filter(u => u.state === "active").length;
-  const admins = users.filter(u => u.role === "admin" && u.state === "active").length;
-  const linked = users.filter(u => u.source === "clerk").length;
+			<div className="access-card">
+				<div>
+					<div className="row-label">
+						{currentUser !== null ? userIdentity(currentUser) : "Not signed in"}
+					</div>
+					<div className="hint">
+						{currentUser !== null
+							? "Current Scribe auth state from /api/auth/me."
+							: "Sign in to see your Scribe role and access details."}
+					</div>
+				</div>
+				<div className="access-facts">
+					<span className="chip info">role {currentUser?.role ?? "none"}</span>
+					<span className="chip">kind {currentUser?.kind ?? "signed-out"}</span>
+					<span className="chip">
+						{auth.trustedNetwork ? "trusted network" : auth.accessStatus}
+					</span>
+				</div>
+			</div>
 
-  React.useEffect(() => {
-    if (!openMenu) return;
-    const close = () => setOpenMenu(null);
-    window.addEventListener("click", close);
-    return () => window.removeEventListener("click", close);
-  }, [openMenu]);
+			{currentUser !== null ? (
+				<div className="access-me">
+					<div className="avatar">{initialsOf(userIdentity(currentUser))}</div>
+					<div className="info">
+						<div className="name">
+							{userIdentity(currentUser)}
+							<span className={`role-chip ${currentUser.role}`}>
+								you · {currentUser.role}
+							</span>
+						</div>
+						<div className="email">
+							{currentUser.email ?? currentUser.kind} · {currentUser.kind}
+						</div>
+					</div>
+					<div className="spacer" />
+					{auth.accessStatus === "Signed in" ? (
+						<button className="btn ghost" type="button" onClick={auth.signOut}>
+							Sign out
+						</button>
+					) : null}
+				</div>
+			) : null}
 
-  function refresh() {
-    setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 600);
-  }
-  function addUser() {
-    if (!draft.email) return;
-    setUsers(us => [...us, {
-      email: draft.email,
-      name: draft.name || draft.email.split("@")[0],
-      role: draft.role,
-      state: "active",
-      source: "manual",
-      clerk_subject: null,
-      last_seen: null,
-      calls_24h: 0,
-    }]);
-    setDraft({ email: "", name: "", role: "user" });
-    setShowAdd(false);
-  }
-  function toggleState(email) {
-    setUsers(us => us.map(u => u.email === email
-      ? { ...u, state: u.state === "active" ? "disabled" : "active" }
-      : u));
-    setOpenMenu(null);
-  }
-  function setRole(email, role) {
-    setUsers(us => us.map(u => u.email === email ? { ...u, role } : u));
-    setOpenMenu(null);
-  }
-  function unlink(email) {
-    setUsers(us => us.map(u => u.email === email
-      ? { ...u, clerk_subject: null, source: "manual" } : u));
-    setOpenMenu(null);
-  }
-  function remove(email) {
-    setUsers(us => us.filter(u => u.email !== email));
-    setOpenMenu(null);
-  }
+			{error !== null ? (
+				<div className="settings-banner err" role="alert">
+					<span>{error}</span>
+					{auth.authBlockedMessage !== null ? (
+						<button
+							className="btn ghost"
+							type="button"
+							onClick={onRefresh}
+							disabled={loading}
+						>
+							Retry access
+						</button>
+					) : (
+						<button
+							className="btn ghost"
+							type="button"
+							onClick={() => void auth.signIn()}
+							disabled={!auth.clerkReady || auth.authRedirectInFlight}
+						>
+							Retry sign in
+						</button>
+					)}
+				</div>
+			) : null}
 
-  return (
-    <div className="settings-group">
-      <div className="row" style={{alignItems: "baseline", justifyContent: "space-between", marginBottom: 4}}>
-        <h2>Access</h2>
-        <div className="row" style={{gap: 8}}>
-          <button className="btn ghost" onClick={refresh} disabled={refreshing}
-                  style={{fontSize: 12, padding: "4px 8px"}}>
-            {refreshing ? <span className="spinner"/> : <IconRefresh size={12}/>}
-            {refreshing ? "Refreshing…" : "Refresh"}
-          </button>
-          <button className="btn primary" onClick={() => setShowAdd(s => !s)}
-                  style={{fontSize: 12, padding: "5px 10px"}}>
-            <IconPlus size={12}/> Add user
-          </button>
-        </div>
-      </div>
-      <p className="group-sub">
-        Email allowlist enforced on every <code>POST /jobs</code>, web UI, and webhook.
-        Users with role <code>admin</code> can edit settings, retry failed jobs, and manage access.
-      </p>
+			{signedOut ? (
+				<div className="settings-banner warn">
+					<span>Sign in required to manage Scribe access.</span>
+					<div className="settings-auth-actions">
+						<button
+							className="btn"
+							type="button"
+							onClick={() => void auth.signUp()}
+							disabled={!auth.clerkReady || auth.authRedirectInFlight}
+						>
+							Sign up
+						</button>
+						<button
+							className="btn ghost"
+							type="button"
+							onClick={() => void auth.signIn()}
+							disabled={!auth.clerkReady || auth.authRedirectInFlight}
+						>
+							Sign in
+						</button>
+					</div>
+				</div>
+			) : null}
 
-      {me && <CurrentSession me={me}/>}
+			{adminRequired ? (
+				<div className="settings-banner warn">
+					Admin role required to manage Scribe users.
+				</div>
+			) : null}
 
-      <div className="access-toolbar">
-        <span className="stat"><strong>{active}</strong> active</span>
-        <span className="stat"><span className="dot"/><strong>{admins}</strong> admins</span>
-        <span className="stat"><span className="dot"/><strong>{linked}</strong> Clerk-linked</span>
-        <span className="stat"><span className="dot"/><strong>{total - active}</strong> disabled</span>
-      </div>
+			<div className="access-toolbar">
+				<span className="stat">
+					<strong>{activeUsers}</strong> active
+				</span>
+				<span className="stat">
+					<span className="dot" />
+					<strong>{adminUsers}</strong> admins
+				</span>
+				<span className="stat">
+					<span className="dot" />
+					<strong>{linkedUsers}</strong> Clerk-linked
+				</span>
+				<span className="stat">
+					<span className="dot" />
+					<strong>{users.length - activeUsers}</strong> disabled
+				</span>
+			</div>
 
-      {showAdd && (
-        <div className="add-user-form">
-          <input placeholder="email@domain.tld" type="email"
-                 value={draft.email}
-                 onChange={(e) => setDraft(d => ({...d, email: e.target.value}))}
-                 onKeyDown={(e) => { if (e.key === "Enter") addUser(); }}/>
-          <input placeholder="Display name (optional)"
-                 value={draft.name}
-                 onChange={(e) => setDraft(d => ({...d, name: e.target.value}))}/>
-          <select value={draft.role} onChange={(e) => setDraft(d => ({...d, role: e.target.value}))}>
-            <option value="user">user</option>
-            <option value="admin">admin</option>
-          </select>
-          <div className="row" style={{gap: 4}}>
-            <button className="btn primary" onClick={addUser} disabled={!draft.email}
-                    style={{fontSize: 12, padding: "6px 10px"}}>
-              Add
-            </button>
-            <button className="btn ghost" onClick={() => setShowAdd(false)}
-                    style={{fontSize: 12, padding: "6px 10px"}}>
-              <IconX size={12}/>
-            </button>
-          </div>
-        </div>
-      )}
+			<div className="add-user-form" aria-disabled={!adminControlsEnabled}>
+				<input
+					className="settings-input"
+					type="email"
+					value={email}
+					placeholder="user@example.test"
+					disabled={!adminControlsEnabled || savingUser}
+					onChange={(event) => onEmail(event.currentTarget.value)}
+				/>
+				<input
+					className="settings-input"
+					value={displayName}
+					placeholder="Display name"
+					disabled={!adminControlsEnabled || savingUser}
+					onChange={(event) => onDisplayName(event.currentTarget.value)}
+				/>
+				<select
+					className="settings-input"
+					value={role}
+					disabled={!adminControlsEnabled || savingUser}
+					onChange={(event) => onRole(event.currentTarget.value as UserRole)}
+				>
+					<option value="user">user</option>
+					<option value="admin">admin</option>
+				</select>
+				<button
+					className="btn primary"
+					type="button"
+					disabled={!adminControlsEnabled || savingUser}
+					onClick={onSaveUser}
+				>
+					{savingUser ? "Saving user" : "Add or update user"}
+				</button>
+			</div>
 
-      <div style={{
-        border: "var(--rule)",
-        borderRadius: "var(--radius)",
-        overflow: "hidden",
-        background: "var(--bg-card)",
-      }}>
-        <table className="users-table">
-          <colgroup>
-            <col className="c-user"/>
-            <col className="c-role"/>
-            <col className="c-state"/>
-            <col className="c-activity"/>
-            <col className="c-clerk"/>
-            <col className="c-act"/>
-          </colgroup>
-          <thead>
-            <tr>
-              <th style={{paddingLeft: 16}}>User</th>
-              <th>Role</th>
-              <th>Status</th>
-              <th>Activity · 24h</th>
-              <th>Clerk identity</th>
-              <th style={{paddingRight: 16}}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map(u => (
-              <UserRow key={u.email} u={u}
-                       openMenu={openMenu === u.email}
-                       onOpenMenu={() => setOpenMenu(openMenu === u.email ? null : u.email)}
-                       onToggle={() => toggleState(u.email)}
-                       onSetRole={(r) => setRole(u.email, r)}
-                       onUnlink={() => unlink(u.email)}
-                       onRemove={() => remove(u.email)}/>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="row" style={{marginTop: 10, fontSize: 11.5}}>
-        <span className="mono muted">
-          <code>GET /api/auth/users</code> · admin only
-        </span>
-        <div className="spacer"/>
-        <a className="mono" style={{fontSize: 11.5, color: "var(--link)"}}>
-          View audit log →
-        </a>
-      </div>
-    </div>
-  );
+			<div className="access-table-wrap">
+				<table className="users-table">
+					<colgroup>
+						<col className="c-user" />
+						<col className="c-role" />
+						<col className="c-state" />
+						<col className="c-activity" />
+						<col className="c-clerk" />
+						<col className="c-act" />
+					</colgroup>
+					<thead>
+						<tr>
+							<th>User</th>
+							<th>Role</th>
+							<th>Status</th>
+							<th>Updated</th>
+							<th>Clerk identity</th>
+							<th>Action</th>
+						</tr>
+					</thead>
+					<tbody>
+						{users.length > 0 ? (
+							users.map((user) => {
+								const blockReason = disableBlockedReason(
+									user,
+									currentUser,
+									users,
+								);
+								return (
+									<tr
+										key={user.id}
+										className={user.disabled ? "disabled" : undefined}
+									>
+										<td>
+											<div
+												className={`u-id${currentUser?.user_id === user.id ? " me" : ""}`}
+											>
+												<div className="u-avatar">
+													{initialsOf(userLabel(user))}
+												</div>
+												<div className="u-copy">
+													<div className="u-name">
+														<span>{userLabel(user)}</span>
+														{currentUser?.user_id === user.id ? (
+															<span className="u-you">you</span>
+														) : null}
+													</div>
+													<div className="u-email">{user.primary_email}</div>
+												</div>
+											</div>
+										</td>
+										<td>
+											<span className={`role-chip ${user.role}`}>
+												{user.role}
+											</span>
+										</td>
+										<td>
+											<span
+												className={`state-cell${user.disabled ? " disabled" : ""}`}
+											>
+												<span className="dot" />
+												{user.disabled ? "disabled" : "active"}
+											</span>
+										</td>
+										<td className="mono tnum">{formatDate(user.updated_at)}</td>
+										<td>
+											{user.clerk_subject !== null ? (
+												<span
+													className="u-subject linked"
+													title={user.clerk_subject}
+												>
+													{shortSubject(user.clerk_subject)}
+												</span>
+											) : (
+												<span className="u-subject-pending">
+													manual · link on sign-in
+												</span>
+											)}
+										</td>
+										<td>
+											<div className="row-actions">
+												<button
+													className="btn ghost"
+													type="button"
+													disabled={
+														!adminControlsEnabled ||
+														user.disabled ||
+														blockReason !== null
+													}
+													title={blockReason ?? undefined}
+													onClick={() => onDisableRequest(user)}
+												>
+													Disable
+												</button>
+											</div>
+										</td>
+									</tr>
+								);
+							})
+						) : (
+							<tr>
+								<td colSpan={6}>
+									{loading ? "Loading users" : "No real users to display"}
+								</td>
+							</tr>
+						)}
+					</tbody>
+				</table>
+			</div>
+		</section>
+	);
 }
 
-function CurrentSession({ me }) {
-  return (
-    <div className="access-me">
-      <div className="avatar">{initialsOf(me.name)}</div>
-      <div className="info">
-        <div className="name">
-          {me.name}
-          <span className="role-chip admin" style={{marginLeft: 8, fontSize: 10}}>you · {me.role}</span>
-        </div>
-        <div className="email">{me.email} · signed in via Clerk · {fmtRelative(me.last_seen)}</div>
-      </div>
-      <div className="spacer"/>
-      <button className="btn ghost" style={{fontSize: 12, padding: "4px 8px"}}>
-        <IconExternal size={12}/> Manage in Clerk
-      </button>
-      <button className="btn" style={{fontSize: 12, padding: "4px 10px"}}>
-        Sign out
-      </button>
-    </div>
-  );
+export function SettingsRow({
+	label,
+	hint,
+	source,
+	children,
+}: SettingsRowProps) {
+	return (
+		<div className="settings-row">
+			<div>
+				<div className="row-label">{label}</div>
+				<div className="hint">{hint}</div>
+			</div>
+			<div className="row-control">
+				{source !== undefined ? (
+					<span className="source-chip">{source}</span>
+				) : null}
+				{children}
+			</div>
+		</div>
+	);
 }
 
-function UserRow({ u, openMenu, onOpenMenu, onToggle, onSetRole, onUnlink, onRemove }) {
-  const isMe = u.is_me;
-  return (
-    <tr className={u.state === "disabled" ? "disabled" : ""}>
-      <td style={{paddingLeft: 16}}>
-        <div className={"u-id" + (isMe ? " me" : "")}>
-          <div className="u-avatar">{initialsOf(u.name)}</div>
-          <div style={{minWidth: 0, flex: 1, overflow: "hidden"}}>
-            <div className="u-name">
-              <span>{u.name}</span>
-              {isMe && <span style={{fontSize: 10, color: "var(--accent)", fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase", flexShrink: 0}}>· you</span>}
-            </div>
-            <div className="u-email">{u.email}</div>
-          </div>
-        </div>
-      </td>
-      <td>
-        <span className={"role-chip " + u.role}>{u.role}</span>
-      </td>
-      <td>
-        <span className={"state-cell" + (u.state === "disabled" ? " disabled" : "")}>
-          <span className="dot"/>
-          {u.state}
-        </span>
-      </td>
-      <td className="mono tnum" style={{fontSize: 12, color: "var(--fg-soft)", whiteSpace: "nowrap"}}>
-        {u.last_seen
-          ? <>
-              <span>{u.calls_24h > 0 ? `${u.calls_24h} calls` : "idle"}</span>
-              <span className="muted"> · {fmtRelative(u.last_seen)}</span>
-            </>
-          : <span className="muted">never signed in</span>}
-      </td>
-      <td>
-        {u.clerk_subject
-          ? <span className="u-subject linked" title={u.clerk_subject}>
-              {u.clerk_subject.slice(0, 14)}…
-            </span>
-          : <span className="u-subject-pending">manual · link on sign-in</span>}
-      </td>
-      <td style={{paddingRight: 16, textAlign: "right", position: "relative", width: 80}}>
-        <div className="row-actions">
-          <button className="iconbtn" title="More actions"
-                  onClick={(e) => { e.stopPropagation(); onOpenMenu(); }}>
-            <IconDot size={14}/>
-          </button>
-        </div>
-        {openMenu && (
-          <div onClick={(e) => e.stopPropagation()} style={{
-            position: "absolute", right: 16, top: "calc(100% - 6px)",
-            zIndex: 5,
-            minWidth: 200,
-            background: "var(--bg-card)",
-            border: "var(--rule)",
-            borderRadius: "var(--radius)",
-            boxShadow: "var(--shadow)",
-            padding: 4,
-            display: "flex", flexDirection: "column",
-            fontSize: 13,
-          }}>
-            {u.role === "user"
-              ? <MenuItem onClick={() => onSetRole("admin")}>Promote to admin</MenuItem>
-              : <MenuItem onClick={() => onSetRole("user")} disabled={u.is_me}>
-                  Demote to user{u.is_me && <span className="muted"> · can't demote self</span>}
-                </MenuItem>}
-            <MenuItem onClick={onToggle} disabled={u.is_me}>
-              {u.state === "active" ? "Disable user" : "Re-enable user"}
-              {u.is_me && <span className="muted"> · can't disable self</span>}
-            </MenuItem>
-            {u.clerk_subject && (
-              <MenuItem onClick={onUnlink}>Unlink Clerk identity</MenuItem>
-            )}
-            <div style={{height: 1, background: "var(--border-soft)", margin: "4px 0"}}/>
-            <MenuItem onClick={onRemove} danger disabled={u.is_me}>
-              Remove from allowlist
-            </MenuItem>
-          </div>
-        )}
-      </td>
-    </tr>
-  );
+export function NumberRow({
+	label,
+	hint,
+	source,
+	value,
+	min,
+	step,
+	disabled,
+	onChange,
+}: {
+	label: string;
+	hint: string;
+	source?: string;
+	value: number;
+	min: number;
+	step: number;
+	disabled: boolean;
+	onChange: (value: number) => void;
+}) {
+	return (
+		<SettingsRow label={label} hint={hint} source={source}>
+			<input
+				className="settings-input number"
+				type="number"
+				value={value}
+				min={min}
+				step={step}
+				disabled={disabled}
+				onChange={(event) => onChange(event.currentTarget.valueAsNumber)}
+			/>
+		</SettingsRow>
+	);
 }
 
-function MenuItem({ onClick, children, danger, disabled }) {
-  return (
-    <div onClick={disabled ? null : onClick} style={{
-      padding: "7px 10px",
-      borderRadius: "var(--radius-sm)",
-      cursor: disabled ? "not-allowed" : "pointer",
-      opacity: disabled ? 0.5 : 1,
-      color: danger ? "var(--err)" : undefined,
-      whiteSpace: "nowrap",
-    }} onMouseEnter={(e) => !disabled && (e.currentTarget.style.background = "var(--bg-soft)")}
-       onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
-      {children}
-    </div>
-  );
+export function UrlRow({
+	label,
+	hint,
+	source,
+	value,
+	disabled,
+	onChange,
+}: {
+	label: string;
+	hint: string;
+	source?: string;
+	value: string;
+	disabled: boolean;
+	onChange: (value: string) => void;
+}) {
+	return (
+		<SettingsRow label={label} hint={hint} source={source}>
+			<input
+				className="settings-input url"
+				type="url"
+				value={value}
+				disabled={disabled}
+				placeholder="https://example.test/webhook"
+				onChange={(event) => onChange(event.currentTarget.value)}
+			/>
+		</SettingsRow>
+	);
 }
 
-function initialsOf(name) {
-  if (!name) return "?";
-  const parts = name.split(/[\s\-_.@]+/).filter(Boolean);
-  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-  return name.slice(0, 2).toUpperCase();
+export function ToggleRow({
+	label,
+	hint,
+	source,
+	checked,
+	disabled,
+	onChange,
+}: {
+	label: string;
+	hint: string;
+	source?: string;
+	checked: boolean;
+	disabled: boolean;
+	onChange: (value: boolean) => void;
+}) {
+	return (
+		<SettingsRow label={label} hint={hint} source={source}>
+			<label className="switch">
+				<input
+					type="checkbox"
+					checked={checked}
+					disabled={disabled}
+					onChange={(event) => onChange(event.currentTarget.checked)}
+				/>
+				<span />
+			</label>
+		</SettingsRow>
+	);
 }
 
+export function LanguageRow({
+	label,
+	hint,
+	source,
+	value,
+	disabled,
+	onChange,
+}: {
+	label: string;
+	hint: string;
+	source?: string;
+	value: string;
+	disabled: boolean;
+	onChange: (value: string) => void;
+}) {
+	return (
+		<SettingsRow label={label} hint={hint} source={source}>
+			<select
+				className="settings-input"
+				value={value || "ru"}
+				disabled={disabled}
+				onChange={(event) => onChange(event.currentTarget.value)}
+			>
+				<option value="ru">Russian</option>
+				<option value="en">English</option>
+			</select>
+		</SettingsRow>
+	);
+}
+
+export function CurrencyRow({
+	label,
+	hint,
+	source,
+	value,
+	disabled,
+	onChange,
+}: {
+	label: string;
+	hint: string;
+	source?: string;
+	value: string;
+	disabled: boolean;
+	onChange: (value: DisplayCurrency) => void;
+}) {
+	return (
+		<SettingsRow label={label} hint={hint} source={source}>
+			<select
+				className="settings-input"
+				value={value || "USD"}
+				disabled={disabled}
+				onChange={(event) =>
+					onChange(event.currentTarget.value as DisplayCurrency)
+				}
+			>
+				{displayCurrencies.map((currency) => (
+					<option value={currency} key={currency}>
+						{currency}
+					</option>
+				))}
+			</select>
+		</SettingsRow>
+	);
+}
+
+export function SegRow({
+	label,
+	hint,
+	value,
+	options,
+	onChange,
+}: {
+	label: string;
+	hint: string;
+	value: string;
+	options: string[];
+	onChange: (value: string) => void;
+}) {
+	return (
+		<SettingsRow label={label} hint={hint}>
+			<div className="seg" aria-label={label}>
+				{options.map((option) => (
+					<button
+						key={option}
+						type="button"
+						aria-pressed={option === value}
+						onClick={() => onChange(option)}
+					>
+						{option}
+					</button>
+				))}
+			</div>
+		</SettingsRow>
+	);
+}
+
+export function PromptEditor({
+	promptList,
+	version,
+	body,
+	transcriptId,
+	isDirty,
+	isDryRunning,
+	onVersion,
+	onBody,
+	onTranscriptId,
+	onDryRun,
+}: {
+	promptList: PromptListResponse | null;
+	version: PromptVersionId;
+	body: string;
+	transcriptId: string;
+	isDirty: boolean;
+	isDryRunning: boolean;
+	onVersion: (value: string) => void;
+	onBody: (value: string) => void;
+	onTranscriptId: (value: string) => void;
+	onDryRun: () => void;
+}) {
+	const selected = promptList?.versions.find((item) => item.id === version);
+	const chars = body.length;
+	const tokens = Math.ceil(chars / 4);
+
+	return (
+		<section className="settings-group prompt-group">
+			<div className="prompt-head">
+				<h2 className="section-label">Advanced summarizer prompt</h2>
+				{isDirty ? <span className="chip warn">dirty</span> : null}
+			</div>
+			<SegRow
+				label="Version"
+				hint={
+					selected?.first_line ??
+					"LLM instructions used to generate summary markdown, tags, and card descriptions."
+				}
+				value={version}
+				options={promptVersions}
+				onChange={onVersion}
+			/>
+			<div className="prompt-editor">
+				<textarea
+					value={body}
+					spellCheck={false}
+					onChange={(event) => onBody(event.currentTarget.value)}
+				/>
+				<div className="prompt-meter">
+					<span>{chars.toLocaleString()} chars</span>
+					<span>{tokens.toLocaleString()} tokens est.</span>
+					{selected !== undefined ? (
+						<span>{selected.len_tokens_est.toLocaleString()} saved est.</span>
+					) : null}
+				</div>
+			</div>
+			<SettingsRow
+				label="Dry-run"
+				hint="Run the selected prompt against an existing transcript id."
+			>
+				<input
+					className="settings-input number"
+					inputMode="numeric"
+					value={transcriptId}
+					placeholder="Transcript id"
+					onChange={(event) => onTranscriptId(event.currentTarget.value)}
+				/>
+				<button
+					className="btn"
+					type="button"
+					disabled={isDryRunning}
+					onClick={onDryRun}
+				>
+					{isDryRunning ? "Running" : "Dry-run"}
+				</button>
+			</SettingsRow>
+		</section>
+	);
+}
+
+export function TokenRow({
+	token,
+	showToken,
+	isCreating,
+	canCreate,
+	onCreate,
+	onCopy,
+	onToggleShow,
+}: {
+	token: string;
+	showToken: boolean;
+	isCreating: boolean;
+	canCreate: boolean;
+	onCreate: () => void;
+	onCopy: () => void;
+	onToggleShow: () => void;
+}) {
+	return (
+		<SettingsRow
+			label="Chrome extension token"
+			hint="Create a per-user bearer token, copy it, then paste it into the Chrome extension options."
+		>
+			<input
+				className="settings-input token"
+				type={showToken ? "text" : "password"}
+				value={token}
+				placeholder="No extension token created"
+				readOnly
+			/>
+			<button
+				className="btn"
+				type="button"
+				disabled={!canCreate || isCreating}
+				onClick={onCreate}
+			>
+				{isCreating ? "Creating" : "Create"}
+			</button>
+			<button className="btn" type="button" disabled={!token} onClick={onCopy}>
+				Copy
+			</button>
+			<button
+				className="btn ghost"
+				type="button"
+				disabled={!token}
+				onClick={onToggleShow}
+			>
+				{showToken ? "Hide" : "Show"}
+			</button>
+		</SettingsRow>
+	);
+}
+
+async function writeClipboard(value: string): Promise<boolean> {
+	try {
+		await navigator.clipboard.writeText(value);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function draftFromConfig(
+	config: Record<string, ConfigEntry>,
+): Record<ConfigKey, ConfigValue> {
+	const draft = {} as Record<ConfigKey, ConfigValue>;
+	for (const key of configKeys) {
+		draft[key] = config[key]?.value ?? "";
+	}
+	return draft;
+}
+
+function isMutable(entry: ConfigEntry | undefined): boolean {
+	return entry?.mutable ?? false;
+}
+
+function stringDraft(value: ConfigValue | undefined): string {
+	return typeof value === "string" ? value : "";
+}
+
+function numberDraft(value: ConfigValue | undefined): number {
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function booleanDraft(value: ConfigValue | undefined): boolean {
+	return typeof value === "boolean" ? value : false;
+}
+
+function canManageUsers(user: CurrentUser): boolean {
+	return (
+		user.role === "admin" || user.role === "lan" || user.role === "machine"
+	);
+}
+
+function disableBlockedReason(
+	user: AdminUser,
+	currentUser: CurrentUser | null,
+	users: AdminUser[],
+): string | null {
+	if (currentUser?.user_id === user.id) {
+		return "You cannot disable your own admin account.";
+	}
+	const activeAdminCount = users.filter(
+		(candidate) => candidate.role === "admin" && !candidate.disabled,
+	).length;
+	if (user.role === "admin" && !user.disabled && activeAdminCount <= 1) {
+		return "At least one active admin account is required.";
+	}
+	return null;
+}
+
+function userIdentity(user: CurrentUser): string {
+	return user.display_name || user.email || user.kind;
+}
+
+function userLabel(user: AdminUser): string {
+	return user.display_name || user.primary_email;
+}
+
+function initialsOf(name: string): string {
+	const parts = name.split(/[\s\-_.@]+/).filter(Boolean);
+	if (parts.length >= 2) {
+		return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+	}
+	return name.slice(0, 2).toUpperCase();
+}
+
+function shortSubject(subject: string): string {
+	return subject.length > 18 ? `${subject.slice(0, 18)}...` : subject;
+}
+
+function formatDate(value: string): string {
+	const timestamp = Date.parse(value);
+	if (!Number.isFinite(timestamp)) {
+		return value;
+	}
+	return new Intl.DateTimeFormat(undefined, {
+		dateStyle: "medium",
+		timeStyle: "short",
+	}).format(timestamp);
+}
+
+function tweaksEqual(left: Tweaks, right: Tweaks): boolean {
+	return (
+		left.variant === right.variant &&
+		left.theme === right.theme &&
+		left.density === right.density &&
+		left.libraryLayout === right.libraryLayout
+	);
+}
+
+async function responseMessage(response: Response): Promise<string> {
+	const text = await response.text();
+	if (!text) {
+		return `${response.status} ${response.statusText}`;
+	}
+	try {
+		const parsed = JSON.parse(text) as { detail?: unknown };
+		return typeof parsed.detail === "string"
+			? parsed.detail
+			: JSON.stringify(parsed.detail ?? parsed);
+	} catch {
+		return text;
+	}
+}
