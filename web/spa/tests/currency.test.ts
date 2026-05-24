@@ -14,6 +14,11 @@ describe("USD-backed display currency formatting", () => {
 		expect(formatUsdCost(0.072, "ILS")).toBe("₪0.27 ILS");
 	});
 
+	test("uses the same precision threshold for tiny converted spend", () => {
+		expect(fmtDisplayCurrency(0.005, "ILS")).toBe("₪0.0185 ILS");
+		expect(formatUsdCost(0.005, "ILS")).toBe("₪0.0185 ILS");
+	});
+
 	test("keeps USD display values canonical", () => {
 		expect(convertUsdToDisplayCurrency(0.072, "USD")).toBe(0.072);
 		expect(fmtDisplayCurrency(0.072, "USD")).toBe("$0.0720");
