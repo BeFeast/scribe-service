@@ -336,11 +336,13 @@ def test_admin_user_apis_require_admin_role(db_session, monkeypatch):
             headers=headers,
         )
         disable_resp = client.post("/api/admin/users/1/disable", headers=headers)
+        enable_resp = client.post("/api/admin/users/1/enable", headers=headers)
     app.dependency_overrides.pop(routes_module.get_session, None)
 
     assert list_resp.status_code == 403
     assert add_resp.status_code == 403
     assert disable_resp.status_code == 403
+    assert enable_resp.status_code == 403
     assert list_resp.json()["detail"] == "admin role required"
 
 
@@ -369,6 +371,7 @@ def test_admin_user_apis_list_add_update_and_disable(db_session, monkeypatch):
             headers=headers,
         )
         disable_resp = client.post(f"/api/admin/users/{target.id}/disable", headers=headers)
+        enable_resp = client.post(f"/api/admin/users/{target.id}/enable", headers=headers)
     app.dependency_overrides.pop(routes_module.get_session, None)
 
     assert list_resp.status_code == 200, list_resp.text
@@ -382,6 +385,8 @@ def test_admin_user_apis_list_add_update_and_disable(db_session, monkeypatch):
     assert update_resp.json()["display_name"] == "Target Admin"
     assert disable_resp.status_code == 200, disable_resp.text
     assert disable_resp.json()["disabled"] is True
+    assert enable_resp.status_code == 200, enable_resp.text
+    assert enable_resp.json()["disabled"] is False
     assert admin.id != target.id
 
 

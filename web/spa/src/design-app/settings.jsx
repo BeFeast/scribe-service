@@ -2,7 +2,7 @@
 import React from "react";
 import { useAuth } from "../hooks/useAuth";
 import { adaptUsers } from "./adapters.js";
-import { fetchJson } from "./api.jsx";
+import { fetchJson, responseMessage } from "./api.jsx";
 import { IconCards, IconCopy, IconDot, IconExternal, IconFeed, IconMoon, IconPlus, IconRefresh, IconSparkle, IconSun, IconTable, IconX } from "./icons.jsx";
 import { STATS, fmtRelative, fmtUsd } from "./data.js";
 // Settings page — config values that map to scribe/config.py settings.
@@ -36,6 +36,7 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [] }) {
   const [promptVersion, setPromptVersion] = React.useState("v3");
   const [prompt, setPrompt] = React.useState(DEFAULT_PROMPT);
   const [promptState, setPromptState] = React.useState({ loading: true, error: null, saved: null });
+  const promptRequestRef = React.useRef(0);
   const cap = Number(configDraft?.daily_spend_cap_usd ?? STATS.daily_spend_cap_usd);
   const capUsagePct = cap > 0 ? Math.min(100, (STATS.vast_spend_24h / cap) * 100) : 0;
   const webhook = configDraft?.webhook_default ?? "";
@@ -63,6 +64,8 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [] }) {
 
   React.useEffect(() => {
     const controller = new AbortController();
+    const requestId = promptRequestRef.current + 1;
+    promptRequestRef.current = requestId;
     setPromptState({ loading: true, error: null, saved: null });
     fetchJson(auth, "/api/prompts", controller.signal)
       .then(async (body) => {
@@ -72,14 +75,14 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [] }) {
         return { list: body, active, text: await response.text() };
       })
       .then(({ list, active, text }) => {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || requestId !== promptRequestRef.current) return;
         setPrompts(list);
         setPromptVersion(active);
         setPrompt(text);
         setPromptState({ loading: false, error: null, saved: null });
       })
       .catch((error) => {
-        if (!controller.signal.aborted) setPromptState({ loading: false, error: messageOf(error), saved: null });
+        if (!controller.signal.aborted && requestId === promptRequestRef.current) setPromptState({ loading: false, error: messageOf(error), saved: null });
       });
     return () => controller.abort();
   }, [auth]);
@@ -108,14 +111,19 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [] }) {
     }
   }
   async function loadPromptVersion(version) {
+    const requestId = promptRequestRef.current + 1;
+    promptRequestRef.current = requestId;
     setPromptVersion(version);
     setPromptState({ loading: true, error: null, saved: null });
     try {
       const response = await auth.protectedFetch("/api/prompts/" + version, { cache: "no-store" });
       if (!response.ok) throw new Error(await responseMessage(response));
-      setPrompt(await response.text());
+      const text = await response.text();
+      if (requestId !== promptRequestRef.current) return;
+      setPrompt(text);
       setPromptState({ loading: false, error: null, saved: null });
     } catch (error) {
+      if (requestId !== promptRequestRef.current) return;
       setPromptState({ loading: false, error: messageOf(error), saved: null });
     }
   }
@@ -128,13 +136,15 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [] }) {
         body: JSON.stringify({ body: prompt }),
       });
       if (!write.ok) throw new Error(await responseMessage(write));
-      const list = await fetchJson(auth, "/api/prompts/active", undefined, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ version: promptVersion }),
-      });
+      const list = promptVersion === prompts.active_version
+        ? await fetchJson(auth, "/api/prompts/active", undefined, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ version: promptVersion }),
+          })
+        : await fetchJson(auth, "/api/prompts");
       setPrompts(list);
-      setPromptState({ loading: false, error: null, saved: "Prompt saved" });
+      setPromptState({ loading: false, error: null, saved: promptVersion === list.active_version ? "Prompt saved" : "Draft saved" });
     } catch (error) {
       setPromptState({ loading: false, error: messageOf(error), saved: null });
     }
@@ -418,15 +428,6 @@ function configPayload(values) {
   };
 }
 
-async function responseMessage(response) {
-  try {
-    const body = await response.json();
-    if (typeof body?.detail === "string") return body.detail;
-    if (body?.detail && typeof body.detail === "object") return JSON.stringify(body.detail);
-  } catch {}
-  return ("HTTP " + response.status + " " + response.statusText).trim();
-}
-
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -494,11 +495,7 @@ function AccessGroup({ initialUsers = [] }) {
       if (user.state === "active") {
         await fetchJson(auth, "/api/admin/users/" + user.id + "/disable", undefined, { method: "POST" });
       } else {
-        await fetchJson(auth, "/api/admin/users", undefined, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: user.email, display_name: user.name, role: user.role }),
-        });
+        await fetchJson(auth, "/api/admin/users/" + user.id + "/enable", undefined, { method: "POST" });
       }
       await refresh();
       setStatus({ error: null, saved: "User updated" });

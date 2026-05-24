@@ -210,7 +210,7 @@ class HttpError extends Error {
 	}
 }
 
-async function responseMessage(response) {
+export async function responseMessage(response) {
 	try {
 		const body = await response.json();
 		if (typeof body?.detail === "string") return body.detail;

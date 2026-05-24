@@ -709,6 +709,21 @@ def disable_user(
     return _user_view(user)
 
 
+@router.post("/api/admin/users/{user_id}/enable", response_model=UserAdminView)
+def enable_user(
+    user_id: int,
+    session: Session = Depends(get_session),
+    _actor: Actor = Depends(require_admin_actor),
+) -> UserAdminView:
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail=f"user {user_id} not found")
+    user.disabled = False
+    session.commit()
+    session.refresh(user)
+    return _user_view(user)
+
+
 @router.post("/jobs", response_model=JobView, status_code=201)
 def create_job(
     body: JobCreate,
