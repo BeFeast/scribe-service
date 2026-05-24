@@ -351,10 +351,13 @@ async function smokeVariantMatrix(cdp) {
 				for (const libraryLayout of LIBRARY_LAYOUTS) {
 					const clicks = [
 						await clickTweaksButton(cdp, "Variant", variant),
-						await clickTweaksButton(cdp, "Theme", theme),
-						await clickTweaksButton(cdp, "Density", density),
-						await clickTweaksButton(cdp, "Library", libraryLayout),
 					];
+					await sleep(30);
+					clicks.push(await clickTweaksButton(cdp, "Theme", theme));
+					await sleep(30);
+					clicks.push(await clickTweaksButton(cdp, "Density", density));
+					await sleep(30);
+					clicks.push(await clickTweaksButton(cdp, "Library", libraryLayout));
 					await sleep(80);
 					const state = await evaluate(
 						cdp,
@@ -374,7 +377,7 @@ async function smokeVariantMatrix(cdp) {
 								},
 								activeButtons,
 								layoutVisible: Boolean(document.querySelector(layoutSelector)),
-								controlsReachable: Boolean(panelRect && panelRect.width > 0 && panelRect.height > 0 && panelRect.left < window.innerWidth && panelRect.top < window.innerHeight),
+								controlsReachable: Boolean(panelRect && panelRect.width > 0 && panelRect.height > 0 && panelRect.left < window.innerWidth && panelRect.top < window.innerHeight && panelRect.right > 0 && panelRect.bottom > 0),
 								horizontalOverflow: (scrolling?.scrollWidth ?? 0) > window.innerWidth + 1,
 							};
 						})()`,
