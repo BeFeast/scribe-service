@@ -8,3 +8,5 @@ data/
 .pytest_cache/
 web/spa/tsconfig.tsbuildinfo
 src/scribe/web/static/spa/
+artifacts/
+.tmp/

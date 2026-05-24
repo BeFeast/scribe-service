@@ -347,6 +347,7 @@ a {
 .cmdk-submit .label,
 .cmdk-result-body {
 	flex: 1;
+	min-width: 0;
 }
 
 .cmdk-submit .btn {
@@ -2009,6 +2010,7 @@ a {
 
 .access-table-wrap {
 	overflow: auto;
+	overflow-x: auto;
 	border: var(--rule);
 	border-radius: var(--radius);
 	background: var(--bg-card);
