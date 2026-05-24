@@ -49,6 +49,7 @@ function ScribeApp() {
 		stats: runtime.stats,
 		spendSeries: runtime.spendSeries,
 		users: runtime.users,
+		currentUser: runtime.currentUser,
 		currentTranscript: runtime.currentTranscript.value,
 		currentTranscriptState: {
 			loading: runtime.currentTranscript.loading,
@@ -157,6 +158,7 @@ function ScribeApp() {
 					t={t}
 					setTweak={setTweak}
 					users={runtime.users}
+					currentUser={runtime.currentUser}
 					onConfigSaved={runtime.applyConfig}
 				/>
 			);
