@@ -8,12 +8,14 @@ import { CURRENT_TRANSCRIPT, CURRENT_TRANSCRIPT_STATE, TRANSCRIPTS, fmtDuration,
 export function TranscriptDetail({ id, navigate, onRefresh }) {
   const auth = useAuth();
   const t = CURRENT_TRANSCRIPT || TRANSCRIPTS.find((r) => r.id === id);
-  if (CURRENT_TRANSCRIPT_STATE.loading) return <DetailState title="Loading transcript" body="Fetching /transcripts/{id}."/>;
-  if (!t || CURRENT_TRANSCRIPT_STATE.error) return <DetailState title="Transcript unavailable" body={CURRENT_TRANSCRIPT_STATE.error || "No transcript is loaded."} navigate={navigate}/>;
   const [regenerating, setRegenerating] = React.useState(false);
   const [copied, setCopied] = React.useState(null);
   const [shareOpen, setShareOpen] = React.useState(false);
   const [deleteConfirm, setDeleteConfirm] = React.useState(false);
+  const [actionError, setActionError] = React.useState(null);
+
+  if (CURRENT_TRANSCRIPT_STATE.loading) return <DetailState title="Loading transcript" body="Fetching /transcripts/{id}."/>;
+  if (!t || CURRENT_TRANSCRIPT_STATE.error) return <DetailState title="Transcript unavailable" body={CURRENT_TRANSCRIPT_STATE.error || "No transcript is loaded."} navigate={navigate}/>;
 
   function copy(text, key) {
     try {
@@ -23,25 +25,70 @@ export function TranscriptDetail({ id, navigate, onRefresh }) {
       setCopied("err:" + key); setTimeout(() => setCopied(null), 2400);
     }
   }
+  async function copyFromEndpoint(path, key, fallback) {
+    try {
+      const response = await auth.protectedFetch(path, { cache: "no-store" });
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      copy(await response.text(), key);
+    } catch (error) {
+      if (fallback != null) copy(fallback, key);
+      else {
+        setCopied("err:" + key);
+        setActionError(error instanceof Error ? error.message : String(error));
+        setTimeout(() => setCopied(null), 2400);
+      }
+    }
+  }
+  async function download(kind) {
+    const filename = `scribe-${t.id}-${kind}.md`;
+    const path = "/transcripts/" + t.id + "/" + kind + ".md";
+    try {
+      const response = await auth.protectedFetch(path, { cache: "no-store" });
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setCopied("dl:" + kind); setTimeout(() => setCopied(null), 1600);
+    } catch (error) {
+      setCopied("err:dl:" + kind);
+      setActionError(error instanceof Error ? error.message : String(error));
+      setTimeout(() => setCopied(null), 2400);
+    }
+  }
   async function regen() {
     setRegenerating(true);
+    setActionError(null);
     try {
       const response = await auth.protectedFetch("/transcripts/" + t.id + "/resummarize", { method: "POST" });
       if (!response.ok) throw new Error("HTTP " + response.status);
       onRefresh && onRefresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
     } finally {
       setRegenerating(false);
     }
   }
   async function deleteTranscript() {
+    setActionError(null);
     const response = await auth.protectedFetch("/admin/transcripts/" + t.id, { method: "DELETE" });
-    if (response.ok) navigate("library");
+    if (response.ok) {
+      onRefresh && onRefresh();
+      navigate("library");
+    } else {
+      setActionError("HTTP " + response.status);
+    }
   }
 
   return (
     <div className="pane pane-narrow">
       <div className="row" style={{marginBottom: 18}}>
-        <a onClick={() => void deleteTranscript()}
+        <a onClick={() => navigate("library")}
            style={{display: "inline-flex", alignItems: "center", gap: 6,
                    fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--muted)",
                    cursor: "pointer", textDecoration: "none"}}>
@@ -54,7 +101,9 @@ export function TranscriptDetail({ id, navigate, onRefresh }) {
           </button>
           {shareOpen && (
             <ShareSheet t={t} onClose={() => setShareOpen(false)}
-                        copy={copy} copied={copied}/>
+                        copy={copy} copyFromEndpoint={copyFromEndpoint}
+                        download={download} auth={auth} copied={copied}
+                        setCopied={setCopied} setActionError={setActionError}/>
           )}
         </div>
       </div>
@@ -95,7 +144,7 @@ export function TranscriptDetail({ id, navigate, onRefresh }) {
           <div className="section-label">
             <span>Summary</span>
             <div className="row" style={{gap: 6}}>
-              <button className="btn ghost" onClick={() => copy(t.summary_md, "all")}
+              <button className="btn ghost" onClick={() => copyFromEndpoint("/transcripts/" + t.id + "/summary.md", "all", t.summary_md)}
                       style={{fontSize: 12, padding: "4px 8px"}}>
                 <IconCopy size={12}/> {copied === "all" ? "Copied" : "Copy"}
               </button>
@@ -117,7 +166,7 @@ export function TranscriptDetail({ id, navigate, onRefresh }) {
           <span className="mono muted" style={{fontSize: 11}}>
             ~{Math.round((t.duration_seconds || 1) / 60)} min · {t.lang}
           </span>
-          <button className="btn ghost" style={{fontSize: 12, padding: "4px 8px"}}>
+          <button className="btn ghost" onClick={() => download("transcript")} style={{fontSize: 12, padding: "4px 8px"}}>
             <IconDownload size={12}/> Download .md
           </button>
         </div>
@@ -133,6 +182,7 @@ export function TranscriptDetail({ id, navigate, onRefresh }) {
         <span>vast_cost: {fmtUsd(t.vast_cost)}</span>
         <span>created: {t.created_at.replace("T", " ").replace("Z", "Z")}</span>
       </div>
+      {actionError && <div className="empty" style={{marginTop: 16}}><div className="empty-title">Action failed</div><div>{actionError}</div></div>}
 
       <div className="danger-zone">
         <IconAlert size={20} style={{color: "var(--err)", flexShrink: 0}}/>
@@ -149,7 +199,7 @@ export function TranscriptDetail({ id, navigate, onRefresh }) {
                     style={{fontSize: 12, padding: "5px 10px"}}>
               Cancel
             </button>
-            <button className="btn danger" onClick={() => navigate("library")}
+            <button className="btn danger" onClick={() => void deleteTranscript()}
                     style={{fontSize: 12, padding: "5px 12px"}}>
               <IconX size={12}/> Yes, delete
             </button>
@@ -166,11 +216,12 @@ export function TranscriptDetail({ id, navigate, onRefresh }) {
 }
 
 // ─── Share sheet ──────────────────────────────────────────────────────────
-function ShareSheet({ t, onClose, copy, copied }) {
+function ShareSheet({ t, onClose, copy, copyFromEndpoint, download, auth, copied, setCopied, setActionError }) {
   const ref = React.useRef(null);
   const [visibility, setVisibility] = React.useState("public");
+  const [shareUrl, setShareUrl] = React.useState(null);
   const fullUrl = `scribe.oklabs.uk/transcripts/${t.id}`;
-  const shortlink = t.summary_shortlink || `go.oklabs.uk/${t.id}s`;
+  const shortlink = (t.summary_shortlink || `go.oklabs.uk/${t.id}s`).replace(/^https?:\/\//, "");
 
   React.useEffect(() => {
     function onDoc(e) {
@@ -193,9 +244,22 @@ function ShareSheet({ t, onClose, copy, copied }) {
     return null;
   }
 
-  function download(filename, ext) {
-    // Simulated for prototype — real impl hits /transcripts/{id}/{kind}.md
-    copy(`# ${t.title}\n\n(mock download: ${filename})`, "dl:" + ext);
+  async function copyShareLink() {
+    try {
+      const response = await auth.protectedFetch("/api/transcripts/" + t.id + "/share-links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_kind: "page", label: visibility }),
+      });
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      const body = await response.json();
+      const url = body.share_url || ("https://" + shortlink);
+      setShareUrl(url);
+      copy(url, "sl");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+      setCopied("err:sl"); setTimeout(() => setCopied(null), 2400);
+    }
   }
 
   return (
@@ -213,10 +277,10 @@ function ShareSheet({ t, onClose, copy, copied }) {
 
       {/* Primary action: the shortlink */}
       <div className="sh-url">
-        <span className="scheme">go.oklabs.uk/</span>
-        <span className="path">{shortlink.replace(/^go\.oklabs\.uk\//, "")}</span>
+        <span className="scheme">{shareUrl ? shareUrl.replace(/\/[^/]*$/, "/") : "go.oklabs.uk/"}</span>
+        <span className="path">{shareUrl ? shareUrl.split("/").at(-1) : shortlink.replace(/^go\.oklabs\.uk\//, "")}</span>
         <button className="btn primary"
-                onClick={() => copy("https://" + shortlink, "sl")}
+                onClick={() => void copyShareLink()}
                 style={{fontSize: 12, padding: "5px 10px"}}>
           {isCopied("sl") ? <><IconCheck size={12}/> Copied</> : <><IconCopy size={12}/> Copy link</>}
         </button>
@@ -225,7 +289,7 @@ function ShareSheet({ t, onClose, copy, copied }) {
       {/* Copy as Markdown */}
       <div className="sh-section">
         <div className="sh-section-label">Copy as Markdown</div>
-        <div className="sh-item" onClick={() => copy(t.summary_md || "", "summary")}>
+        <div className="sh-item" onClick={() => copyFromEndpoint("/transcripts/" + t.id + "/summary.md", "summary", t.summary_md || "")}>
           <div className="sh-glyph"><IconSparkle size={14}/></div>
           <div className="sh-text">
             <div className="sh-title">Summary</div>
@@ -234,7 +298,7 @@ function ShareSheet({ t, onClose, copy, copied }) {
           {statusFor("summary", "copied to clipboard")
             ?? <span className="sh-keys"><span className="kbd">⌘</span><span className="kbd">C</span></span>}
         </div>
-        <div className="sh-item" onClick={() => copy(t.transcript_excerpt || "", "transcript")}>
+        <div className="sh-item" onClick={() => copyFromEndpoint("/transcripts/" + t.id + "/transcript.md", "transcript", t.transcript_excerpt || "")}>
           <div className="sh-glyph"><IconWave size={14}/></div>
           <div className="sh-text">
             <div className="sh-title">Transcript</div>
@@ -248,7 +312,7 @@ function ShareSheet({ t, onClose, copy, copied }) {
       {/* Download */}
       <div className="sh-section">
         <div className="sh-section-label">Download</div>
-        <div className="sh-item" onClick={() => download(`scribe-${t.id}-summary.md`, "summary")}>
+        <div className="sh-item" onClick={() => download("summary")}>
           <div className="sh-glyph"><IconDownload size={13}/></div>
           <div className="sh-text">
             <div className="sh-title">summary.md</div>
@@ -256,7 +320,7 @@ function ShareSheet({ t, onClose, copy, copied }) {
           </div>
           {statusFor("dl:summary", "downloaded")}
         </div>
-        <div className="sh-item" onClick={() => download(`scribe-${t.id}-transcript.md`, "transcript")}>
+        <div className="sh-item" onClick={() => download("transcript")}>
           <div className="sh-glyph"><IconDownload size={13}/></div>
           <div className="sh-text">
             <div className="sh-title">transcript.md</div>

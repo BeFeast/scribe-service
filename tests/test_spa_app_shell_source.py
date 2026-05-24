@@ -180,6 +180,12 @@ def test_core_route_wiring_uses_real_backend_actions_where_present() -> None:
 
     assert 'auth.protectedFetch("/transcripts/" + t.id + "/resummarize"' in transcript
     assert 'auth.protectedFetch("/admin/transcripts/" + t.id' in transcript
+    assert 'auth.protectedFetch("/api/transcripts/" + t.id + "/share-links"' in transcript
+    assert 'copyFromEndpoint("/transcripts/" + t.id + "/summary.md"' in transcript
+    assert 'copyFromEndpoint("/transcripts/" + t.id + "/transcript.md"' in transcript
+    assert 'const path = "/transcripts/" + t.id + "/" + kind + ".md"' in transcript
+    assert '<a onClick={() => navigate("library")}' in transcript
+    assert '<button className="btn danger" onClick={() => void deleteTranscript()}' in transcript
     assert 'auth.protectedFetch("/jobs"' in command
     assert 'body: JSON.stringify({ url: videoUrl.url, source: "manual" })' in command
     assert "parseVideoUrl" in command
