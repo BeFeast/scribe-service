@@ -34,6 +34,29 @@ compare_file() {
 	fi
 }
 
+check_file_set() {
+	local dir="$1"
+	local label="$2"
+	local expected_file actual_file
+
+	expected_file="$(mktemp)"
+	actual_file="$(mktemp)"
+	printf "%s\n" "${app_files[@]}" | sort > "${expected_file}"
+	find "${dir}" -maxdepth 1 -type f -printf "%f\n" | sort > "${actual_file}"
+
+	if ! cmp -s "${expected_file}" "${actual_file}"; then
+		echo "Design source parity failed: ${label} file set differs from expected app files" >&2
+		diff -u "${expected_file}" "${actual_file}" >&2 || true
+		rm -f "${expected_file}" "${actual_file}"
+		exit 1
+	fi
+
+	rm -f "${expected_file}" "${actual_file}"
+}
+
+check_file_set "${REPO_EXPORT}" "repo export"
+check_file_set "${STAGED_SOURCE}" "staged source"
+
 for file in "${app_files[@]}"; do
 	if [[ ! -f "${REPO_EXPORT}/${file}" ]]; then
 		echo "Design source parity failed: missing repo export app/${file}" >&2

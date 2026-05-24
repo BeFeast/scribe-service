@@ -238,7 +238,7 @@ def test_live_visual_qa_contract_covers_required_runtime_surface() -> None:
     assert "variant matrix: ${manifest.variantMatrix.length} combinations" in script
     assert "variantMatrixCountMismatch" in script
     assert "VARIANTS.length * THEMES.length * DENSITIES.length * LIBRARY_LAYOUTS.length" in script
-    assert "expected: 72" in script
+    assert "expected:\n" in script
     assert ".tweaks-panel" in script
     assert "realContent" in script
     assert "hasTitle" in script

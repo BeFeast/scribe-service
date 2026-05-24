@@ -5,6 +5,8 @@ import re
 import zipfile
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SPA_SRC = ROOT / "web" / "spa" / "src"
 DESIGN_EXPORT = ROOT / "design" / "scribe-redesign-2026-05-24" / "app"
@@ -58,7 +60,7 @@ def test_design_export_source_is_staged_verbatim() -> None:
 
 def test_staged_design_source_matches_claude_archive_when_available() -> None:
     if not DESIGN_ARCHIVE.exists():
-        return
+        pytest.skip("Design archive not available at /mnt/storage/src/Scribe.redesign.zip")
 
     digest = hashlib.sha256(DESIGN_ARCHIVE.read_bytes()).hexdigest()
     assert digest == EXPECTED_DESIGN_ARCHIVE_SHA256

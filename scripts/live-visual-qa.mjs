@@ -540,7 +540,8 @@ async function main() {
 			manifest.variantMatrix.length !==
 			VARIANTS.length * THEMES.length * DENSITIES.length * LIBRARY_LAYOUTS.length
 				? {
-						expected: 72,
+						expected:
+							VARIANTS.length * THEMES.length * DENSITIES.length * LIBRARY_LAYOUTS.length,
 						actual: manifest.variantMatrix.length,
 						variants: VARIANTS,
 						themes: THEMES,
