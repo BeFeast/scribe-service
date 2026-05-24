@@ -48,6 +48,17 @@ export function useScribeRuntime(auth, route) {
 		};
 	}, [refreshCore]);
 
+	const wasSignedIn = React.useRef(auth.signedIn);
+	React.useEffect(() => {
+		if (!wasSignedIn.current && auth.signedIn) {
+			const controller = new AbortController();
+			void refreshCore(controller.signal);
+			wasSignedIn.current = true;
+			return () => controller.abort();
+		}
+		wasSignedIn.current = auth.signedIn;
+	}, [auth.signedIn, refreshCore]);
+
 	React.useEffect(() => {
 		if (route.page !== "transcript" || route.params.id === undefined) {
 			setCurrentTranscript({ loading: false, error: null, value: null });

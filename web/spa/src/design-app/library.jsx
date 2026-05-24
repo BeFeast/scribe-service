@@ -97,7 +97,7 @@ function InFlightRow({ job, navigate }) {
   );
 }
 
-export function LibraryPage({ navigate, t, setTweak, routeTag, loading, error }) {
+export function LibraryPage({ navigate, t, setTweak, routeTag, loading, error, auth, onRefresh }) {
   const [q, setQ] = React.useState("");
   const [tag, setTag] = React.useState(routeTag || null);
   React.useEffect(() => setTag(routeTag || null), [routeTag]);
@@ -155,12 +155,43 @@ export function LibraryPage({ navigate, t, setTweak, routeTag, loading, error })
         </div>
       </div>
 
-      {loading && <EmptyState title="Loading library" body="Fetching real transcripts from /api/library."/>}
-      {!loading && error && <EmptyState title="Library unavailable" body={error}/>}
-      {!loading && !error && filtered.length === 0 && <EmptyState title="No transcripts" body="Submit a YouTube URL to start the pipeline."/>}
-      {!loading && !error && layout === "table" && <LibTable rows={filtered} navigate={navigate} onTag={setTag}/>}
-      {!loading && !error && layout === "feed"  && <LibFeed  rows={filtered} navigate={navigate} onTag={setTag}/>}
-      {!loading && !error && layout === "cards" && <LibCards rows={filtered} navigate={navigate} onTag={setTag}/>}
+      {auth?.authRequired && <AuthRequiredState auth={auth} onRefresh={onRefresh}/>}
+      {!auth?.authRequired && loading && <EmptyState title="Loading library" body="Fetching real transcripts from /api/library."/>}
+      {!auth?.authRequired && !loading && error && <EmptyState title="Library unavailable" body={error}/>}
+      {!auth?.authRequired && !loading && !error && filtered.length === 0 && <EmptyState title="No transcripts" body="Submit a YouTube URL to start the pipeline."/>}
+      {!auth?.authRequired && !loading && !error && layout === "table" && <LibTable rows={filtered} navigate={navigate} onTag={setTag}/>}
+      {!auth?.authRequired && !loading && !error && layout === "feed"  && <LibFeed  rows={filtered} navigate={navigate} onTag={setTag}/>}
+      {!auth?.authRequired && !loading && !error && layout === "cards" && <LibCards rows={filtered} navigate={navigate} onTag={setTag}/>}
+    </div>
+  );
+}
+
+function AuthRequiredState({ auth, onRefresh }) {
+  const waitingForClerk = auth.authRequired && !auth.clerkReady && !auth.authBlockedMessage;
+  const body = auth.authBlockedMessage
+    || (waitingForClerk
+      ? "Authentication is required. Clerk is still loading; retry if the sign-in controls do not become available."
+      : "Authentication is required to load the library from this public network.");
+  return (
+    <div className="empty auth-required" role="status" aria-live="polite">
+      <div className="empty-title">Sign in required</div>
+      <div>{body}</div>
+      <div className="row" style={{justifyContent: "center", gap: 8, marginTop: 16}}>
+        <button className="btn primary"
+                onClick={() => auth.signIn()}
+                disabled={auth.authRedirectInFlight || waitingForClerk}
+                title={waitingForClerk ? "Waiting for Clerk browser runtime" : "Continue to Clerk sign-in"}>
+          {auth.authRedirectInFlight || waitingForClerk ? <span className="spinner"/> : null}
+          {auth.authRedirectInFlight ? "Opening Clerk..." : waitingForClerk ? "Preparing sign-in" : "Sign in"}
+        </button>
+        <button className="btn"
+                onClick={() => {
+                  auth.retryAuth();
+                  onRefresh?.();
+                }}>
+          Retry
+        </button>
+      </div>
     </div>
   );
 }

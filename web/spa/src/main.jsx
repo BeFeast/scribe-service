@@ -158,6 +158,8 @@ function ScribeApp() {
 					routeTag={route.params.tag}
 					loading={runtime.loading}
 					error={runtime.error}
+					auth={auth}
+					onRefresh={runtime.refreshCore}
 				/>
 			);
 	}

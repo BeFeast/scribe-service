@@ -42,10 +42,12 @@ type AuthContextValue = {
 	clerkConfigured: boolean;
 	authBlockedMessage: string | null;
 	authRedirectInFlight: boolean;
+	authRequired: boolean;
 	trustedNetwork: boolean;
 	signIn: () => Promise<void>;
 	signUp: () => Promise<void>;
 	signOut: () => Promise<void>;
+	retryAuth: () => void;
 	maybeAutoSignIn: () => boolean;
 	protectedFetch: (
 		input: RequestInfo | URL,
@@ -223,12 +225,28 @@ function authBlockedMessage(error: unknown): string {
 	return `Authentication resources were blocked or failed to load. Disable the blocker for this site, then retry. Detail: ${detail}`;
 }
 
+export function shouldRequireSignIn({
+	trustedNetwork,
+	signedIn,
+	clerkConfigured,
+	authConfigLoaded = true,
+}: {
+	trustedNetwork: boolean;
+	signedIn: boolean;
+	clerkConfigured: boolean;
+	authConfigLoaded?: boolean;
+}): boolean {
+	return !trustedNetwork && !signedIn && (!authConfigLoaded || clerkConfigured);
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
 	const [config, setConfig] = React.useState<AuthConfig | null>(null);
 	const [clerkReady, setClerkReady] = React.useState(false);
 	const [signedIn, setSignedIn] = React.useState(false);
 	const [unauthorized, setUnauthorized] = React.useState(false);
+	const [authRequired, setAuthRequired] = React.useState(false);
 	const [authBlocked, setAuthBlocked] = React.useState<string | null>(null);
+	const [authReloadKey, setAuthReloadKey] = React.useState(0);
 	const [authRedirectInFlight, setAuthRedirectInFlight] = React.useState(() =>
 		hasFreshRedirectIntent(),
 	);
@@ -236,6 +254,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 	const syncSignedIn = React.useCallback(() => {
 		setSignedIn(Boolean(window.Clerk?.session));
 		setUnauthorized(false);
+		if (window.Clerk?.session) {
+			setAuthRequired(false);
+		}
 	}, []);
 
 	React.useEffect(() => {
@@ -278,10 +299,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 	}, [authRedirectInFlight, signedIn]);
 
 	React.useEffect(() => {
+		void authReloadKey;
 		const abort = new AbortController();
 		let unsubscribe: (() => void) | undefined;
 
 		async function loadAuth() {
+			setAuthBlocked(null);
 			const response = await fetch("/api/auth/config", {
 				signal: abort.signal,
 			});
@@ -291,6 +314,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			const body = (await response.json()) as AuthConfig;
 			setConfig(body);
 			if (body.trusted_network || !body.clerk_publishable_key) {
+				setAuthRequired(false);
 				return;
 			}
 			await loadClerk(body);
@@ -303,6 +327,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 				setSignedIn(Boolean(session));
 				if (session) {
 					setUnauthorized(false);
+					setAuthRequired(false);
 					clearRedirectIntent();
 					setAuthRedirectInFlight(false);
 				}
@@ -329,7 +354,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			abort.abort();
 			unsubscribe?.();
 		};
-	}, [syncSignedIn]);
+	}, [syncSignedIn, authReloadKey]);
 
 	const trustedNetwork = config?.trusted_network === true;
 	const clerkConfigured = Boolean(config?.clerk_publishable_key);
@@ -346,7 +371,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 	const startRedirect = React.useCallback(
 		async (mode: "sign-in" | "sign-up") => {
-			if (!window.Clerk || authRedirectInFlight) {
+			if (!window.Clerk) {
+				setAuthRequired(true);
+				return;
+			}
+			if (authRedirectInFlight) {
 				return;
 			}
 			navigationStartedRef.current = false;
@@ -400,12 +429,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		await window.Clerk?.signOut();
 		setSignedIn(false);
 		setUnauthorized(false);
+		setAuthRequired(false);
 	}, []);
 
-	// Record one auth miss per browser session, but do not reopen Clerk
-	// automatically. The visible CTA keeps cancelled/blocked flows stable.
 	const maybeAutoSignIn = React.useCallback((): boolean => {
-		if (trustedNetwork || signedIn || !clerkConfigured || !clerkReady) {
+		if (
+			!shouldRequireSignIn({
+				trustedNetwork,
+				signedIn,
+				clerkConfigured,
+				authConfigLoaded: config !== null,
+			})
+		) {
+			return false;
+		}
+		setAuthRequired(true);
+		if (config === null) {
 			return false;
 		}
 		try {
@@ -417,7 +456,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			return false;
 		}
 		return true;
-	}, [trustedNetwork, signedIn, clerkConfigured, clerkReady]);
+	}, [trustedNetwork, signedIn, clerkConfigured, config]);
+
+	const retryAuth = React.useCallback(() => {
+		setAuthBlocked(null);
+		setAuthReloadKey((key) => key + 1);
+	}, []);
 
 	const protectedFetch = React.useCallback(
 		async (input: RequestInfo | URL, init: RequestInit = {}) => {
@@ -430,10 +474,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 				setUnauthorized(true);
 			} else if (response.ok) {
 				setUnauthorized(false);
+				if (window.Clerk?.session || trustedNetwork) {
+					setAuthRequired(false);
+				}
 			}
 			return response;
 		},
-		[],
+		[trustedNetwork],
 	);
 
 	const value = React.useMemo(
@@ -445,10 +492,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			clerkConfigured,
 			authBlockedMessage: authBlocked,
 			authRedirectInFlight,
+			authRequired,
 			trustedNetwork,
 			signIn,
 			signUp,
 			signOut,
+			retryAuth,
 			maybeAutoSignIn,
 			protectedFetch,
 		}),
@@ -460,10 +509,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			clerkConfigured,
 			authBlocked,
 			authRedirectInFlight,
+			authRequired,
 			trustedNetwork,
 			signIn,
 			signUp,
 			signOut,
+			retryAuth,
 			maybeAutoSignIn,
 			protectedFetch,
 		],
