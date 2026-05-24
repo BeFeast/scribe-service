@@ -139,7 +139,7 @@ function ScribeApp() {
 			);
 			break;
 		case "settings":
-			page = <SettingsPage t={t} setTweak={setTweak} />;
+			page = <SettingsPage t={t} setTweak={setTweak} users={runtime.users} />;
 			break;
 		default:
 			page = (

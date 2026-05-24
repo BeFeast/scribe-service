@@ -336,11 +336,15 @@ def test_admin_user_apis_require_admin_role(db_session, monkeypatch):
             headers=headers,
         )
         disable_resp = client.post("/api/admin/users/1/disable", headers=headers)
+        role_resp = client.post("/api/admin/users/1/role", json={"role": "admin"}, headers=headers)
+        enable_resp = client.post("/api/admin/users/1/enable", headers=headers)
     app.dependency_overrides.pop(routes_module.get_session, None)
 
     assert list_resp.status_code == 403
     assert add_resp.status_code == 403
     assert disable_resp.status_code == 403
+    assert role_resp.status_code == 403
+    assert enable_resp.status_code == 403
     assert list_resp.json()["detail"] == "admin role required"
 
 
@@ -369,6 +373,8 @@ def test_admin_user_apis_list_add_update_and_disable(db_session, monkeypatch):
             headers=headers,
         )
         disable_resp = client.post(f"/api/admin/users/{target.id}/disable", headers=headers)
+        role_resp = client.post(f"/api/admin/users/{target.id}/role", json={"role": "user"}, headers=headers)
+        enable_resp = client.post(f"/api/admin/users/{target.id}/enable", headers=headers)
     app.dependency_overrides.pop(routes_module.get_session, None)
 
     assert list_resp.status_code == 200, list_resp.text
@@ -382,6 +388,12 @@ def test_admin_user_apis_list_add_update_and_disable(db_session, monkeypatch):
     assert update_resp.json()["display_name"] == "Target Admin"
     assert disable_resp.status_code == 200, disable_resp.text
     assert disable_resp.json()["disabled"] is True
+    assert role_resp.status_code == 200, role_resp.text
+    assert role_resp.json()["role"] == "user"
+    assert role_resp.json()["display_name"] == "Target Admin"
+    assert role_resp.json()["disabled"] is True
+    assert enable_resp.status_code == 200, enable_resp.text
+    assert enable_resp.json()["disabled"] is False
     assert admin.id != target.id
 
 
@@ -416,6 +428,20 @@ def test_admin_user_api_rejects_last_active_admin_disable(db_session, monkeypatc
 
     assert disable_resp.status_code == 400
     assert disable_resp.json()["detail"] == "cannot disable the last active admin account"
+
+
+def test_admin_user_api_rejects_last_active_admin_demote(db_session, monkeypatch):
+    _clear_auth(db_session)
+    monkeypatch.setattr(settings, "machine_bearer_token", "machine-test-token")
+    admin = _seed_user(db_session, email="admin@example.test", subject="user_admin", role="admin")
+
+    headers = _external_headers({"Authorization": "Bearer machine-test-token"})
+    with _client(db_session) as client:
+        role_resp = client.post(f"/api/admin/users/{admin.id}/role", json={"role": "user"}, headers=headers)
+    app.dependency_overrides.pop(routes_module.get_session, None)
+
+    assert role_resp.status_code == 400
+    assert role_resp.json()["detail"] == "cannot demote the last active admin account"
 
 
 def test_library_is_owner_scoped_for_users_and_broad_for_admin(db_session, monkeypatch):

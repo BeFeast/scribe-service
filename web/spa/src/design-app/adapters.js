@@ -122,6 +122,8 @@ export function adaptUsers(me, users) {
 function adaptUser(user, me) {
 	const email = user.primary_email ?? user.email ?? "unknown";
 	return {
+		id: user.id ?? null,
+		owner_id: user.owner_id ?? null,
 		email,
 		name: user.display_name ?? user.name ?? email,
 		role: user.role ?? "user",

@@ -213,6 +213,7 @@ def test_settings_appearance_is_the_only_variant_control_surface() -> None:
 def test_core_route_wiring_uses_real_backend_actions_where_present() -> None:
     transcript = read("design-app/transcript-detail.jsx")
     command = read("design-app/command-palette.jsx")
+    settings = read("design-app/settings.jsx")
     api = read("design-app/api.jsx")
 
     assert 'auth.protectedFetch("/transcripts/" + t.id + "/resummarize"' in transcript
@@ -227,6 +228,12 @@ def test_core_route_wiring_uses_real_backend_actions_where_present() -> None:
     assert 'body: JSON.stringify({ url: videoUrl.url, source: "manual" })' in command
     assert "parseVideoUrl" in command
     assert "isJobView" in command
+    assert 'fetchJson(auth, "/api/config"' in settings
+    assert 'fetchJson(auth, "/api/prompts"' in settings
+    assert 'auth.protectedFetch("/api/prompts/" + promptVersion' in settings
+    assert 'fetchJson(auth, "/api/admin/users"' in settings
+    assert '"/api/admin/users/" + user.id + "/role"' in settings
+    assert "SCRIBE_USERS" not in settings
     assert "fetchJson(auth" in api
     assert "auth.protectedFetch(\"/api/jobs/\" + id + \"/log/stream\"" in api
     assert "currentJob.value?.id !== route.params.id" in api

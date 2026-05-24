@@ -32,6 +32,10 @@ class UserAdminCreate(BaseModel):
     role: str = "user"
 
 
+class UserAdminRoleUpdate(BaseModel):
+    role: str
+
+
 class UserAdminView(BaseModel):
     id: int
     owner_id: int
