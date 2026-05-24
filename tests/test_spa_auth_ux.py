@@ -36,6 +36,8 @@ def test_use_auth_exposes_clerk_sign_in_with_loop_protection() -> None:
     assert "sessionStorage" in source
     assert "maybeAutoSignIn" in source
     assert "authRedirectInFlight" in source
+    assert "authRequired" in source
+    assert "shouldRequireSignIn" in source
     assert "Authentication resources were blocked" in source
     assert "protectedFetch" in source
     assert 'headers.set("Authorization"' in source
@@ -45,14 +47,35 @@ def test_use_auth_exposes_clerk_sign_in_with_loop_protection() -> None:
 def test_design_app_runtime_routes_auth_failures_through_shared_fetch_glue() -> None:
     api = read("design-app/api.jsx")
     main = read("main.jsx")
+    library = read("design-app/library.jsx")
 
     assert "AuthProvider" in main
     assert "useAuth()" in main
+    assert "auth={auth}" in main
     assert "auth.protectedFetch" in api
     assert "response.status === 401 || response.status === 403" in api
     assert "auth.maybeAutoSignIn()" in api
     assert "throw new HttpError(response.status, await responseMessage(response))" in api
     assert "isTransientFetchError" in api
+    assert "auth.signedIn" in api
+    assert "AuthRequiredState" in library
+    assert "auth?.authRequired" in library
+    assert "Sign in required" in library
+    assert "auth.signIn()" in library
+    assert "auth.retryAuth()" in library
+
+
+def test_settings_account_and_token_controls_stay_wired_without_dead_rotate_ui() -> None:
+    settings = read("design-app/settings.jsx")
+    production = production_sources()
+
+    assert "Manage in Clerk" in settings
+    assert "auth.signOut" in settings
+    assert "Generate token" in settings
+    assert "Copy token" in settings
+    assert "/api/auth/extension-token" in settings
+    assert "/api/config/rotate-token" not in production
+    assert "configured server-side" not in production
 
 
 def test_shared_auth_helper_covers_401_and_403() -> None:

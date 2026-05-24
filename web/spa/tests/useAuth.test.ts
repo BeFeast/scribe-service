@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	clerkRedirectOptions,
 	parseFreshRedirectIntent,
+	shouldRequireSignIn,
 } from "../src/hooks/useAuth";
 
 describe("Clerk redirect auth helpers", () => {
@@ -42,5 +43,44 @@ describe("Clerk redirect auth helpers", () => {
 		).toBeNull();
 		expect(parseFreshRedirectIntent(null, now)).toBeNull();
 		expect(parseFreshRedirectIntent("not-json", now)).toBeNull();
+	});
+
+	test("records protected-route auth misses before Clerk is ready", () => {
+		expect(
+			shouldRequireSignIn({
+				trustedNetwork: false,
+				signedIn: false,
+				clerkConfigured: true,
+			}),
+		).toBe(true);
+		expect(
+			shouldRequireSignIn({
+				trustedNetwork: false,
+				signedIn: false,
+				clerkConfigured: false,
+				authConfigLoaded: false,
+			}),
+		).toBe(true);
+		expect(
+			shouldRequireSignIn({
+				trustedNetwork: false,
+				signedIn: true,
+				clerkConfigured: true,
+			}),
+		).toBe(false);
+		expect(
+			shouldRequireSignIn({
+				trustedNetwork: true,
+				signedIn: false,
+				clerkConfigured: true,
+			}),
+		).toBe(false);
+		expect(
+			shouldRequireSignIn({
+				trustedNetwork: false,
+				signedIn: false,
+				clerkConfigured: false,
+			}),
+		).toBe(false);
 	});
 });
