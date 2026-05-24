@@ -347,6 +347,7 @@ a {
 .cmdk-submit .label,
 .cmdk-result-body {
 	flex: 1;
+	min-width: 0;
 }
 
 .cmdk-submit .btn {

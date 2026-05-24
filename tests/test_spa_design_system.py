@@ -13,6 +13,8 @@ STYLES = SPA_SRC / "styles.css"
 MAIN = SPA_SRC / "main.tsx"
 PLAYGROUND = SPA_SRC / "DesignSystemPlayground.tsx"
 SPA_TEMPLATE = ROOT / "src" / "scribe" / "web" / "templates" / "spa.html"
+LIVE_VISUAL_QA = ROOT / "scripts" / "live-visual-qa.mjs"
+PACKAGE_JSON = ROOT / "web" / "spa" / "package.json"
 
 TOKENS = (
     "--bg",
@@ -222,3 +224,69 @@ def test_library_submit_status_does_not_shift_toolbar_row() -> None:
     block = css[start : css.index("}", start)]
     assert "grid-column: 1 / -1" in block
     assert "position: absolute" not in block
+
+
+def test_live_visual_qa_script_covers_required_routes_and_responsive_viewports() -> None:
+    script = LIVE_VISUAL_QA.read_text(encoding="utf-8")
+    package = PACKAGE_JSON.read_text(encoding="utf-8")
+
+    assert '"visual:qa": "bun ../../scripts/live-visual-qa.mjs"' in package
+    assert "SCRIBE_VISUAL_QA_BASE_URL" in script
+    for route in (
+        "#/library",
+        "#/queue",
+        "#/ops",
+        "#/settings",
+        "#/transcript/${explicitTranscript}",
+        "#/jobs/${explicitJob}",
+    ):
+        assert route in script
+    assert "SCRIBE_VISUAL_QA_TRANSCRIPT_ID" in script
+    assert "SCRIBE_VISUAL_QA_JOB_ID" in script
+    assert '"desktop", width: 1440' in script
+    assert '"mobile", width: 390' in script
+    assert "Page.captureScreenshot" in script
+    assert "Runtime.consoleAPICalled" in script
+    assert "Runtime.exceptionThrown" in script
+    assert "horizontalOverflow" in script
+    assert "commandPaletteMismatch" in script
+    assert 'dataset.variant !== "field"' in script
+    assert 'dataset.theme !== "light"' in script
+    assert 'dataset.density !== "compact"' in script
+    assert 'dataset.libraryLayout !== "feed"' in script
+    assert "Input.dispatchKeyEvent" in script
+
+
+def test_responsive_shell_and_route_surfaces_prevent_viewport_overflow() -> None:
+    css = STYLES.read_text(encoding="utf-8")
+
+    def rule_block(selector: str) -> str:
+        selector_start = css.index(selector)
+        block_start = css.index("{", selector_start)
+        return css[block_start : css.index("}", block_start)]
+
+    for selector in (
+        ".content-pane",
+        ".library-results",
+        ".library-search",
+        ".library-submit label",
+        ".inflight-copy",
+        ".cmdk-submit .label",
+        ".cmdk-result-body",
+    ):
+        assert "min-width: 0" in rule_block(selector)
+
+    for selector in (".table-wrap", ".pipeline.compact"):
+        assert "overflow-x: auto" in rule_block(selector)
+    assert "overflow: auto" in rule_block(".access-table-wrap")
+
+    narrow = css[css.index("@media (max-width: 820px)") :]
+    assert ".shell-body" in narrow
+    assert "grid-template-columns: 1fr" in narrow
+    assert ".sidebar" in narrow
+    assert "position: static" in narrow
+    assert ".library-actions" in narrow
+
+    mobile = css[css.index("@media (max-width: 560px)") :]
+    assert ".topbar-access" in mobile
+    assert "width: 100%" in mobile
