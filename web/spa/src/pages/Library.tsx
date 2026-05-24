@@ -95,7 +95,7 @@ const partialShareTargetKinds = new Set<ShareTarget["kind"]>([
 function formatDate(value: string): string {
 	const date = new Date(value);
 	if (Number.isNaN(date.getTime())) {
-		return "unknown";
+		return "date n/a";
 	}
 	return new Intl.DateTimeFormat(undefined, {
 		month: "short",
@@ -112,6 +112,12 @@ function formatDuration(seconds: number | null): string {
 	const minutes = Math.floor(seconds / 60);
 	const rest = Math.floor(seconds % 60);
 	return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
+function formatElapsed(seconds: number): string {
+	const minutes = Math.floor(seconds / 60);
+	const rest = Math.floor(seconds % 60);
+	return minutes > 0 ? `${minutes}m ${rest}s` : `${rest}s`;
 }
 
 function buildLibraryUrl(
@@ -133,7 +139,24 @@ function hasNonTerminalJob(jobs: ActiveJob[]): boolean {
 	return jobs.some((job) => !terminalStatuses.has(job.status));
 }
 
-function errorMessage(status: number, body: unknown): string {
+async function readErrorMessage(response: Response): Promise<string> {
+	try {
+		const body = (await response.json()) as unknown;
+		if (
+			typeof body === "object" &&
+			body !== null &&
+			"detail" in body &&
+			typeof body.detail === "string"
+		) {
+			return body.detail;
+		}
+	} catch {
+		// Fall back to the response status.
+	}
+	return `HTTP ${response.status} ${response.statusText}`.trim();
+}
+
+function submitErrorMessage(status: number, body: unknown): string {
 	if (
 		typeof body === "object" &&
 		body !== null &&
@@ -192,9 +215,7 @@ export function Library({
 			try {
 				const response = await auth.protectedFetch(
 					buildLibraryUrl(debouncedQuery, selectedTag, libraryPageSize, offset),
-					{
-						signal,
-					},
+					{ signal },
 				);
 				if (isAuthStatus(response.status)) {
 					setRows([]);
@@ -266,12 +287,10 @@ export function Library({
 		try {
 			const response = await auth.protectedFetch(
 				`/admin/transcripts/${row.id}`,
-				{
-					method: "DELETE",
-				},
+				{ method: "DELETE" },
 			);
 			if (!response.ok) {
-				throw new Error(`Delete failed: ${response.status}`);
+				throw new Error(await readErrorMessage(response));
 			}
 			setRows((current) => current.filter((item) => item.id !== row.id));
 			setTotal((current) => Math.max(0, current - 1));
@@ -318,7 +337,7 @@ export function Library({
 			if (!response.ok) {
 				setSubmitState({
 					state: "error",
-					message: errorMessage(response.status, body),
+					message: submitErrorMessage(response.status, body),
 				});
 				return;
 			}
@@ -335,8 +354,7 @@ export function Library({
 	};
 
 	return (
-		<section className="library-page">
-			<InFlightStrip navigate={navigate} />
+		<section className="library-page pane">
 			<header className="library-hero">
 				<div className="library-title">
 					<p className="section-label">Library</p>
@@ -359,7 +377,9 @@ export function Library({
 							</a>
 						) : null}
 						{isLoading ? (
-							<span className="spinner" aria-label="Loading" />
+							<span className="muted" aria-live="polite">
+								Loading rows...
+							</span>
 						) : null}
 					</div>
 				</div>
@@ -386,7 +406,7 @@ export function Library({
 										setSubmitState({ state: "idle" });
 									}
 								}}
-								placeholder="Video URL"
+								placeholder="https://youtu.be/..."
 								disabled={authRequired}
 							/>
 						</label>
@@ -395,7 +415,7 @@ export function Library({
 							className="btn primary"
 							disabled={!canSubmitUrl}
 						>
-							Submit
+							{submitState.state === "submitting" ? "Submitting" : "Submit"}
 						</button>
 						{submitMessage !== null ? (
 							<p className={submitClass}>{submitMessage}</p>
@@ -403,6 +423,8 @@ export function Library({
 					</form>
 				</div>
 			</header>
+
+			<InFlightStrip navigate={navigate} />
 
 			{error?.kind === "auth" ? (
 				<div
@@ -444,7 +466,7 @@ export function Library({
 			) : null}
 
 			{error?.kind === "service" ? (
-				<div className="library-state failure-row">
+				<div className="library-state failure-row error-state">
 					<span className="chip err">error</span>
 					<p className="err-title">Service temporarily unavailable</p>
 					<p className="err-msg">{error.message}</p>
@@ -455,11 +477,17 @@ export function Library({
 			) : null}
 
 			{!isLoading && error === null && rows.length === 0 ? (
-				<div className="library-state">
+				<div className="library-state empty-state">
 					<span className="chip info">0 transcripts</span>
-					<p className="feed-title">Nothing in the library yet</p>
+					<p className="feed-title">
+						{debouncedQuery || selectedTag
+							? "No matching transcripts"
+							: "Nothing in the library yet"}
+					</p>
 					<p className="feed-excerpt">
-						Submitted video URLs will appear here after transcription starts.
+						{debouncedQuery || selectedTag
+							? "Try another search or clear the selected tag."
+							: "Submitted video URLs will appear here after transcription starts."}
 					</p>
 				</div>
 			) : null}
@@ -546,6 +574,11 @@ function InFlightStrip({ navigate }: { navigate: (route: Route) => void }) {
 				const response = await auth.protectedFetch("/api/jobs/active", {
 					signal,
 				});
+				if (isAuthStatus(response.status)) {
+					setJobs([]);
+					setError(false);
+					return;
+				}
 				if (!response.ok) {
 					throw new Error("active jobs request failed");
 				}
@@ -572,6 +605,9 @@ function InFlightStrip({ navigate }: { navigate: (route: Route) => void }) {
 			<div className="inflight-head">
 				<span className="live-dot" aria-hidden="true" />
 				<strong>In flight</strong>
+				<span className="muted">
+					{jobs.length} job{jobs.length === 1 ? "" : "s"}
+				</span>
 				{error ? <span className="chip warn">poll delayed</span> : null}
 			</div>
 			{jobs.map((job) => (
@@ -595,9 +631,16 @@ function InFlightRow({
 	const doneCount = stageLabels.filter(
 		(stage) => job.stages[stage]?.state === "done",
 	).length;
+	const activeProgress = job.stages[activeStage]?.progress;
 	const progress = Math.max(
 		8,
-		Math.min(100, ((doneCount + 0.5) / stageLabels.length) * 100),
+		Math.min(
+			100,
+			((doneCount +
+				(typeof activeProgress === "number" ? activeProgress : 0.5)) /
+				stageLabels.length) *
+				100,
+		),
 	);
 
 	return (
@@ -607,9 +650,9 @@ function InFlightRow({
 			onClick={(event) => handleRouteAnchorClick(event, jobRoute, navigate)}
 		>
 			<span className="inflight-copy">
-				<strong>{job.title ?? job.video_id}</strong>
+				<strong>{job.title ?? job.source_label ?? job.video_id}</strong>
 				<span>
-					{activeStage} / {job.elapsed_s}s
+					job {job.id} / {activeStage} / {formatElapsed(job.elapsed_s)}
 				</span>
 			</span>
 			<span className="bar-track" aria-label={`${activeStage} progress`}>
@@ -686,6 +729,7 @@ function LibTable({
 							<td className="muted">
 								<div className="table-meta-stack">
 									<span>{formatDuration(row.duration_seconds)}</span>
+									<span>{row.lang ?? "lang n/a"}</span>
 									<span>{formatUsdCost(row.vast_cost, displayCurrency)}</span>
 								</div>
 							</td>
@@ -714,8 +758,18 @@ function LibFeed({
 	return (
 		<div className="lib-feed">
 			{rows.map((row) => (
-				<article className="feed-item" key={row.id}>
-					<div className="feed-head">
+				<article className="feed-item library-feed-row" key={row.id}>
+					<div className="feed-num">#{row.id}</div>
+					<div className="feed-body">
+						<div className="feed-meta-top detail-meta">
+							<span className="tnum">{formatDate(row.created_at)}</span>
+							<span>{formatDuration(row.duration_seconds)}</span>
+							<span>{row.lang ?? "lang n/a"}</span>
+							<span>{formatUsdCost(row.vast_cost, displayCurrency)}</span>
+							{row.is_partial ? (
+								<span className="chip warn">partial</span>
+							) : null}
+						</div>
 						<a
 							className="link-button feed-title"
 							href={routeToHref({
@@ -732,16 +786,14 @@ function LibFeed({
 						>
 							{row.title}
 						</a>
-						{row.is_partial ? <span className="chip warn">partial</span> : null}
+						<p className="feed-excerpt">{row.summary_excerpt}</p>
+						<TagList row={row} navigate={navigate} />
+						<RowLinks
+							row={row}
+							onDelete={onDelete}
+							busy={deleteBusyId === row.id}
+						/>
 					</div>
-					<p className="feed-excerpt">{row.summary_excerpt}</p>
-					<RowMeta row={row} displayCurrency={displayCurrency} />
-					<TagList row={row} navigate={navigate} />
-					<RowLinks
-						row={row}
-						onDelete={onDelete}
-						busy={deleteBusyId === row.id}
-					/>
 				</article>
 			))}
 		</div>
@@ -765,25 +817,27 @@ function LibCards({
 		<div className="lib-cards">
 			{rows.map((row) => (
 				<article className="card lib-card" key={row.id}>
-					<div>
-						<a
-							className="link-button feed-title"
-							href={routeToHref({
-								page: "transcript",
-								params: { id: row.id },
-							})}
-							onClick={(event) =>
-								handleRouteAnchorClick(
-									event,
-									{ page: "transcript", params: { id: row.id } },
-									navigate,
-								)
-							}
-						>
-							{row.title}
-						</a>
+					<div className="card-meta-top detail-meta">
+						<span>#{row.id}</span>
+						<span>{formatDate(row.created_at)}</span>
 						{row.is_partial ? <span className="chip warn">partial</span> : null}
 					</div>
+					<a
+						className="link-button feed-title"
+						href={routeToHref({
+							page: "transcript",
+							params: { id: row.id },
+						})}
+						onClick={(event) =>
+							handleRouteAnchorClick(
+								event,
+								{ page: "transcript", params: { id: row.id } },
+								navigate,
+							)
+						}
+					>
+						{row.title}
+					</a>
 					<p className="feed-excerpt">{row.summary_excerpt}</p>
 					<TagList row={row} navigate={navigate} />
 					<RowMeta row={row} displayCurrency={displayCurrency} />
@@ -838,7 +892,6 @@ function RowMeta({
 }) {
 	return (
 		<div className="detail-meta">
-			<span className="tnum">{formatDate(row.created_at)}</span>
 			<span>{formatDuration(row.duration_seconds)}</span>
 			<span>{row.lang ?? "lang n/a"}</span>
 			<span>{formatUsdCost(row.vast_cost, displayCurrency)}</span>
