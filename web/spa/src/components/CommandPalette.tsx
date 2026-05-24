@@ -361,22 +361,30 @@ function isSelectable(item: PaletteItem): item is ResultItem {
 	return !isSection(item) && item.type !== "empty";
 }
 
+export function isCommandPaletteShortcut(event: KeyboardEvent): boolean {
+	return (
+		(event.metaKey || event.ctrlKey) &&
+		(event.key.toLowerCase() === "k" || event.code === "KeyK")
+	);
+}
+
 export function useCommandPalette() {
 	const [isOpen, setIsOpen] = React.useState(false);
 
 	React.useEffect(() => {
 		const open = () => setIsOpen(true);
 		const keydown = (event: KeyboardEvent) => {
-			if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+			if (isCommandPaletteShortcut(event)) {
 				event.preventDefault();
+				event.stopPropagation();
 				setIsOpen(true);
 			}
 		};
 		document.addEventListener(CMDK_OPEN_EVENT, open);
-		document.addEventListener("keydown", keydown);
+		window.addEventListener("keydown", keydown, { capture: true });
 		return () => {
 			document.removeEventListener(CMDK_OPEN_EVENT, open);
-			document.removeEventListener("keydown", keydown);
+			window.removeEventListener("keydown", keydown, { capture: true });
 		};
 	}, []);
 
