@@ -387,13 +387,19 @@ async function smokeVariantMatrix(cdp) {
 					);
 					await cdp.send("Page.navigate", { url: absolute("#/library") });
 					await waitForLoad(cdp);
-					await sleep(120);
+					const layoutSelector =
+						libraryLayout === "table"
+							? ".lib-table"
+							: libraryLayout === "feed"
+								? ".lib-feed"
+								: ".lib-cards";
+					await waitForSelector(cdp, layoutSelector);
 					const state = await evaluate(
 						cdp,
 						`(() => {
 							const doc = document.documentElement;
 							const scrolling = document.scrollingElement;
-							const layoutSelector = ${JSON.stringify(libraryLayout === "table" ? ".lib-table" : libraryLayout === "feed" ? ".lib-feed" : ".lib-cards")};
+							const layoutSelector = ${JSON.stringify(layoutSelector)};
 							return {
 								dataset: {
 									variant: doc.dataset.variant || "",
@@ -430,6 +436,20 @@ async function waitForLoad(cdp) {
 	}
 	const url = await evaluate(cdp, "location.href").catch(() => "unknown URL");
 	console.warn(`Timed out waiting for document.readyState=complete on ${url}`);
+}
+
+async function waitForSelector(cdp, selector, timeoutMs = 2200) {
+	const started = Date.now();
+	while (Date.now() - started < timeoutMs) {
+		const visible = await evaluate(
+			cdp,
+			`Boolean(document.querySelector(${JSON.stringify(selector)}))`,
+		);
+		if (visible) {
+			return;
+		}
+		await sleep(50);
+	}
 }
 
 async function main() {

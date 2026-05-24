@@ -172,6 +172,22 @@ def test_density_modulates_only_spacing_and_base_size() -> None:
     assert "--fs-base: 13px" in block
 
 
+def test_variant_tokens_match_design_export_values() -> None:
+    css = STYLES.read_text(encoding="utf-8")
+
+    def block(selector: str) -> str:
+        start = css.index(selector)
+        return css[start : css.index("}", start)]
+
+    assert "--bg-card: #fbf9f3" in block('[data-variant="paper"]')
+    assert "--fg: #1c1a16" in block('[data-variant="paper"]')
+    assert "--accent: #b15233" in block('[data-variant="paper"]')
+    assert "--radius-lg: 10px" in block('[data-variant="paper"]')
+    assert "--accent: #7dd87d" in block('[data-variant="terminal"]')
+    assert "--bg: #ffffff" in block('[data-variant="console"]')
+    assert "--radius-lg: 12px" in block('[data-variant="console"]')
+
+
 def test_shared_component_classes_are_present() -> None:
     css = STYLES.read_text(encoding="utf-8")
 
