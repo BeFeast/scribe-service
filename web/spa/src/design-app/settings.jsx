@@ -710,7 +710,7 @@ function CurrentSession({ me }) {
     setAccountState({ error: null, saved: null, signingOut: false });
     try {
       await action();
-    } catch (error) {
+    } catch (_error) {
       setAccountState({ error: CLERK_PROFILE_UNAVAILABLE, saved: null, signingOut: false });
     }
   }
