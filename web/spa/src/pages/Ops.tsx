@@ -308,7 +308,7 @@ export function Ops({ displayCurrency, navigate }: OpsProps) {
 	const failures24h = countFailuresSince(failures, 24 * 3600);
 	const failureSummary =
 		failures.length >= 50
-			? `showing ${compactNumber(failures.length)} most recent (capped)`
+			? `showing ${compactNumber(failures.length)} most recent (capped) · last 24h: ${compactNumber(failures24h)}`
 			: `${compactNumber(failures.length)} failed · last 24h: ${compactNumber(failures24h)}`;
 	const lastRefreshLabel = loading
 		? "refreshing"

@@ -561,6 +561,28 @@ def test_sidebar_routes_protected_fetch_without_mock_fallback() -> None:
     assert "Sign in" in source
 
 
+def test_ops_dashboard_uses_real_snapshot_and_honest_actions() -> None:
+    source = read("pages/Ops.tsx")
+    routes = (ROOT / "src" / "scribe" / "api" / "routes.py").read_text(encoding="utf-8")
+
+    assert 'auth.protectedFetch("/api/ops"' in source
+    assert "onClick={() => void load()}" in source
+    assert "Grafana unavailable" in source
+    assert "No Grafana dashboard URL is configured" in source
+    assert "SPEND_SERIES" not in source
+    assert "RECENT_FAILURES" not in source
+    assert "STATS" not in source
+    assert "scribe-service · v0.4.2" not in source
+    assert "go.oklabs.uk · responsive" not in source
+    assert "failures24h" in source
+    assert "last 24h: ${compactNumber(failures24h)}" in source
+    assert "Recent failures · 7d" in source
+    assert "spend_series_14d" in source
+    assert "jobs_by_status" in source
+    assert "_system_rollcall()" not in routes
+    assert "def _system_snapshot(" in routes
+
+
 def test_route_hook_uses_typed_hash_routes() -> None:
     source = read("hooks/useRoute.ts")
 

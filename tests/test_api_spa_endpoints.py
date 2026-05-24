@@ -628,11 +628,11 @@ def test_api_job_log_stream_returns_buffered_worker_lines_and_closes(client, db_
 def test_api_ops_empty(client, tmp_path, monkeypatch):
     path = tmp_path / "_last_success_ts"
     monkeypatch.setattr(settings, "backup_status_path", str(path))
-    monkeypatch.setattr(
-        routes_module.ops_helpers,
-        "_system_rollcall",
-        lambda: [{"label": "Worker", "value": "unknown", "status": "warn"}],
-    )
+
+    def fail_rollcall():
+        raise AssertionError("blocking rollcall must not run in /api/ops")
+
+    monkeypatch.setattr("scribe.api.routes.ops_helpers._system_rollcall", fail_rollcall)
     resp = client.get("/api/ops")
     assert resp.status_code == 200
     assert resp.headers["cache-control"] == "no-store"
@@ -645,7 +645,14 @@ def test_api_ops_empty(client, tmp_path, monkeypatch):
     assert len(body["spend_series_14d"]) == 14
     assert body["backup"]["stale"] is True
     assert body["recent_failures"] == []
-    assert body["system"] == [{"label": "Worker", "value": "unknown", "status": "warn"}]
+    assert [row["label"] for row in body["system"]] == [
+        "scribe-service",
+        "Worker",
+        "Postgres",
+        "Backup",
+        "Vast.ai",
+        "codex CLI",
+    ]
 
 
 def test_api_ops_happy_path(client, db_session, tmp_path, monkeypatch):
@@ -653,14 +660,11 @@ def test_api_ops_happy_path(client, db_session, tmp_path, monkeypatch):
     path.write_text(str(int(time.time())))
     monkeypatch.setattr(settings, "backup_status_path", str(path))
     monkeypatch.setattr(settings, "daily_spend_cap_usd", 2.0)
-    monkeypatch.setattr(
-        routes_module.ops_helpers,
-        "_system_rollcall",
-        lambda: [
-            {"label": "scribe-service", "value": "vtest", "status": "ok"},
-            {"label": "Postgres", "value": "ready", "status": "ok"},
-        ],
-    )
+
+    def fail_rollcall():
+        raise AssertionError("blocking rollcall must not run in /api/ops")
+
+    monkeypatch.setattr("scribe.api.routes.ops_helpers._system_rollcall", fail_rollcall)
     now = dt.datetime.now(dt.UTC)
     active = Job(url="https://youtu.be/opsactive1", video_id="opsactive1", status=JobStatus.queued)
     failed = Job(
@@ -674,6 +678,7 @@ def test_api_ops_happy_path(client, db_session, tmp_path, monkeypatch):
         video_id="opsfailedold",
         status=JobStatus.failed,
         error="old failure",
+        created_at=now - dt.timedelta(days=8),
         updated_at=now - dt.timedelta(days=8),
     )
     db_session.add(active)
@@ -709,7 +714,11 @@ def test_api_ops_happy_path(client, db_session, tmp_path, monkeypatch):
     assert body["recent_failures"][0]["id"] == failed.id
     assert body["recent_failures"][0]["error"] == "codex exited 1"
     assert [item["video_id"] for item in body["recent_failures"]] == ["opsfailed1"]
-    assert body["system"][0] == {"label": "scribe-service", "value": "vtest", "status": "ok"}
+    assert next(row for row in body["system"] if row["label"] == "Postgres") == {
+        "label": "Postgres",
+        "value": "request query succeeded",
+        "status": "ok",
+    }
 
 
 def _auth_headers(subject: str, email: str | None = None) -> dict[str, str]:
