@@ -405,6 +405,19 @@ function ShareSheet({
 		});
 	}
 
+	function handleSummaryDownload(event: React.MouseEvent<HTMLAnchorElement>) {
+		if (summaryBody === null) {
+			event.preventDefault();
+			setTimedState({
+				key: "dl:summary",
+				status: "err",
+				message: "summary unavailable",
+			});
+			return;
+		}
+		markDownload("summary");
+	}
+
 	return (
 		<div className="share-sheet" ref={ref}>
 			<div className="sh-hd">
@@ -505,9 +518,13 @@ function ShareSheet({
 				<div className="sh-section-label">Download</div>
 				<a
 					className="sh-item"
-					href={`/transcripts/${transcript.id}/summary.md`}
+					href={
+						summaryBody === null
+							? undefined
+							: `/transcripts/${transcript.id}/summary.md`
+					}
 					download
-					onClick={() => markDownload("summary")}
+					onClick={handleSummaryDownload}
 					aria-disabled={summaryBody === null}
 				>
 					<div className="sh-glyph">
@@ -739,6 +756,10 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 		}
 	}, [auth, deleting, navigate, record]);
 
+	const closeShareSheet = React.useCallback(() => {
+		setShareOpen(false);
+	}, []);
+
 	if (loading) {
 		return (
 			<section className="pane pane-narrow transcript-detail">
@@ -808,7 +829,7 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 							copyState={copyState}
 							copy={copy}
 							setTimedState={setTimedState}
-							onClose={() => setShareOpen(false)}
+							onClose={closeShareSheet}
 						/>
 					) : null}
 				</div>
