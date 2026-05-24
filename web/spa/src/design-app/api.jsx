@@ -162,7 +162,7 @@ export function useScribeRuntime(auth, route) {
 				if (!controller.signal.aborted) setCore((previous) => ({ ...previous, users: adaptUsers(me, users) }));
 			})
 			.catch(() => {
-				if (!controller.signal.aborted) setCore((previous) => ({ ...previous, currentUser: null, users: [] }));
+				if (!controller.signal.aborted) setCore((previous) => ({ ...previous, currentUser: me, users: [] }));
 			});
 		return () => controller.abort();
 	}, [auth, route.page]);
