@@ -84,8 +84,13 @@ type EmptyItem = {
 
 type PaletteItem = SectionItem | ResultItem | EmptyItem;
 
-const YT_RE =
-	/(?:youtube\.com\/(?:watch\?v=|shorts\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/;
+const YOUTUBE_VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+const YOUTUBE_HOSTS = new Set([
+	"youtube.com",
+	"www.youtube.com",
+	"m.youtube.com",
+	"music.youtube.com",
+]);
 
 const NAV_ITEMS: Array<{
 	page: RoutePage;
@@ -199,12 +204,22 @@ function route(page: RoutePage, id?: number): Route {
 	return { page, params: id === undefined ? {} : { id } };
 }
 
-function parseVideoUrl(value: string): { url: string; videoId: string } | null {
-	const trimmed = value.trim();
-	const match = trimmed.match(YT_RE);
-	if (!match) {
+function pathSegment(url: URL, index: number): string | null {
+	const segment = url.pathname.split("/").filter(Boolean)[index];
+	return segment === undefined ? null : decodeURIComponent(segment);
+}
+
+function validVideoId(value: string | null): string | null {
+	if (value === null || !YOUTUBE_VIDEO_ID_RE.test(value)) {
 		return null;
 	}
+	return value;
+}
+
+export function parseVideoUrl(
+	value: string,
+): { url: string; videoId: string } | null {
+	const trimmed = value.trim();
 
 	try {
 		const candidate = /^https?:\/\//i.test(trimmed)
@@ -214,7 +229,22 @@ function parseVideoUrl(value: string): { url: string; videoId: string } | null {
 		if (url.protocol !== "http:" && url.protocol !== "https:") {
 			return null;
 		}
-		return { url: url.href, videoId: match[1] };
+		const host = url.hostname.toLowerCase();
+		let videoId: string | null = null;
+		if (host === "youtu.be") {
+			videoId = validVideoId(pathSegment(url, 0));
+		} else if (YOUTUBE_HOSTS.has(host)) {
+			const [kind = ""] = url.pathname.split("/").filter(Boolean);
+			if (kind === "watch") {
+				videoId = validVideoId(url.searchParams.get("v"));
+			} else if (kind === "shorts" || kind === "live" || kind === "embed") {
+				videoId = validVideoId(pathSegment(url, 1));
+			}
+		}
+		if (videoId === null) {
+			return null;
+		}
+		return { url: url.href, videoId };
 	} catch {
 		return null;
 	}
@@ -283,6 +313,21 @@ async function safeJson(response: Response): Promise<unknown> {
 	} catch {
 		return null;
 	}
+}
+
+export function isJobView(value: unknown): value is JobView {
+	if (typeof value !== "object" || value === null) {
+		return false;
+	}
+	const candidate = value as Partial<JobView>;
+	return (
+		typeof candidate.job_id === "number" &&
+		Number.isFinite(candidate.job_id) &&
+		typeof candidate.video_id === "string" &&
+		candidate.video_id.length > 0 &&
+		typeof candidate.status === "string" &&
+		candidate.status.length > 0
+	);
 }
 
 function submitErrorMessage(status: number, body: unknown): string {
@@ -588,7 +633,15 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 				});
 				return;
 			}
-			setSubmitState({ state: "success", job: body as JobView });
+			if (!isJobView(body)) {
+				setSubmitState({
+					state: "error",
+					message:
+						"Scribe accepted the request but returned an invalid job response.",
+				});
+				return;
+			}
+			setSubmitState({ state: "success", job: body });
 		} catch {
 			setSubmitState({
 				state: "error",
