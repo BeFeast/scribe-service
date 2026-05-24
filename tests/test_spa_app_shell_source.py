@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import re
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -8,6 +10,24 @@ SPA_SRC = ROOT / "web" / "spa" / "src"
 DESIGN_EXPORT = ROOT / "design" / "scribe-redesign-2026-05-24" / "app"
 STAGED_SOURCE = SPA_SRC / "design-source" / "app"
 DESIGN_APP = SPA_SRC / "design-app"
+DESIGN_ARCHIVE = Path("/mnt/storage/src/Scribe.redesign.zip")
+EXPECTED_DESIGN_ARCHIVE_SHA256 = (
+    "3253d4d262b00a25bdb07bf4ff3c7112998b9b8ee917211438aa220bcdd9719a"
+)
+DESIGN_SOURCE_FILES = (
+    "app.jsx",
+    "command-palette.jsx",
+    "data.jsx",
+    "icons.jsx",
+    "job-pages.jsx",
+    "library.jsx",
+    "ops.jsx",
+    "settings.jsx",
+    "shell.jsx",
+    "styles.css",
+    "transcript-detail.jsx",
+    "tweaks-panel.jsx",
+)
 
 
 def read(path: str) -> str:
@@ -25,23 +45,35 @@ def production_sources() -> str:
 
 
 def test_design_export_source_is_staged_verbatim() -> None:
-    for name in (
-        "app.jsx",
-        "command-palette.jsx",
-        "data.jsx",
-        "icons.jsx",
-        "job-pages.jsx",
-        "library.jsx",
-        "ops.jsx",
-        "settings.jsx",
-        "shell.jsx",
-        "styles.css",
-        "transcript-detail.jsx",
-        "tweaks-panel.jsx",
-    ):
+    staged_names = sorted(path.name for path in STAGED_SOURCE.glob("*") if path.is_file())
+    export_names = sorted(path.name for path in DESIGN_EXPORT.glob("*") if path.is_file())
+
+    assert staged_names == sorted(DESIGN_SOURCE_FILES)
+    assert export_names == sorted(DESIGN_SOURCE_FILES)
+    for name in DESIGN_SOURCE_FILES:
         assert (STAGED_SOURCE / name).read_text(encoding="utf-8") == (
             DESIGN_EXPORT / name
         ).read_text(encoding="utf-8")
+
+
+def test_staged_design_source_matches_claude_archive_when_available() -> None:
+    if not DESIGN_ARCHIVE.exists():
+        return
+
+    digest = hashlib.sha256(DESIGN_ARCHIVE.read_bytes()).hexdigest()
+    assert digest == EXPECTED_DESIGN_ARCHIVE_SHA256
+
+    with zipfile.ZipFile(DESIGN_ARCHIVE) as archive:
+        archive_names = sorted(
+            name.removeprefix("app/")
+            for name in archive.namelist()
+            if name.startswith("app/") and not name.endswith("/")
+        )
+        assert archive_names == sorted(DESIGN_SOURCE_FILES)
+        for name in DESIGN_SOURCE_FILES:
+            expected = archive.read(f"app/{name}").decode("utf-8")
+            assert (STAGED_SOURCE / name).read_text(encoding="utf-8") == expected
+            assert (DESIGN_EXPORT / name).read_text(encoding="utf-8") == expected
 
 
 def test_old_visual_spa_source_was_removed_from_production_path() -> None:

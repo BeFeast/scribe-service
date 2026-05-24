@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${ROOT}/web/spa/src"
 
+"${ROOT}/scripts/check-design-source-parity.sh"
+
 # Consumers should use exported recipe classes (.pane, .card, .metric, .btn,
 # etc.) instead of rebuilding those recipes from utility-class fragments.
 recipe_utilities='(rounded|shadow|p-[0-9]|px-[0-9]|py-[0-9]|border-[a-z]|bg-[a-z]|grid-cols-|gap-[0-9])'
