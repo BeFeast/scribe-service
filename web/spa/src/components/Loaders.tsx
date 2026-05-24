@@ -42,6 +42,7 @@ const STEP_LABEL: Record<AuthGatePhase, string> = {
 type AuthGateProps = {
 	phase: AuthGatePhase;
 	error?: string | null;
+	message?: string | null;
 	onSignIn?: () => void;
 	onRetry?: () => void;
 	onContinueOffline?: () => void;
@@ -50,6 +51,7 @@ type AuthGateProps = {
 export function AuthGate({
 	phase,
 	error,
+	message,
 	onSignIn,
 	onRetry,
 	onContinueOffline,
@@ -59,6 +61,13 @@ export function AuthGate({
 	}
 
 	const currentIndex = STEP_ORDER.indexOf(phase);
+	const signInMessage =
+		message ??
+		"Scribe is invite-only. Sign in with the email your operator added to the allowlist.";
+	const signInMessageClass =
+		message !== null && message !== undefined
+			? "auth-gate-help auth-gate-help-error"
+			: "auth-gate-help";
 	const stepState = (idx: number): "done" | "active" | "pending" => {
 		if (currentIndex === -1) return "pending";
 		if (idx < currentIndex) return "done";
@@ -67,7 +76,8 @@ export function AuthGate({
 	};
 
 	return (
-		<output className="auth-gate" aria-live="polite">
+		// biome-ignore lint/a11y/useSemanticElements: output is form-associated and can reset interactive auth controls.
+		<div role="status" className="auth-gate" aria-live="polite">
 			<div className="auth-gate-card">
 				<div className="auth-gate-mark">
 					<svg
@@ -94,10 +104,7 @@ export function AuthGate({
 
 				{phase === "signin" ? (
 					<>
-						<p className="auth-gate-help">
-							Scribe is invite-only. Sign in with the email your operator added
-							to the allowlist.
-						</p>
+						<p className={signInMessageClass}>{signInMessage}</p>
 						<div className="auth-gate-signin-actions">
 							<button type="button" className="btn primary" onClick={onSignIn}>
 								Sign in with Clerk
@@ -154,7 +161,7 @@ export function AuthGate({
 						: "establishing secure session…"}
 				</span>
 			</div>
-		</output>
+		</div>
 	);
 }
 
@@ -164,20 +171,22 @@ type LoaderProps = { label?: string; sub?: string };
 
 export function Loader({ label, sub }: LoaderProps) {
 	return (
-		<output className="loader-block" aria-live="polite">
+		// biome-ignore lint/a11y/useSemanticElements: output is form-associated and can reset loader content in parent forms.
+		<div role="status" className="loader-block" aria-live="polite">
 			<span className="spinner" aria-hidden="true" />
 			<span>{label ?? "Loading…"}</span>
 			{sub !== undefined ? <span className="loader-sub">{sub}</span> : null}
-		</output>
+		</div>
 	);
 }
 
 export function LoaderInline({ label }: { label?: string }) {
 	return (
-		<output className="loader" aria-live="polite">
+		// biome-ignore lint/a11y/useSemanticElements: output is form-associated and can reset loader content in parent forms.
+		<div role="status" className="loader" aria-live="polite">
 			<span className="spinner" aria-hidden="true" />
 			<span>{label ?? "Loading…"}</span>
-		</output>
+		</div>
 	);
 }
 

@@ -19,7 +19,7 @@ function deriveGatePhase(auth, dataReady) {
 	if (auth.bootstrap === "error") return "error";
 	if (auth.bootstrap === "config") return "config";
 	if (auth.bootstrap === "clerk") return "clerk";
-	if (auth.clerkConfigured && !auth.canWrite) return "signin";
+	if (auth.clerkConfigured && !auth.signedIn) return "signin";
 	if (!dataReady) return "workspace";
 	return "ready";
 }
@@ -180,6 +180,7 @@ function ScribeApp() {
 			<AuthGate
 				phase={gatePhase}
 				error={auth.bootstrapError}
+				message={auth.authBlockedMessage}
 				onSignIn={auth.signIn}
 				onRetry={auth.retryBootstrap}
 				onContinueOffline={auth.continueOffline}
