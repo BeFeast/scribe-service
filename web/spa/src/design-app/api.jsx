@@ -36,6 +36,9 @@ export function useScribeRuntime(auth, route) {
 	}, [auth]);
 
 	React.useEffect(() => {
+		if (auth.bootstrap !== "ready") {
+			return;
+		}
 		const controller = new AbortController();
 		void refreshCore(controller.signal);
 		const timer = window.setInterval(() => {
@@ -46,10 +49,13 @@ export function useScribeRuntime(auth, route) {
 			controller.abort();
 			window.clearInterval(timer);
 		};
-	}, [refreshCore]);
+	}, [refreshCore, auth.bootstrap]);
 
 	const wasSignedIn = React.useRef(auth.signedIn);
 	React.useEffect(() => {
+		if (auth.bootstrap !== "ready") {
+			return;
+		}
 		if (!wasSignedIn.current && auth.signedIn) {
 			const controller = new AbortController();
 			void refreshCore(controller.signal);
@@ -57,7 +63,7 @@ export function useScribeRuntime(auth, route) {
 			return () => controller.abort();
 		}
 		wasSignedIn.current = auth.signedIn;
-	}, [auth.signedIn, refreshCore]);
+	}, [auth.bootstrap, auth.signedIn, refreshCore]);
 
 	React.useEffect(() => {
 		if (route.page !== "transcript" || route.params.id === undefined) {
