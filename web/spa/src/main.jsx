@@ -19,7 +19,8 @@ function deriveGatePhase(auth, dataReady) {
 	if (auth.bootstrap === "error") return "error";
 	if (auth.bootstrap === "config") return "config";
 	if (auth.bootstrap === "clerk") return "clerk";
-	if (auth.clerkConfigured && !auth.signedIn) return "signin";
+	if (auth.clerkConfigured && !auth.trustedNetwork && !auth.signedIn)
+		return "signin";
 	if (!dataReady) return "workspace";
 	return "ready";
 }
