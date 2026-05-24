@@ -226,6 +226,22 @@ def test_production_spa_polish_source_guards() -> None:
     assert "/share/&lt;token&gt;" in settings
 
 
+def test_usd_backed_spend_uses_shared_display_currency_conversion() -> None:
+    data = read("design-app/data.js")
+    currency = read("lib/currency.ts")
+    settings = read("design-app/settings.jsx")
+    source = production_sources()
+
+    assert "convertUsdToDisplayCurrency as convertUsdAmount" in data
+    assert "export function convertUsdToDisplayCurrency" in data
+    assert "convertUsdAmount(Number(value), normalized)" in data
+    assert "usdDisplayRates" in currency
+    assert "convertUsdToDisplayCurrency(value, currency)" in currency
+    assert "It does not perform FX conversion" not in source
+    assert "Cap input saves canonical USD" in settings
+    assert '<span className="muted mono" style={{fontSize: 12}}>USD</span>' in settings
+
+
 def test_core_route_wiring_uses_real_backend_actions_where_present() -> None:
     transcript = read("design-app/transcript-detail.jsx")
     command = read("design-app/command-palette.jsx")

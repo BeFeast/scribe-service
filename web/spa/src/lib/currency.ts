@@ -2,11 +2,25 @@ export type DisplayCurrency = "ILS" | "USD" | "EUR";
 
 export const displayCurrencies: DisplayCurrency[] = ["ILS", "USD", "EUR"];
 
+export const usdDisplayRates: Record<DisplayCurrency, number> = {
+	ILS: 3.7,
+	USD: 1,
+	EUR: 0.92,
+};
+
 export function parseDisplayCurrency(value: unknown): DisplayCurrency {
-	return typeof value === "string" &&
-		displayCurrencies.includes(value as DisplayCurrency)
-		? (value as DisplayCurrency)
+	if (typeof value !== "string") return "ILS";
+	const normalized = value.trim().toUpperCase();
+	return displayCurrencies.includes(normalized as DisplayCurrency)
+		? (normalized as DisplayCurrency)
 		: "ILS";
+}
+
+export function convertUsdToDisplayCurrency(
+	value: number,
+	currency: DisplayCurrency,
+): number {
+	return value * usdDisplayRates[currency];
 }
 
 export function formatUsdCost(
@@ -16,14 +30,15 @@ export function formatUsdCost(
 	if (value === null || value === undefined) {
 		return "not billed";
 	}
-	const fractionDigits = Math.abs(value) < 0.01 ? 4 : 2;
+	const converted = convertUsdToDisplayCurrency(value, currency);
+	const fractionDigits = Math.abs(converted) < 0.1 ? 4 : 2;
 	if (currency === "ILS") {
-		return `₪${value.toFixed(fractionDigits)} ILS`;
+		return `₪${converted.toFixed(fractionDigits)} ILS`;
 	}
 	return new Intl.NumberFormat(undefined, {
 		style: "currency",
 		currency,
 		minimumFractionDigits: fractionDigits,
 		maximumFractionDigits: fractionDigits,
-	}).format(value);
+	}).format(converted);
 }

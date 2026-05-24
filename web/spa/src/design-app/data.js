@@ -1,3 +1,8 @@
+import {
+	convertUsdToDisplayCurrency as convertUsdAmount,
+	parseDisplayCurrency,
+} from "../lib/currency";
+
 export const FALLBACK_STATS = {
 	window_days: 1,
 	jobs_by_status: {
@@ -134,8 +139,8 @@ export function fmtUsd(value) {
 
 export function fmtDisplayCurrency(value, currency = DISPLAY_CURRENCY) {
 	if (value == null || Number.isNaN(Number(value))) return "\u2014";
-	const number = Number(value);
 	const normalized = normalizeDisplayCurrency(currency);
+	const number = convertUsdToDisplayCurrency(Number(value), normalized);
 	const fractionDigits = Math.abs(number) < 0.1 ? 4 : 2;
 	if (normalized === "ILS") {
 		return `₪${number.toFixed(fractionDigits)} ILS`;
@@ -148,11 +153,17 @@ export function fmtDisplayCurrency(value, currency = DISPLAY_CURRENCY) {
 	}).format(number);
 }
 
+export function convertUsdToDisplayCurrency(
+	value,
+	currency = DISPLAY_CURRENCY,
+) {
+	if (value == null || Number.isNaN(Number(value))) return Number.NaN;
+	const normalized = normalizeDisplayCurrency(currency);
+	return convertUsdAmount(Number(value), normalized);
+}
+
 export function normalizeDisplayCurrency(value) {
-	const normalized = String(value || "")
-		.trim()
-		.toUpperCase();
-	return ["ILS", "USD", "EUR"].includes(normalized) ? normalized : "ILS";
+	return parseDisplayCurrency(value);
 }
 
 export function publicBaseUrl() {

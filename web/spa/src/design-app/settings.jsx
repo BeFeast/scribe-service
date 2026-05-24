@@ -182,14 +182,14 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [], onConfigSa
               <input type="number" step="0.25" min="0" value={cap}
                      onChange={(e) => setDraft("daily_spend_cap_usd", parseFloat(e.target.value) || 0)}
                      style={{width: 100}}/>
-              <span className="muted mono" style={{fontSize: 12}}>{displayCurrency}</span>
+              <span className="muted mono" style={{fontSize: 12}}>USD</span>
               <span className="muted" style={{fontSize: 12, marginLeft: 16}}>
                 Current 24h spend: <span className="tnum" style={{color: "var(--fg-soft)"}}>{fmtDisplayCurrency(STATS.vast_spend_24h, displayCurrency)}</span>
                 {" "}({capUsagePct.toFixed(0)}%)
               </span>
             </div>
             <span className="muted mono" style={{fontSize: 11.5}}>
-              Display formatting only; cap storage and backend metrics remain USD-backed.
+              Cap input saves canonical USD; displayed spend/cost labels convert from USD to {displayCurrency}.
             </span>
             <div className="bar-track" style={{maxWidth: 260}}>
               <div style={{width: `${capUsagePct}%`}}/>
@@ -200,7 +200,7 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [], onConfigSa
         <div className="settings-row">
           <div className="row-label">
             Display currency
-            <span className="hint">Controls product spend/cost labels. It does not perform FX conversion.</span>
+            <span className="hint">Controls product spend/cost labels. Backend storage and API values stay canonical USD.</span>
           </div>
           <div className="row-control">
             <div className="seg" style={{width: "fit-content"}}>
