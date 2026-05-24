@@ -836,13 +836,13 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 			</div>
 
 			<div className="mono muted transcript-kicker">
-				#{record.id} / transcript
+				#{record.id} {"\u00b7"} transcript
 			</div>
 			<h1 className="detail-h1">{record.title}</h1>
 
 			<div className="detail-meta">
 				<span>{record.lang ?? "lang unknown"}</span>
-				<span className="sep">/</span>
+				<span className="sep">{"\u00b7"}</span>
 				<span>
 					<IconClock
 						size={12}
@@ -850,11 +850,11 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 					/>
 					{formatDuration(record.duration_seconds)}
 				</span>
-				<span className="sep">/</span>
+				<span className="sep">{"\u00b7"}</span>
 				<span>{created}</span>
 				{record.source_url ? (
 					<>
-						<span className="sep">/</span>
+						<span className="sep">{"\u00b7"}</span>
 						<a href={record.source_url} target="_blank" rel="noreferrer">
 							<IconExternal
 								size={11}
@@ -937,11 +937,11 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 			)}
 
 			<div className="section-label">
-				<span>Transcript</span>
+				<span>Transcript excerpt</span>
 				<div className="row section-actions">
 					<span className="mono muted transcript-stat">
 						~{Math.max(1, Math.round((record.duration_seconds ?? 60) / 60))} min
-						/ {record.lang ?? "lang unknown"}
+						{"\u00b7"} {record.lang ?? "lang unknown"}
 					</span>
 					<a
 						className="btn ghost"
@@ -967,8 +967,6 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 					vast_cost: {formatUsdCost(record.vast_cost, displayCurrency)}
 				</span>
 				<span>created: {record.created_at.replace("T", " ")}</span>
-				<a href={`/transcripts/${record.id}/summary.md`}>summary.md</a>
-				<a href={`/transcripts/${record.id}/transcript.md`}>transcript.md</a>
 			</div>
 
 			<div className="danger-zone">
@@ -982,12 +980,12 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 					</div>
 				</div>
 				<button
-					className="btn danger-button"
+					className="btn danger"
 					type="button"
 					onClick={() => setConfirmDeleteOpen(true)}
 					disabled={deleting}
 				>
-					Delete
+					Delete...
 				</button>
 			</div>
 

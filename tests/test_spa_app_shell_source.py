@@ -495,7 +495,7 @@ def test_spa_internal_navigation_uses_real_relative_anchors() -> None:
     assert "record.summary_shortlink" not in transcript
     assert "PrivateShareLinks" in library
     assert "copyTextToClipboard" in transcript
-    assert 'href={`/transcripts/${record.id}/summary.md`}' in transcript
+    assert "`/transcripts/${transcript.id}/summary.md`" in transcript
     assert 'href={`/transcripts/${record.id}/transcript.md`}' in transcript
     assert "handleRouteAnchorClick" in source
     assert "metaKey" in route
@@ -535,6 +535,56 @@ def test_transcript_and_library_share_ui_use_managed_share_links() -> None:
     assert "`/api/transcripts/${transcript.id}/share-links`" in transcript
     assert "`/api/share-links/${link.id}/revoke`" in transcript
     assert "created.share_url" in transcript
+
+
+def test_transcript_detail_matches_handoff_structure_and_real_wiring() -> None:
+    transcript = read("pages/Transcript.tsx")
+    styles = read("styles.css")
+    markdown = read("components/Markdown.tsx")
+    source = transcript + styles + markdown
+
+    for expected in (
+        'className="row transcript-top-row"',
+        'className="share-wrap"',
+        '<div className="share-sheet" ref={ref}>',
+        'className="sh-hd"',
+        'className="sh-url"',
+        'className="sh-section-label">Copy as Markdown',
+        'className="sh-section-label">Download',
+        'className="sh-section-label">Managed links',
+        'className="mono muted transcript-kicker"',
+        'className="detail-h1"',
+        'className="detail-meta"',
+        'className="detail-tags"',
+        "Transcript excerpt",
+        'className="transcript-body"',
+        'className="detail-footer"',
+        'className="danger-zone"',
+        'className="btn danger"',
+        "<ConfirmDialog",
+        "<Markdown body={summaryBody} />",
+        "<Markdown body={stripFrontmatter(record.transcript_md)} />",
+    ):
+        assert expected in transcript
+
+    for forbidden in (
+        "summary_shortlink",
+        "transcript_shortlink",
+        "go.oklabs",
+        "youtu.be",
+        "window.confirm",
+        "dangerouslySetInnerHTML",
+    ):
+        assert forbidden not in source
+
+    assert "`/api/transcripts/${transcript.id}/share-links`" in transcript
+    assert "`/api/share-links/${link.id}/revoke`" in transcript
+    assert "`/transcripts/${transcript.id}/summary.md`" in transcript
+    assert "`/transcripts/${transcript.id}/transcript.md`" in transcript
+    assert "`/transcripts/${id}/resummarize`" in transcript
+    assert "`/admin/transcripts/${record.id}`" in transcript
+    assert "record.source_url" in transcript
+    assert "record.source_label" in transcript
 
 
 def test_private_share_links_are_compact_and_have_clipboard_fallback() -> None:

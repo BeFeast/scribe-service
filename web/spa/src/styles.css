@@ -1544,6 +1544,20 @@ a {
 	line-height: 1.45;
 }
 
+.danger-zone .btn.danger {
+	flex: 0 0 auto;
+	border-color: color-mix(in srgb, var(--err) 36%, var(--border));
+	background: transparent;
+	color: var(--err);
+}
+
+.danger-zone .btn.danger:hover,
+.danger-zone .btn.danger:focus-visible {
+	border-color: var(--err);
+	background: var(--err);
+	color: var(--accent-fg);
+}
+
 .pipeline {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
