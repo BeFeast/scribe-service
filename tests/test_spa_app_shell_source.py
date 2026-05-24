@@ -310,25 +310,34 @@ def test_command_palette_covers_submit_search_navigation_and_a11y() -> None:
     source = read("components/CommandPalette.tsx")
 
     assert "parseVideoUrl" in source
-    assert "url.protocol === \"http:\"" in source
+    assert "url.protocol !== \"http:\"" in source
     assert 'auth.protectedFetch("/jobs"' in source
     assert 'source: "manual"' in source
     assert "Queued as job #" in source
-    assert "Watch pipeline →" in source
+    assert "Watch pipeline" in source
     assert 'protectedFetch("/api/library?limit=100"' in source
     assert 'protectedFetch("/api/jobs/active"' in source
-    assert "Library" in source
-    assert "Queue" in source
-    assert "Ops" in source
-    assert "Settings" in source
+    assert "Go to library" in source
+    assert "Go to queue" in source
+    assert "Go to ops dashboard" in source
+    assert "Go to settings" in source
+    assert "TRANSCRIPTS" not in source
+    assert "ACTIVE_JOBS" not in source
+    assert "STATS" not in source
+    assert "Recent submissions" not in source
+    assert "source=manual" in source
+    assert "Scribe could not submit that job" in source
+    assert "Sign in is required" in source
     assert 'aria-modal="true"' in source
     assert 'event.key === "Escape"' in source
     assert 'event.key === "Enter"' in source
+    assert 'event.key === "Tab"' in source
     assert "new AbortController()" in source
     assert 'setQuery("")' in source
-    assert "isRecentSubmission" in source
     assert 'submitState.state === "success"' in source
-    assert "selectedIndex - urlModeOffset" in source
+    assert "safeSelectedIndex" in source
+    assert "cmdk-modal" in source
+    assert "cmdk-input-row" in source
 
 
 def test_tweaks_defaults_persist_and_apply_to_html_dataset() -> None:
