@@ -45,6 +45,7 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [], onConfigSa
   const workerConcurrency = Number(configDraft?.worker_concurrency ?? STATS.worker_pool.total ?? 2);
   const keepBotwallRetries = Boolean(configDraft?.bot_wall_retry);
   const embedTranscript = Boolean(configDraft?.webhook_embed_transcript);
+  const [extensionTokenState, setExtensionTokenState] = React.useState({ pending: false, error: null, token: null, copied: false });
 
   React.useEffect(() => {
     const controller = new AbortController();
@@ -149,6 +150,29 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [], onConfigSa
       setPromptState({ loading: false, error: null, saved: promptVersion === list.active_version ? "Prompt saved" : "Draft saved" });
     } catch (error) {
       setPromptState({ loading: false, error: messageOf(error), saved: null });
+    }
+  }
+  async function generateExtensionToken() {
+    if (!auth.signedIn) return;
+    setExtensionTokenState({ pending: true, error: null, token: null, copied: false });
+    try {
+      const body = await fetchJson(auth, "/api/auth/extension-token", undefined, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: "Settings access token" }),
+      });
+      setExtensionTokenState({ pending: false, error: null, token: body?.token ?? "", copied: false });
+    } catch (error) {
+      setExtensionTokenState({ pending: false, error: messageOf(error), token: null, copied: false });
+    }
+  }
+  async function copyExtensionToken() {
+    if (!extensionTokenState.token) return;
+    try {
+      await navigator.clipboard.writeText(extensionTokenState.token);
+      setExtensionTokenState((state) => ({ ...state, copied: true, error: null }));
+    } catch (error) {
+      setExtensionTokenState((state) => ({ ...state, copied: false, error: messageOf(error) }));
     }
   }
 
@@ -424,14 +448,27 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [], onConfigSa
           </div>
           <div className="row-control">
             <div className="row" style={{gap: 8}}>
-              <input type="text" value="configured server-side" readOnly style={{maxWidth: 320}}/>
-              <button className="btn" disabled title="The API does not expose bearer-token material">
-                <IconCopy size={14}/> Copy
+              <input type="text"
+                     value={extensionTokenState.token ?? (auth.signedIn ? "token is shown once after generation" : "sign in with Clerk to generate a user token")}
+                     readOnly
+                     style={{maxWidth: 420}}/>
+              <button className="btn primary"
+                      onClick={generateExtensionToken}
+                      disabled={!auth.signedIn || extensionTokenState.pending}
+                      title={auth.signedIn ? "Create a new user-scoped extension token" : "Trusted-network access cannot create a user token without a Clerk session"}>
+                {extensionTokenState.pending ? <span className="spinner"/> : <IconRefresh size={14}/>}
+                {extensionTokenState.pending ? "Generating..." : "Generate token"}
               </button>
-              <button className="btn" disabled title="POST /api/config/rotate-token is not implemented yet">Rotate</button>
+              <button className="btn"
+                      onClick={copyExtensionToken}
+                      disabled={!extensionTokenState.token}
+                      title={extensionTokenState.token ? "Copy the one-time token" : "Generate a token first; stored tokens are hashed and cannot be shown again"}>
+                <IconCopy size={14}/> {extensionTokenState.copied ? "Copied" : "Copy token"}
+              </button>
             </div>
+            {extensionTokenState.error && <span className="chip err">{extensionTokenState.error}</span>}
             <span className="muted mono" style={{fontSize: 11.5}}>
-              current access: {auth.accessStatus}
+              current access: {auth.accessStatus} · generated tokens are returned once, then stored hashed
             </span>
           </div>
         </div>
@@ -657,6 +694,35 @@ function AccessGroup({ initialUsers = [] }) {
 }
 
 function CurrentSession({ me }) {
+  const auth = useAuth();
+  const [accountState, setAccountState] = React.useState({ error: null, saved: null, signingOut: false });
+  const canManageClerk = auth.signedIn && clerkProfileAction() !== null;
+  const canSignOut = auth.signedIn && auth.clerkReady;
+
+  async function manageInClerk() {
+    const action = clerkProfileAction();
+    if (!action) {
+      setAccountState({ error: "Clerk profile management is not available in this runtime", saved: null, signingOut: false });
+      return;
+    }
+    setAccountState({ error: null, saved: null, signingOut: false });
+    try {
+      await action();
+    } catch (error) {
+      setAccountState({ error: messageOf(error), saved: null, signingOut: false });
+    }
+  }
+  async function signOut() {
+    if (!canSignOut) return;
+    setAccountState({ error: null, saved: null, signingOut: true });
+    try {
+      await auth.signOut();
+      setAccountState({ error: null, saved: "Signed out", signingOut: false });
+    } catch (error) {
+      setAccountState({ error: messageOf(error), saved: null, signingOut: false });
+    }
+  }
+
   return (
     <div className="access-me">
       <div className="avatar">{initialsOf(me.name)}</div>
@@ -665,17 +731,40 @@ function CurrentSession({ me }) {
           {me.name}
           <span className="role-chip admin" style={{marginLeft: 8, fontSize: 10}}>you · {me.role}</span>
         </div>
-        <div className="email">{me.email} · signed in via Clerk · {fmtRelative(me.last_seen)}</div>
+        <div className="email">
+          {me.email} · {auth.signedIn ? "signed in via Clerk" : `access via ${auth.accessStatus}`} · {fmtRelative(me.last_seen)}
+        </div>
       </div>
       <div className="spacer"/>
-      <button className="btn ghost" style={{fontSize: 12, padding: "4px 8px"}}>
+      {accountState.error && <span className="chip err">{accountState.error}</span>}
+      {accountState.saved && <span className="chip ok">{accountState.saved}</span>}
+      {!auth.signedIn && <span className="muted mono" style={{fontSize: 11.5}}>Clerk session unavailable</span>}
+      {auth.signedIn && !canManageClerk && <span className="muted mono" style={{fontSize: 11.5}}>Clerk profile method unavailable</span>}
+      <button className="btn ghost"
+              onClick={manageInClerk}
+              disabled={!canManageClerk}
+              title={canManageClerk ? "Open Clerk profile management" : "Clerk profile management is unavailable for this session"}
+              style={{fontSize: 12, padding: "4px 8px"}}>
         <IconExternal size={12}/> Manage in Clerk
       </button>
-      <button className="btn" style={{fontSize: 12, padding: "4px 10px"}}>
-        Sign out
+      <button className="btn"
+              onClick={signOut}
+              disabled={!canSignOut || accountState.signingOut}
+              title={canSignOut ? "Sign out of this Clerk session" : "No Clerk session is available to sign out from"}
+              style={{fontSize: 12, padding: "4px 10px"}}>
+        {accountState.signingOut ? "Signing out..." : "Sign out"}
       </button>
     </div>
   );
+}
+
+function clerkProfileAction() {
+  if (typeof window === "undefined" || !window.Clerk) return null;
+  const clerk = window.Clerk;
+  for (const method of ["openUserProfile", "openProfile", "redirectToUserProfile"]) {
+    if (typeof clerk[method] === "function") return () => clerk[method]();
+  }
+  return null;
 }
 
 function UserRow({ u, openMenu, onOpenMenu, onToggle, onSetRole }) {
