@@ -3,6 +3,7 @@ import React from "react";
 import { CMDK_OPEN_EVENT } from "../constants";
 import { useAuth } from "../hooks/useAuth";
 import type { Route, RoutePage } from "../hooks/useRoute";
+import { isAuthStatus } from "../lib/auth";
 
 type Navigate = (route: Route) => void;
 
@@ -10,11 +11,16 @@ type CommandPaletteProps = {
 	navigate: Navigate;
 };
 
+type IconProps = {
+	size?: number;
+};
+
 type LibraryRow = {
 	id: number;
 	video_id: string;
 	title: string;
 	tags: string[] | null;
+	duration_seconds: number | null;
 	created_at: string;
 };
 
@@ -35,32 +41,11 @@ type ActiveJobsResponse = {
 	jobs: ActiveJob[];
 };
 
-type OpsResponse = {
-	vast_spend_24h?: number;
-	daily_spend_cap_usd?: number;
-};
-
 type JobView = {
 	job_id: number;
 	video_id: string;
 	status: string;
 	deduplicated?: boolean;
-};
-
-type RecentSubmission = {
-	jobId: number;
-	videoId: string;
-	title: string;
-	createdAt: string;
-};
-
-type PaletteItem = {
-	id: string;
-	label: string;
-	meta: string;
-	kind: "navigate" | "transcript" | "job" | "recent";
-	route: Route;
-	keywords: string;
 };
 
 type SubmitState =
@@ -69,102 +54,200 @@ type SubmitState =
 	| { state: "success"; job: JobView }
 	| { state: "error"; message: string };
 
-const RECENTS_KEY = "scribe.cmdk.recentSubmissions";
-const MAX_RECENTS = 5;
+type LoadState =
+	| { state: "idle" }
+	| { state: "loading" }
+	| { state: "auth" }
+	| { state: "error"; message: string };
+
+type SectionItem = {
+	section: string;
+};
+
+type ResultItem = {
+	type: "transcript" | "job" | "cmd";
+	key: string;
+	title: string;
+	hint: string;
+	glyph?: string;
+	keywords: string;
+	onPick: () => void;
+};
+
+type EmptyItem = {
+	type: "empty";
+	key: string;
+	title: string;
+	hint: string;
+	keywords: string;
+};
+
+type PaletteItem = SectionItem | ResultItem | EmptyItem;
+
+const YOUTUBE_VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+const YOUTUBE_HOSTS = new Set([
+	"youtube.com",
+	"www.youtube.com",
+	"m.youtube.com",
+	"music.youtube.com",
+]);
 
 const NAV_ITEMS: Array<{
 	page: RoutePage;
-	label: string;
-	meta: string;
+	title: string;
+	glyph: string;
+	hint: string;
 	keywords: string;
 }> = [
 	{
 		page: "library",
-		label: "Library",
-		meta: "Browse transcripts",
+		title: "Go to library",
+		glyph: "L",
+		hint: "G L",
 		keywords: "library transcripts notes",
 	},
 	{
 		page: "queue",
-		label: "Queue",
-		meta: "Active pipeline",
+		title: "Go to queue",
+		glyph: "Q",
+		hint: "G Q",
 		keywords: "queue jobs pipeline",
 	},
 	{
 		page: "ops",
-		label: "Ops",
-		meta: "Spend and workers",
+		title: "Go to ops dashboard",
+		glyph: "O",
+		hint: "G O",
 		keywords: "ops metrics spend workers",
 	},
 	{
 		page: "settings",
-		label: "Settings",
-		meta: "Runtime controls",
+		title: "Go to settings",
+		glyph: "S",
+		hint: "G S",
 		keywords: "settings config preferences",
 	},
 ];
+
+function Icon({
+	size = 16,
+	children,
+}: React.PropsWithChildren<IconProps>): React.ReactElement {
+	return (
+		<svg
+			width={size}
+			height={size}
+			viewBox="0 0 16 16"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="1.5"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			{children}
+		</svg>
+	);
+}
+
+function IconSearch(props: IconProps): React.ReactElement {
+	return (
+		<Icon {...props}>
+			<circle cx="7" cy="7" r="4.5" />
+			<path d="M10.5 10.5l3 3" />
+		</Icon>
+	);
+}
+
+function IconPlus(props: IconProps): React.ReactElement {
+	return (
+		<Icon {...props}>
+			<path d="M8 3v10M3 8h10" />
+		</Icon>
+	);
+}
+
+function IconCheck(props: IconProps): React.ReactElement {
+	return (
+		<Icon {...props}>
+			<path d="M3 8l3.5 3.5L13 4.5" />
+		</Icon>
+	);
+}
+
+function IconArrow(props: IconProps): React.ReactElement {
+	return (
+		<Icon {...props}>
+			<path d="M3 8h10M9 4l4 4-4 4" />
+		</Icon>
+	);
+}
+
+function IconClock(props: IconProps): React.ReactElement {
+	return (
+		<Icon {...props}>
+			<circle cx="8" cy="8" r="5.5" />
+			<path d="M8 5v3l2 1.5" />
+		</Icon>
+	);
+}
+
+function IconWave(props: IconProps): React.ReactElement {
+	return (
+		<Icon {...props}>
+			<path d="M2 8h1M4 5v6M6 6v4M8 3v10M10 5v6M12 6v4M14 8h-1" />
+		</Icon>
+	);
+}
 
 function route(page: RoutePage, id?: number): Route {
 	return { page, params: id === undefined ? {} : { id } };
 }
 
-function parseVideoUrl(value: string): string | null {
-	const trimmed = value.trim();
-	if (trimmed.length === 0) {
+function pathSegment(url: URL, index: number): string | null {
+	const segment = url.pathname.split("/").filter(Boolean)[index];
+	return segment === undefined ? null : decodeURIComponent(segment);
+}
+
+function validVideoId(value: string | null): string | null {
+	if (value === null || !YOUTUBE_VIDEO_ID_RE.test(value)) {
 		return null;
 	}
+	return value;
+}
+
+export function parseVideoUrl(
+	value: string,
+): { url: string; videoId: string } | null {
+	const trimmed = value.trim();
 
 	try {
 		const candidate = /^https?:\/\//i.test(trimmed)
 			? trimmed
 			: `https://${trimmed}`;
 		const url = new URL(candidate);
-		return url.protocol === "http:" || url.protocol === "https:"
-			? url.href
-			: null;
+		if (url.protocol !== "http:" && url.protocol !== "https:") {
+			return null;
+		}
+		const host = url.hostname.toLowerCase();
+		let videoId: string | null = null;
+		if (host === "youtu.be") {
+			videoId = validVideoId(pathSegment(url, 0));
+		} else if (YOUTUBE_HOSTS.has(host)) {
+			const [kind = ""] = url.pathname.split("/").filter(Boolean);
+			if (kind === "watch") {
+				videoId = validVideoId(url.searchParams.get("v"));
+			} else if (kind === "shorts" || kind === "live" || kind === "embed") {
+				videoId = validVideoId(pathSegment(url, 1));
+			}
+		}
+		if (videoId === null) {
+			return null;
+		}
+		return { url: url.href, videoId };
 	} catch {
 		return null;
 	}
-}
-
-function readRecents(): RecentSubmission[] {
-	try {
-		const raw = localStorage.getItem(RECENTS_KEY);
-		if (!raw) {
-			return [];
-		}
-		const parsed = JSON.parse(raw);
-		if (!Array.isArray(parsed)) {
-			return [];
-		}
-		return parsed.filter(isRecentSubmission).slice(0, MAX_RECENTS);
-	} catch {
-		return [];
-	}
-}
-
-function writeRecents(recents: RecentSubmission[]): void {
-	try {
-		localStorage.setItem(
-			RECENTS_KEY,
-			JSON.stringify(recents.slice(0, MAX_RECENTS)),
-		);
-	} catch {
-		// Recents are a convenience cache; job submission success should not depend on storage.
-	}
-}
-
-function isRecentSubmission(value: unknown): value is RecentSubmission {
-	if (typeof value !== "object" || value === null) {
-		return false;
-	}
-	const candidate = value as Partial<RecentSubmission>;
-	return (
-		typeof candidate.jobId === "number" &&
-		typeof candidate.videoId === "string" &&
-		typeof candidate.title === "string" &&
-		typeof candidate.createdAt === "string"
-	);
 }
 
 function normalize(value: string): string {
@@ -192,34 +275,90 @@ function fuzzyMatch(text: string, query: string): boolean {
 	return false;
 }
 
-function errorMessage(status: number, body: unknown): string {
+function fmtDuration(seconds: number | null): string {
+	if (seconds === null) {
+		return "duration n/a";
+	}
+	const minutes = Math.floor(seconds / 60);
+	const rest = Math.floor(seconds % 60);
+	return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
+function fmtRelative(value: string): string {
+	const timestamp = new Date(value).getTime();
+	if (Number.isNaN(timestamp)) {
+		return "date n/a";
+	}
+	const elapsedSeconds = Math.max(
+		0,
+		Math.floor((Date.now() - timestamp) / 1000),
+	);
+	if (elapsedSeconds < 60) {
+		return "just now";
+	}
+	const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+	if (elapsedMinutes < 60) {
+		return `${elapsedMinutes}m ago`;
+	}
+	const elapsedHours = Math.floor(elapsedMinutes / 60);
+	if (elapsedHours < 24) {
+		return `${elapsedHours}h ago`;
+	}
+	return `${Math.floor(elapsedHours / 24)}d ago`;
+}
+
+async function safeJson(response: Response): Promise<unknown> {
+	try {
+		return await response.json();
+	} catch {
+		return null;
+	}
+}
+
+export function isJobView(value: unknown): value is JobView {
+	if (typeof value !== "object" || value === null) {
+		return false;
+	}
+	const candidate = value as Partial<JobView>;
+	return (
+		typeof candidate.job_id === "number" &&
+		Number.isFinite(candidate.job_id) &&
+		typeof candidate.video_id === "string" &&
+		candidate.video_id.length > 0 &&
+		typeof candidate.status === "string" &&
+		candidate.status.length > 0
+	);
+}
+
+function submitErrorMessage(status: number, body: unknown): string {
+	if (status === 401) {
+		return "Sign in is required before submitting from this network.";
+	}
+	if (status === 403) {
+		return "Your account does not have permission to submit jobs.";
+	}
+	if (status === 422) {
+		return "That YouTube URL could not be accepted. Check the link and try again.";
+	}
+	if (status === 429) {
+		return "The daily spend cap has been reached. Try again after the cap resets.";
+	}
 	const detail =
 		typeof body === "object" && body !== null && "detail" in body
 			? (body as { detail?: unknown }).detail
 			: undefined;
-	if (typeof detail === "string") {
+	if (typeof detail === "string" && detail.trim().length > 0) {
 		return detail;
 	}
-	if (status === 422) {
-		return "Bad video URL.";
-	}
-	if (status === 429) {
-		return "Daily spend cap reached.";
-	}
-	return "Could not submit job.";
+	return "Scribe could not submit that job. Try again in a moment.";
 }
 
-function capRemainingLabel(ops: OpsResponse | null): string {
-	if (
-		!ops ||
-		ops.daily_spend_cap_usd === undefined ||
-		ops.daily_spend_cap_usd <= 0
-	) {
-		return "Cap not enforced";
-	}
-	const spent = ops.vast_spend_24h ?? 0;
-	const remaining = Math.max(0, ops.daily_spend_cap_usd - spent);
-	return `$${remaining.toFixed(2)} cap remaining`;
+function isSection(item: PaletteItem): item is SectionItem {
+	return "section" in item;
+}
+
+function isSelectable(item: PaletteItem): item is ResultItem {
+	return !isSection(item) && item.type !== "empty";
 }
 
 export function useCommandPalette() {
@@ -252,16 +391,17 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 	const auth = useAuth();
 	const { isOpen, close } = useCommandPalette();
 	const [query, setQuery] = React.useState("");
+	const [selectedIndex, setSelectedIndex] = React.useState(0);
 	const [library, setLibrary] = React.useState<LibraryRow[]>([]);
 	const [jobs, setJobs] = React.useState<ActiveJob[]>([]);
-	const [ops, setOps] = React.useState<OpsResponse | null>(null);
-	const [recents, setRecents] = React.useState<RecentSubmission[]>([]);
-	const [selectedIndex, setSelectedIndex] = React.useState(0);
+	const [loadState, setLoadState] = React.useState<LoadState>({
+		state: "idle",
+	});
 	const [submitState, setSubmitState] = React.useState<SubmitState>({
 		state: "idle",
 	});
 	const inputRef = React.useRef<HTMLInputElement>(null);
-	const dialogRef = React.useRef<HTMLDialogElement>(null);
+	const modalRef = React.useRef<HTMLDialogElement>(null);
 	const videoUrl = parseVideoUrl(query);
 
 	React.useEffect(() => {
@@ -270,27 +410,43 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 		}
 		const controller = new AbortController();
 		setQuery("");
-		setRecents(readRecents());
-		setSubmitState({ state: "idle" });
 		setSelectedIndex(0);
-		window.setTimeout(() => inputRef.current?.focus(), 0);
+		setSubmitState({ state: "idle" });
+		setLoadState({ state: "loading" });
+		window.setTimeout(() => inputRef.current?.focus(), 30);
 		void Promise.all([
-			auth
-				.protectedFetch("/api/library?limit=100", {
-					signal: controller.signal,
-				})
-				.then((response) => response.json() as Promise<LibraryResponse>),
-			auth
-				.protectedFetch("/api/jobs/active", { signal: controller.signal })
-				.then((response) => response.json() as Promise<ActiveJobsResponse>),
-			auth
-				.protectedFetch("/api/ops", { signal: controller.signal })
-				.then((response) => response.json() as Promise<OpsResponse>),
+			auth.protectedFetch("/api/library?limit=100", {
+				signal: controller.signal,
+			}),
+			auth.protectedFetch("/api/jobs/active", { signal: controller.signal }),
 		])
-			.then(([libraryBody, jobsBody, opsBody]) => {
+			.then(async ([libraryResponse, jobsResponse]) => {
+				if (
+					isAuthStatus(libraryResponse.status) ||
+					isAuthStatus(jobsResponse.status)
+				) {
+					setLibrary([]);
+					setJobs([]);
+					setLoadState({ state: "auth" });
+					auth.maybeAutoSignIn();
+					return;
+				}
+				if (!libraryResponse.ok || !jobsResponse.ok) {
+					setLibrary([]);
+					setJobs([]);
+					setLoadState({
+						state: "error",
+						message: "Search is temporarily unavailable.",
+					});
+					return;
+				}
+				const [libraryBody, jobsBody] = (await Promise.all([
+					libraryResponse.json(),
+					jobsResponse.json(),
+				])) as [LibraryResponse, ActiveJobsResponse];
 				setLibrary(libraryBody.rows ?? []);
 				setJobs(jobsBody.jobs ?? []);
-				setOps(opsBody);
+				setLoadState({ state: "idle" });
 			})
 			.catch((error: unknown) => {
 				if (error instanceof DOMException && error.name === "AbortError") {
@@ -298,55 +454,158 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 				}
 				setLibrary([]);
 				setJobs([]);
-				setOps(null);
+				setLoadState({
+					state: "error",
+					message: "Search is temporarily unavailable.",
+				});
 			});
 		return () => controller.abort();
 	}, [auth, isOpen]);
 
 	const items = React.useMemo<PaletteItem[]>(() => {
-		const navigation = NAV_ITEMS.map((item) => ({
-			id: `nav:${item.page}`,
-			label: item.label,
-			meta: item.meta,
-			kind: "navigate" as const,
-			route: route(item.page),
-			keywords: `${item.label} ${item.meta} ${item.keywords}`,
-		}));
-		const transcriptItems = library.map((item) => ({
-			id: `transcript:${item.id}`,
-			label: item.title,
-			meta: `Transcript · ${item.tags?.join(", ") || item.video_id}`,
-			kind: "transcript" as const,
-			route: route("transcript", item.id),
-			keywords: `${item.title} ${item.video_id} ${(item.tags ?? []).join(" ")}`,
-		}));
-		const jobItems = jobs.map((job) => ({
-			id: `job:${job.id}`,
-			label: job.title || job.video_id,
-			meta: `Job · ${job.status}`,
-			kind: "job" as const,
-			route: route("job", job.id),
-			keywords: `${job.title ?? ""} ${job.video_id} ${job.status} ${job.source ?? ""}`,
-		}));
-		const recentItems = recents.map((recent) => ({
-			id: `recent:${recent.jobId}`,
-			label: recent.title,
-			meta: `Recent submission · job #${recent.jobId}`,
-			kind: "recent" as const,
-			route: route("job", recent.jobId),
-			keywords: `${recent.title} ${recent.videoId} job ${recent.jobId}`,
-		}));
-		const allItems = [
-			...navigation,
-			...recentItems,
-			...jobItems,
-			...transcriptItems,
-		];
 		if (videoUrl !== null) {
-			return allItems;
+			return [];
 		}
-		return allItems.filter((item) => fuzzyMatch(item.keywords, query));
-	}, [jobs, library, query, recents, videoUrl]);
+		const lower = normalize(query);
+		const list: PaletteItem[] = [];
+		const matchedTranscripts = library
+			.filter((transcript) =>
+				fuzzyMatch(
+					`${transcript.title} ${transcript.video_id} ${(transcript.tags ?? []).join(" ")}`,
+					lower,
+				),
+			)
+			.slice(0, 6)
+			.map<ResultItem>((transcript) => ({
+				type: "transcript",
+				key: `t${transcript.id}`,
+				title: transcript.title,
+				hint: `#${transcript.id} · ${fmtDuration(transcript.duration_seconds)} · ${fmtRelative(transcript.created_at)}`,
+				keywords: `${transcript.title} ${transcript.video_id} ${(transcript.tags ?? []).join(" ")}`,
+				onPick: () => {
+					navigate(route("transcript", transcript.id));
+					close();
+				},
+			}));
+		list.push({ section: "Transcripts" });
+		if (matchedTranscripts.length > 0) {
+			list.push(...matchedTranscripts);
+		} else {
+			list.push({
+				type: "empty",
+				key: "empty-transcripts",
+				title:
+					loadState.state === "loading"
+						? "Loading transcripts"
+						: "No transcripts found",
+				hint:
+					loadState.state === "loading"
+						? "Fetching the latest library rows"
+						: "Try another title, tag, or video id",
+				keywords: "",
+			});
+		}
+
+		const matchedJobs = jobs
+			.filter((job) =>
+				fuzzyMatch(
+					`${job.title ?? ""} ${job.video_id} ${job.status} ${job.source ?? ""}`,
+					lower,
+				),
+			)
+			.map<ResultItem>((job) => ({
+				type: "job",
+				key: `j${job.id}`,
+				title: job.title || job.video_id,
+				hint: `job ${job.id} · ${job.status}`,
+				keywords: `${job.title ?? ""} ${job.video_id} ${job.status} ${job.source ?? ""}`,
+				onPick: () => {
+					navigate(route("job", job.id));
+					close();
+				},
+			}));
+		list.push({ section: "In flight" });
+		if (matchedJobs.length > 0) {
+			list.push(...matchedJobs);
+		} else {
+			list.push({
+				type: "empty",
+				key: "empty-jobs",
+				title:
+					loadState.state === "loading"
+						? "Loading active jobs"
+						: "No active jobs",
+				hint:
+					loadState.state === "loading"
+						? "Checking the worker queue"
+						: "Paste a YouTube URL to submit one",
+				keywords: "",
+			});
+		}
+
+		list.push({ section: "Navigate" });
+		for (const item of NAV_ITEMS) {
+			if (!fuzzyMatch(`${item.title} ${item.keywords}`, lower)) {
+				continue;
+			}
+			list.push({
+				type: "cmd",
+				key: `go-${item.page}`,
+				title: item.title,
+				glyph: item.glyph,
+				hint: item.hint,
+				keywords: item.keywords,
+				onPick: () => {
+					navigate(route(item.page));
+					close();
+				},
+			});
+		}
+
+		if (loadState.state === "auth") {
+			list.push({ section: "Search status" });
+			list.push({
+				type: "empty",
+				key: "search-auth",
+				title: "Sign in required",
+				hint: "Authenticate to search transcripts and active jobs",
+				keywords: "",
+			});
+		} else if (loadState.state === "error") {
+			list.push({ section: "Search status" });
+			list.push({
+				type: "empty",
+				key: "search-error",
+				title: "Search unavailable",
+				hint: loadState.message,
+				keywords: "",
+			});
+		}
+
+		return list;
+	}, [close, jobs, library, loadState, navigate, query, videoUrl]);
+
+	const selectable = React.useMemo(
+		() =>
+			items
+				.map((item, index) => ({ item, index }))
+				.filter((entry): entry is { item: ResultItem; index: number } =>
+					isSelectable(entry.item),
+				),
+		[items],
+	);
+	const safeSelectedIndex =
+		selectable.length === 0
+			? 0
+			: Math.min(selectedIndex, selectable.length - 1);
+
+	React.useEffect(() => {
+		if (selectable.length === 0) {
+			setSelectedIndex(0);
+			return;
+		}
+		setSelectedIndex((value) => Math.min(value, selectable.length - 1));
+	}, [selectable.length]);
 
 	const submitUrl = async () => {
 		if (
@@ -361,33 +620,39 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 			const response = await auth.protectedFetch("/jobs", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ url: videoUrl, source: "manual" }),
+				body: JSON.stringify({ url: videoUrl.url, source: "manual" }),
 			});
-			const body = (await response.json()) as unknown;
+			const body = await safeJson(response);
+			if (isAuthStatus(response.status)) {
+				auth.maybeAutoSignIn();
+			}
 			if (!response.ok) {
 				setSubmitState({
 					state: "error",
-					message: errorMessage(response.status, body),
+					message: submitErrorMessage(response.status, body),
 				});
 				return;
 			}
-			const job = body as JobView;
-			const nextRecent: RecentSubmission = {
-				jobId: job.job_id,
-				videoId: job.video_id,
-				title: `Queued as job #${job.job_id}`,
-				createdAt: new Date().toISOString(),
-			};
-			const nextRecents = [
-				nextRecent,
-				...recents.filter((recent) => recent.jobId !== job.job_id),
-			].slice(0, MAX_RECENTS);
-			setRecents(nextRecents);
-			writeRecents(nextRecents);
-			setSubmitState({ state: "success", job });
+			if (!isJobView(body)) {
+				setSubmitState({
+					state: "error",
+					message:
+						"Scribe accepted the request but returned an invalid job response.",
+				});
+				return;
+			}
+			setSubmitState({ state: "success", job: body });
 		} catch {
-			setSubmitState({ state: "error", message: "Could not submit job." });
+			setSubmitState({
+				state: "error",
+				message: "Scribe could not submit that job. Try again in a moment.",
+			});
 		}
+	};
+
+	const watchPipeline = (jobId: number) => {
+		navigate(route("job", jobId));
+		close();
 	};
 
 	const onQueryChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -398,24 +663,6 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 		}
 	};
 
-	if (!isOpen) {
-		return null;
-	}
-
-	const openItem = (item: PaletteItem | undefined) => {
-		if (!item) {
-			return;
-		}
-		navigate(item.route);
-		close();
-	};
-
-	const watchPipeline = (jobId: number) => {
-		navigate(route("job", jobId));
-		close();
-	};
-	const urlModeOffset = videoUrl !== null ? 1 : 0;
-
 	const onKeyDown = (event: React.KeyboardEvent<HTMLDialogElement>) => {
 		if (event.key === "Escape") {
 			event.preventDefault();
@@ -424,7 +671,7 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 		}
 		if (event.key === "Tab") {
 			const focusable = Array.from(
-				dialogRef.current?.querySelectorAll<HTMLElement>(
+				modalRef.current?.querySelectorAll<HTMLElement>(
 					'button, [href], input, [tabindex]:not([tabindex="-1"])',
 				) ?? [],
 			).filter((node) => !node.hasAttribute("disabled"));
@@ -444,99 +691,184 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 		}
 		if (event.key === "ArrowDown") {
 			event.preventDefault();
-			setSelectedIndex((value) =>
-				Math.min(value + 1, Math.max(0, items.length - 1 + urlModeOffset)),
-			);
+			if (selectable.length > 0) {
+				setSelectedIndex((value) => (value + 1) % selectable.length);
+			}
 			return;
 		}
 		if (event.key === "ArrowUp") {
 			event.preventDefault();
-			setSelectedIndex((value) => Math.max(0, value - 1));
+			if (selectable.length > 0) {
+				setSelectedIndex(
+					(value) => (value - 1 + selectable.length) % selectable.length,
+				);
+			}
 			return;
 		}
 		if (event.key === "Enter") {
 			event.preventDefault();
-			if (videoUrl !== null && selectedIndex === 0) {
+			if (videoUrl !== null && submitState.state !== "success") {
 				void submitUrl();
-			} else {
-				openItem(items[selectedIndex - urlModeOffset]);
+				return;
 			}
+			selectable[safeSelectedIndex]?.item.onPick();
 		}
 	};
+
+	if (!isOpen) {
+		return null;
+	}
 
 	return (
 		<div className="cmdk-overlay" onMouseDown={close}>
 			<dialog
 				open
-				className="cmdk"
+				className="cmdk-modal"
 				aria-modal="true"
 				aria-label="Command palette"
-				ref={dialogRef}
+				ref={modalRef}
 				onKeyDown={onKeyDown}
 				onMouseDown={(event) => event.stopPropagation()}
 			>
-				<input
-					ref={inputRef}
-					className="cmdk-input"
-					value={query}
-					onChange={onQueryChange}
-					placeholder="Search, jump, or paste a video URL"
-					aria-label="Search commands and transcripts"
-				/>
-				{videoUrl !== null ? (
+				<div className="cmdk-input-row">
+					<IconSearch size={16} />
+					<input
+						ref={inputRef}
+						placeholder="Paste a YouTube URL · or search transcripts, jobs, commands..."
+						value={query}
+						onChange={onQueryChange}
+						aria-label="Search commands and transcripts"
+					/>
+					<span className="kbd">esc</span>
+				</div>
+
+				{videoUrl !== null && submitState.state !== "success" ? (
 					<div className="cmdk-submit">
-						<div>
-							<span className="cmdk-label">Submit job</span>
-							<strong>{videoUrl}</strong>
-							<small>source manual · {capRemainingLabel(ops)}</small>
+						<IconPlus size={18} />
+						<div className="label">
+							<div className="cmdk-submit-title">Submit job</div>
+							<div className="cmdk-submit-meta">
+								video_id <span className="tnum">{videoUrl.videoId}</span> ·
+								source=manual
+							</div>
 						</div>
 						<button
 							type="button"
-							className="primary-button"
+							className="btn"
 							onClick={() => void submitUrl()}
-							disabled={
-								submitState.state === "submitting" ||
-								submitState.state === "success"
-							}
+							disabled={submitState.state === "submitting"}
 						>
 							{submitState.state === "submitting" ? "Submitting" : "Submit"}
+							<span className="kbd">↵</span>
 						</button>
 					</div>
 				) : null}
+
 				{submitState.state === "error" ? (
-					<p className="cmdk-error" role="alert">
-						{submitState.message}
-					</p>
+					<div className="cmdk-result cmdk-result-error" role="alert">
+						<div className="cmdk-glyph">
+							<IconClock size={13} />
+						</div>
+						<div className="cmdk-result-body">
+							<div className="cmdk-title">Submit failed</div>
+							<div className="cmdk-hint">{submitState.message}</div>
+						</div>
+					</div>
 				) : null}
+
 				{submitState.state === "success" ? (
-					<output className="cmdk-success">
-						<span>Queued as job #{submitState.job.job_id}</span>
+					<div className="cmdk-result cmdk-result-ok">
+						<div className="cmdk-glyph">
+							<IconCheck size={18} />
+						</div>
+						<div className="cmdk-result-body">
+							<div className="cmdk-title">
+								Queued as job #{submitState.job.job_id}
+							</div>
+							<div className="cmdk-hint">
+								video_id {submitState.job.video_id} · status{" "}
+								{submitState.job.status}
+							</div>
+						</div>
 						<button
 							type="button"
+							className="btn primary"
 							onClick={() => watchPipeline(submitState.job.job_id)}
 						>
-							Watch pipeline →
+							Watch pipeline <IconArrow size={12} />
 						</button>
-					</output>
+					</div>
 				) : null}
+
 				<div className="cmdk-list" aria-label="Command results">
-					{items.map((item, index) => (
-						<button
-							type="button"
-							className="cmdk-item"
-							key={item.id}
-							aria-selected={index + urlModeOffset === selectedIndex}
-							onMouseEnter={() => setSelectedIndex(index + urlModeOffset)}
-							onClick={() => openItem(item)}
-						>
-							<span>
-								<strong>{item.label}</strong>
-								<small>{item.meta}</small>
-							</span>
-							<em>{item.kind}</em>
-						</button>
-					))}
-					{items.length === 0 ? <p className="cmdk-empty">No matches</p> : null}
+					{items.map((item, index) => {
+						if (isSection(item)) {
+							return (
+								<div
+									key={`section:${item.section}`}
+									className="cmdk-section-label"
+								>
+									{item.section}
+								</div>
+							);
+						}
+						const selectableIndex = selectable.findIndex(
+							(entry) => entry.index === index,
+						);
+						const isSelected = selectableIndex === safeSelectedIndex;
+						const content = (
+							<>
+								<div className="cmdk-glyph">
+									{item.type === "transcript" ? (
+										<IconWave size={13} />
+									) : item.type === "job" ? (
+										<span className="live-dot" />
+									) : item.type === "cmd" ? (
+										<span className="cmdk-cmd-glyph">{item.glyph}</span>
+									) : (
+										<IconClock size={13} />
+									)}
+								</div>
+								<div className="cmdk-title">{item.title}</div>
+								<div className="cmdk-hint">{item.hint}</div>
+							</>
+						);
+						if (item.type === "empty") {
+							return (
+								<div key={item.key} className="cmdk-item cmdk-item-empty">
+									{content}
+								</div>
+							);
+						}
+						return (
+							<button
+								type="button"
+								key={item.key}
+								className={`cmdk-item ${isSelected ? "sel" : ""}`}
+								aria-selected={isSelected}
+								onClick={item.onPick}
+								onMouseEnter={() => setSelectedIndex(selectableIndex)}
+							>
+								{content}
+							</button>
+						);
+					})}
+				</div>
+
+				<div className="cmdk-foot">
+					<span>
+						<span className="kbd">↑↓</span> navigate
+					</span>
+					<span>
+						<span className="kbd">↵</span> open
+					</span>
+					<span>
+						<span className="kbd">esc</span> close
+					</span>
+					<div className="grow" />
+					<span className="muted">
+						paste any youtube URL for instant submit
+					</span>
 				</div>
 			</dialog>
 		</div>
