@@ -365,8 +365,8 @@ export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
 	async function discard() {
 		setError(null);
 		setStatus(null);
-		replaceTweaks(savedTweaks);
 		if (await loadSettings()) {
+			replaceTweaks(savedTweaks);
 			setStatus("Discarded");
 		}
 	}
