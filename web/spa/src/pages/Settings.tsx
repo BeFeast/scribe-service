@@ -842,7 +842,9 @@ export function AccessSection({
 							</span>
 						</div>
 						<div className="email">
-							{currentUser.email ?? currentUser.kind} · {currentUser.kind}
+							{currentUser.email !== null
+								? `${currentUser.email} · ${currentUser.kind}`
+								: currentUser.kind}
 						</div>
 					</div>
 					<div className="spacer" />
@@ -1064,7 +1066,7 @@ export function AccessSection({
 						) : (
 							<tr>
 								<td colSpan={6}>
-									{loading ? "Loading users" : "No real users to display"}
+									{loading ? "Loading users" : "No users to display"}
 								</td>
 							</tr>
 						)}
