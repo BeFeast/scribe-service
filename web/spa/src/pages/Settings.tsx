@@ -580,6 +580,15 @@ export function Settings({ tweaks, replaceTweaks }: SettingsProps) {
 					<button
 						className="btn ghost"
 						type="button"
+						disabled={saving || loading}
+						onClick={() => void loadSettings()}
+					>
+						{loading ? <span className="spinner" /> : <IconRefresh size={12} />}
+						Refresh
+					</button>
+					<button
+						className="btn ghost"
+						type="button"
 						disabled={saving || loading || !hasUnsavedChanges}
 						onClick={() => void discard()}
 					>
@@ -1257,18 +1266,30 @@ export function WorkerConcurrencyRow({
 
 	return (
 		<SettingsRow label={label} hint={hint} source={source}>
-			<div className="seg" aria-label={label}>
-				{presets.map((option) => (
-					<button
-						key={option}
-						type="button"
-						aria-pressed={option === value}
-						disabled={disabled}
-						onClick={() => onChange(option)}
-					>
-						{option}
-					</button>
-				))}
+			<div className="row-control-line">
+				<div className="seg" aria-label={`${label} presets`}>
+					{presets.map((option) => (
+						<button
+							key={option}
+							type="button"
+							aria-pressed={option === value}
+							disabled={disabled}
+							onClick={() => onChange(option)}
+						>
+							{option}
+						</button>
+					))}
+				</div>
+				<input
+					className="settings-input number"
+					type="number"
+					value={value}
+					min={1}
+					step={1}
+					disabled={disabled}
+					aria-label={`${label} custom value`}
+					onChange={(event) => onChange(event.currentTarget.valueAsNumber)}
+				/>
 			</div>
 			<span className="muted mono settings-unit">
 				currently <span className="tnum">{value}</span> workers
@@ -1424,7 +1445,7 @@ export function SegRow({
 	onChange: (value: string) => void;
 }) {
 	return (
-		<SettingsRow label={label} hint={hint ?? ""}>
+		<SettingsRow label={label} hint={hint}>
 			<div className="seg" aria-label={label}>
 				{options.map((option) => {
 					const item =

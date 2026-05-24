@@ -371,6 +371,8 @@ def test_settings_access_section_wires_current_user_and_admin_users() -> None:
     assert "Add or update user" in settings
     assert "`/api/admin/users/${disableTarget.id}/disable`" in settings
     assert "ConfirmDialog" in settings
+    assert "onClick={() => void loadSettings()}" in settings
+    assert "Refresh" in settings
     assert "window.alert" not in settings
     assert "window.confirm" not in settings
     assert "window.prompt" not in settings
@@ -422,6 +424,8 @@ def test_settings_literal_port_controls_stay_wired_to_real_sources() -> None:
         assert option in settings or option in tweaks
     for forbidden in ("SCRIBE_USERS", "STATS.", "telegram.oklabs.uk/webhook/scribe"):
         assert forbidden not in settings
+    assert 'aria-label={`${label} custom value`}' in settings
+    assert 'type="number"' in settings
 
 
 def test_global_shell_shows_access_status_and_operator_auth() -> None:
