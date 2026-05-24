@@ -1,5 +1,6 @@
 import React from "react";
 
+import { IconExternal, IconRefresh } from "../components/ShellIcons";
 import { useAuth } from "../hooks/useAuth";
 import type { Route } from "../hooks/useRoute";
 import { handleRouteAnchorClick, routeToHref } from "../hooks/useRoute";
@@ -45,11 +46,11 @@ type OpsSnapshot = {
 	vast_spend_7d: number;
 	vast_spend_30d: number;
 	daily_spend_cap_usd: number;
-	spend_series_14d: number[];
-	jobs_by_status: Record<string, number>;
+	spend_series_14d?: number[];
+	jobs_by_status?: Record<string, number>;
 	backup: BackupSnapshot;
-	recent_failures: RecentFailure[];
-	system: SystemSnapshot[];
+	recent_failures?: RecentFailure[];
+	system?: SystemSnapshot[];
 };
 
 type OpsProps = {
@@ -202,6 +203,17 @@ function StatusBars({ stats }: { stats: Record<string, number> }) {
 	);
 }
 
+function countFailuresSince(
+	failures: RecentFailure[],
+	seconds: number,
+): number {
+	const cutoff = Date.now() - seconds * 1000;
+	return failures.filter((failure) => {
+		const timestamp = new Date(failure.updated_at).getTime();
+		return Number.isFinite(timestamp) && timestamp >= cutoff;
+	}).length;
+}
+
 function SystemRow({ item }: { item: SystemSnapshot }) {
 	const tone =
 		item.status === "ok" ? "ok" : item.status === "warn" ? "warn" : "err";
@@ -251,6 +263,7 @@ export function Ops({ displayCurrency, navigate }: OpsProps) {
 	const [snapshot, setSnapshot] = React.useState<OpsSnapshot | null>(null);
 	const [error, setError] = React.useState<string | null>(null);
 	const [loading, setLoading] = React.useState(true);
+	const [lastRefreshAt, setLastRefreshAt] = React.useState<string | null>(null);
 
 	const load = React.useCallback(
 		async (signal?: AbortSignal) => {
@@ -262,6 +275,7 @@ export function Ops({ displayCurrency, navigate }: OpsProps) {
 					throw new Error(`ops endpoint returned ${response.status}`);
 				}
 				setSnapshot((await response.json()) as OpsSnapshot);
+				setLastRefreshAt(new Date().toISOString());
 			} catch (caught) {
 				if (!signal?.aborted) {
 					setError(
@@ -291,10 +305,17 @@ export function Ops({ displayCurrency, navigate }: OpsProps) {
 			: 0;
 	const spendCls = spendPct > 0.85 ? "err" : spendPct > 0.6 ? "warn" : "";
 	const failures = snapshot?.recent_failures ?? [];
+	const failures24h = countFailuresSince(failures, 24 * 3600);
 	const failureSummary =
 		failures.length >= 50
 			? `showing ${compactNumber(failures.length)} most recent (capped)`
-			: `showing ${compactNumber(failures.length)} most recent`;
+			: `${compactNumber(failures.length)} failed · last 24h: ${compactNumber(failures24h)}`;
+	const lastRefreshLabel = loading
+		? "refreshing"
+		: formatRelativeTime(lastRefreshAt);
+	const spendSeries = snapshot?.spend_series_14d ?? [];
+	const jobsByStatus = snapshot?.jobs_by_status ?? {};
+	const systemRows = snapshot?.system ?? [];
 
 	return (
 		<section className="pane ops-page">
@@ -303,7 +324,7 @@ export function Ops({ displayCurrency, navigate }: OpsProps) {
 					<h1 className="pane-h1">Ops</h1>
 					<div className="pane-sub">
 						Window: rolling {snapshot?.window_days ?? 1}d · last refresh{" "}
-						<span className="tnum">{loading ? "refreshing" : "now"}</span>
+						<span className="tnum">{lastRefreshLabel}</span>
 					</div>
 				</div>
 				<div className="pane-actions">
@@ -314,7 +335,17 @@ export function Ops({ displayCurrency, navigate }: OpsProps) {
 						disabled={loading}
 					>
 						{loading ? <span className="spinner" aria-hidden="true" /> : null}
+						{loading ? null : <IconRefresh size={14} />}
 						Refresh
+					</button>
+					<button
+						type="button"
+						className="btn"
+						disabled
+						title="No Grafana dashboard URL is configured for this runtime."
+					>
+						<IconExternal size={14} />
+						Grafana unavailable
 					</button>
 				</div>
 			</header>
@@ -420,7 +451,13 @@ export function Ops({ displayCurrency, navigate }: OpsProps) {
 									</span>
 								</div>
 							</div>
-							<Sparkline series={snapshot.spend_series_14d} cap={cap} />
+							{spendSeries.length > 0 ? (
+								<Sparkline series={spendSeries} cap={cap} />
+							) : (
+								<div className="ops-unavailable muted">
+									14-day spend series unavailable.
+								</div>
+							)}
 							{capEnabled ? null : (
 								<p className="muted ops-cap-note">Daily spend cap disabled.</p>
 							)}
@@ -428,12 +465,12 @@ export function Ops({ displayCurrency, navigate }: OpsProps) {
 
 						<section className="metric ops-panel">
 							<div className="label ops-panel-label">Jobs by status · 24h</div>
-							<StatusBars stats={snapshot.jobs_by_status} />
+							<StatusBars stats={jobsByStatus} />
 						</section>
 					</div>
 
 					<div className="section-label split ops-section-label">
-						<span>Recent failures</span>
+						<span>Recent failures · 7d</span>
 						<span className="mono muted">{failureSummary}</span>
 					</div>
 					{failures.length === 0 ? (
@@ -461,12 +498,13 @@ export function Ops({ displayCurrency, navigate }: OpsProps) {
 						<span>System</span>
 					</div>
 					<div className="ops-system-grid">
-						{snapshot.system.length === 0 ? (
+						{systemRows.length === 0 ? (
 							<div className="ops-system-row">
-								<span className="muted">No system rollcall rows returned.</span>
+								<span className="ops-system-status warn">unknown</span>
+								<span className="muted">System rollcall unavailable.</span>
 							</div>
 						) : (
-							snapshot.system.map((item) => (
+							systemRows.map((item) => (
 								<SystemRow item={item} key={item.label} />
 							))
 						)}

@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import html
-import importlib.metadata
 import json
 import logging
 import re
@@ -1681,13 +1680,6 @@ def _spend_series_14d(session: Session, now: dt.datetime) -> list[float]:
     return [round(by_day.get(start_day + dt.timedelta(days=i), 0.0), 4) for i in range(14)]
 
 
-def _service_version() -> str:
-    try:
-        return f"v{importlib.metadata.version('scribe')}"
-    except importlib.metadata.PackageNotFoundError:
-        return "vunknown"
-
-
 @router.get("/api/ops", response_model=OpsSnapshot)
 def api_ops(
     response: Response,
@@ -1731,8 +1723,16 @@ def api_ops(
     ) or 0
     # DB-derived proxy for worker occupancy. It can lag real OS thread state
     # after a worker crash until retry/recovery updates the in-flight jobs.
+    recent_failures_since = now - dt.timedelta(days=7)
     recent_failures = session.execute(
-        _actor_filter(select(Job).where(Job.status == JobStatus.failed), Job, actor)
+        _actor_filter(
+            select(Job).where(
+                Job.status == JobStatus.failed,
+                Job.updated_at >= recent_failures_since,
+            ),
+            Job,
+            actor,
+        )
         .order_by(Job.updated_at.desc(), Job.id.desc())
         .limit(50)
     ).scalars().all()
@@ -1763,10 +1763,7 @@ def api_ops(
             )
             for job in recent_failures
         ],
-        system=[
-            SystemSnapshot(label="scribe-service", value=_service_version(), status="ok"),
-            SystemSnapshot(label="Postgres", value="connected", status="ok"),
-        ],
+        system=[SystemSnapshot(**item) for item in ops_helpers._system_rollcall()],
     )
 
 

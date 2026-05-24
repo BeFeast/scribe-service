@@ -628,6 +628,11 @@ def test_api_job_log_stream_returns_buffered_worker_lines_and_closes(client, db_
 def test_api_ops_empty(client, tmp_path, monkeypatch):
     path = tmp_path / "_last_success_ts"
     monkeypatch.setattr(settings, "backup_status_path", str(path))
+    monkeypatch.setattr(
+        routes_module.ops_helpers,
+        "_system_rollcall",
+        lambda: [{"label": "Worker", "value": "unknown", "status": "warn"}],
+    )
     resp = client.get("/api/ops")
     assert resp.status_code == 200
     assert resp.headers["cache-control"] == "no-store"
@@ -640,6 +645,7 @@ def test_api_ops_empty(client, tmp_path, monkeypatch):
     assert len(body["spend_series_14d"]) == 14
     assert body["backup"]["stale"] is True
     assert body["recent_failures"] == []
+    assert body["system"] == [{"label": "Worker", "value": "unknown", "status": "warn"}]
 
 
 def test_api_ops_happy_path(client, db_session, tmp_path, monkeypatch):
@@ -647,6 +653,14 @@ def test_api_ops_happy_path(client, db_session, tmp_path, monkeypatch):
     path.write_text(str(int(time.time())))
     monkeypatch.setattr(settings, "backup_status_path", str(path))
     monkeypatch.setattr(settings, "daily_spend_cap_usd", 2.0)
+    monkeypatch.setattr(
+        routes_module.ops_helpers,
+        "_system_rollcall",
+        lambda: [
+            {"label": "scribe-service", "value": "vtest", "status": "ok"},
+            {"label": "Postgres", "value": "ready", "status": "ok"},
+        ],
+    )
     now = dt.datetime.now(dt.UTC)
     active = Job(url="https://youtu.be/opsactive1", video_id="opsactive1", status=JobStatus.queued)
     failed = Job(
@@ -655,8 +669,16 @@ def test_api_ops_happy_path(client, db_session, tmp_path, monkeypatch):
         status=JobStatus.failed,
         error="codex exited 1",
     )
+    stale_failed = Job(
+        url="https://youtu.be/opsfailedold",
+        video_id="opsfailedold",
+        status=JobStatus.failed,
+        error="old failure",
+        updated_at=now - dt.timedelta(days=8),
+    )
     db_session.add(active)
     db_session.add(failed)
+    db_session.add(stale_failed)
     _seed_transcript(
         db_session,
         video_id="opsdone1111",
@@ -686,6 +708,8 @@ def test_api_ops_happy_path(client, db_session, tmp_path, monkeypatch):
     assert body["backup"]["stale"] is False
     assert body["recent_failures"][0]["id"] == failed.id
     assert body["recent_failures"][0]["error"] == "codex exited 1"
+    assert [item["video_id"] for item in body["recent_failures"]] == ["opsfailed1"]
+    assert body["system"][0] == {"label": "scribe-service", "value": "vtest", "status": "ok"}
 
 
 def _auth_headers(subject: str, email: str | None = None) -> dict[str, str]:
