@@ -371,8 +371,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 	const startRedirect = React.useCallback(
 		async (mode: "sign-in" | "sign-up") => {
-			if (!window.Clerk || authRedirectInFlight) {
+			if (!window.Clerk) {
 				setAuthRequired(true);
+				return;
+			}
+			if (authRedirectInFlight) {
 				return;
 			}
 			navigationStartedRef.current = false;
