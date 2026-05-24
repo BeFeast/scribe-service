@@ -449,6 +449,7 @@ def test_get_job_includes_pipeline_stages(client, db_session):
         url="https://youtu.be/detailjob1",
         video_id="detailjob1",
         status=JobStatus.summarizing,
+        title="Detail job title",
         created_at=now - dt.timedelta(minutes=4),
     )
     db_session.add(job)
@@ -480,6 +481,7 @@ def test_get_job_includes_pipeline_stages(client, db_session):
 
     body = client.get(f"/jobs/{job.id}").json()
     assert body["job_id"] == job.id
+    assert body["title"] == "Detail job title"
     assert body["stages"]["queued"]["state"] == "done"
     assert body["stages"]["transcribing"]["duration_s"] == 60
     assert body["stages"]["summarizing"]["state"] == "active"

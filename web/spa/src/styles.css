@@ -388,7 +388,8 @@ a {
 }
 
 .bar-track > span,
-.progressbar > span {
+.progressbar > span,
+.progressbar > div {
 	display: block;
 	height: 100%;
 	border-radius: inherit;
@@ -1560,38 +1561,59 @@ a {
 
 .pipeline {
 	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
-	gap: var(--row-gap);
+	grid-template-columns: repeat(5, minmax(8rem, 1fr));
+	gap: 0;
+	margin: 1.5rem 0 2rem;
+	overflow: hidden;
+	border: var(--rule);
+	border-radius: var(--radius-lg);
+	background: var(--bg-card);
+}
+
+[data-variant="terminal"] .pipeline {
+	background: transparent;
 }
 
 .pipeline.compact {
-	grid-template-columns: repeat(5, minmax(5.4rem, 1fr));
+	grid-template-columns: repeat(5, minmax(6.5rem, 1fr));
+	margin: 0;
 	overflow-x: auto;
-	padding-bottom: 0.15rem;
 }
 
-.stage {
-	display: grid;
-	align-content: start;
-	gap: 0.45rem;
-	min-height: 5rem;
-	padding: 0.75rem;
-	color: var(--muted);
+.pipeline .stage {
+	position: relative;
+	display: block;
 	min-width: 0;
+	min-height: 7.4rem;
+	padding: 1.1rem 1.1rem 1rem;
+	border: 0;
+	border-right: 1px solid var(--border-soft);
+	border-radius: 0;
+	background: transparent;
+	color: var(--muted);
+}
+
+.pipeline .stage:last-child {
+	border-right: 0;
 }
 
 .pipeline.compact .stage {
-	min-height: 4.75rem;
-	padding: 0.55rem;
+	min-height: 5.5rem;
+	padding: 0.75rem 0.85rem;
 }
 
 .stage-name {
 	display: flex;
 	align-items: center;
-	gap: 0.45rem;
+	gap: 0.5rem;
 	min-width: 0;
 	color: var(--fg);
-	font-weight: 800;
+	font-family: var(--font-display);
+	font-size: 1rem;
+	font-weight: 600;
+	letter-spacing: 0;
+	line-height: 1.25;
+	margin-bottom: 0.25rem;
 }
 
 .stage-name span:last-child {
@@ -1610,6 +1632,7 @@ a {
 }
 
 .stage-num {
+	margin-bottom: 0.25rem;
 	color: var(--muted);
 	text-transform: uppercase;
 }
@@ -1617,43 +1640,63 @@ a {
 .stage-sub,
 .stage-note {
 	color: var(--muted);
+	margin-top: 0.5rem;
+	font-feature-settings: "tnum";
 }
 
 .stage-state {
 	color: currentcolor;
 }
 
-.stage .spinner {
+.pipeline .stage .spinner {
 	width: 0.8rem;
 	height: 0.8rem;
 	border-width: 1.5px;
 }
 
-.stage .progressbar {
-	height: 0.32rem;
+.pipeline .stage .progressbar {
+	height: 3px;
+	margin-top: 0.75rem;
+	background: var(--border-soft);
 }
 
 .done-note {
 	color: var(--ok);
 }
 
-.stage.active {
-	border-color: var(--accent);
+.pipeline .stage.active {
+	background: color-mix(in srgb, var(--accent) 5%, transparent);
 	color: var(--accent);
 }
 
-.stage.done {
-	border-color: var(--ok);
+.pipeline .stage.done {
 	color: var(--ok);
 }
 
-.stage.pending {
-	border-style: dashed;
+.pipeline .stage.pending .stage-name {
+	color: var(--muted);
+	opacity: 0.55;
 }
 
-.stage.failed {
-	border-color: var(--err);
+.pipeline .stage.failed {
 	color: var(--err);
+}
+
+.pipeline .stage.active .stage-name {
+	color: var(--accent);
+}
+
+.pipeline .stage.done .stage-name {
+	color: var(--ok);
+}
+
+.pipeline .stage.failed .stage-name {
+	color: var(--err);
+}
+
+.progressbar.indeterminate > div {
+	width: 100%;
+	background: color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
 .queue-page,
@@ -1729,7 +1772,9 @@ a {
 .job-card h2 {
 	margin: 0;
 	color: var(--fg);
+	font-family: var(--font-display);
 	font-size: 1.05rem;
+	font-weight: 600;
 	line-height: 1.25;
 }
 
@@ -1747,9 +1792,7 @@ a {
 }
 
 .empty-queue,
-.error-banner,
-.job-panel,
-.log-tail {
+.error-banner {
 	border: var(--rule);
 	border-radius: var(--radius-lg);
 	padding: var(--pane-pad);
@@ -1804,20 +1847,22 @@ a {
 }
 
 .log-tail {
-	display: grid;
-	gap: var(--row-gap);
+	display: block;
 }
 
 .log-tail pre {
+	max-height: 17.5rem;
 	overflow: auto;
 	margin: 0;
+	border: 1px solid var(--border-soft);
 	border-radius: var(--radius);
-	padding: 0.85rem;
+	padding: 0.75rem 1rem;
 	background: var(--bg-soft);
 	color: var(--fg-soft);
 	font-family: var(--font-mono);
 	font-size: 0.82rem;
-	line-height: 1.55;
+	line-height: 1.65;
+	font-feature-settings: "tnum";
 }
 
 .log-tail code {
@@ -1826,8 +1871,10 @@ a {
 }
 
 .failure-row {
-	border-color: var(--err);
-	background: color-mix(in srgb, var(--err) 9%, var(--bg-card));
+	padding: 0.9rem 1rem;
+	border: 1px solid var(--border-soft);
+	border-radius: var(--radius);
+	background: var(--bg-card);
 }
 
 .failure-action {
@@ -1854,13 +1901,63 @@ a {
 
 .err-title {
 	margin: 0;
-	color: var(--err);
-	font-weight: 800;
+	color: var(--fg);
+	font-size: 0.9rem;
+	font-weight: 550;
 }
 
 .err-msg {
 	margin: 0.35rem 0;
-	color: var(--fg);
+	color: var(--err);
+	font-family: var(--font-mono);
+	font-size: 0.76rem;
+	word-break: break-word;
+}
+
+.err-meta {
+	font-family: var(--font-mono);
+	font-size: 0.72rem;
+}
+
+.job-card-elapsed {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.2rem;
+	font-size: 0.82rem;
+}
+
+.job-card-dot {
+	color: var(--muted);
+	font-family: var(--font-mono);
+	font-size: 0.82rem;
+	opacity: 0.5;
+}
+
+.job-detail-meta-row {
+	align-items: center;
+	gap: 0.75rem;
+	margin-bottom: 0.5rem;
+}
+
+.job-detail-page .detail-h1 {
+	margin-bottom: 0.75rem;
+}
+
+.job-detail-page .detail-meta {
+	margin-bottom: 0;
+}
+
+.job-detail-page .detail-meta a {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.2rem;
+}
+
+.runtime-notes {
+	color: var(--muted);
+	font-family: var(--font-mono);
+	font-size: 0.76rem;
+	line-height: 1.7;
 }
 
 .spark {

@@ -3,7 +3,7 @@ import {
 	handleRouteAnchorClick,
 	routeToHref,
 } from "../hooks/useRoute";
-import { StatusChip } from "./StatusChip";
+import { IconArrow, IconX } from "./ShellIcons";
 
 export type FailureJob = {
 	id: number;
@@ -55,13 +55,12 @@ export function FailureRow({
 				</div>
 			</a>
 			<div className="failure-row-actions">
-				<StatusChip status="failed" />
 				<a
 					className="btn ghost"
 					href={routeToHref(jobRoute)}
 					onClick={(event) => handleRouteAnchorClick(event, jobRoute, navigate)}
 				>
-					Open
+					Open <IconArrow size={12} />
 				</a>
 				<button
 					type="button"
@@ -69,6 +68,7 @@ export function FailureRow({
 					onClick={() => onDismiss(job.id)}
 					disabled={busy}
 				>
+					<IconX size={12} />
 					{busy ? "Clearing" : "Clear"}
 				</button>
 			</div>

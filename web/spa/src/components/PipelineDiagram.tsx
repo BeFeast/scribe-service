@@ -13,10 +13,26 @@ export type StageMap = Record<string, StageView>;
 
 const STAGES: Array<{ key: string; label: string; sublabel: string }> = [
 	{ key: "queued", label: "Queue", sublabel: "Waiting for a worker slot" },
-	{ key: "downloading", label: "Download", sublabel: "Fetching source media" },
-	{ key: "transcribing", label: "Transcribe", sublabel: "Worker audio pass" },
-	{ key: "summarizing", label: "Summarize", sublabel: "Summary generation" },
-	{ key: "done", label: "Publish", sublabel: "Transcript and hooks" },
+	{
+		key: "downloading",
+		label: "Download",
+		sublabel: "yt-dlp · residential IP",
+	},
+	{
+		key: "transcribing",
+		label: "Transcribe",
+		sublabel: "faster-whisper · Vast.ai GPU",
+	},
+	{
+		key: "summarizing",
+		label: "Summarize",
+		sublabel: "codex CLI · prompt template v3",
+	},
+	{
+		key: "done",
+		label: "Publish",
+		sublabel: "Shortlinks · webhook · DB write",
+	},
 ];
 
 type PipelineDiagramProps = {
@@ -37,20 +53,16 @@ function formatDuration(seconds?: number | null) {
 }
 
 function stageMeta(stage?: StageView) {
-	if (!stage) {
-		return "waiting";
-	}
-	const duration = formatDuration(stage.duration_s);
+	const duration = formatDuration(stage?.duration_s);
 	if (duration) {
-		return duration;
+		return `completed in ${duration}`;
 	}
-	if (stage.state === "active") {
-		return "running";
+	if (stage?.state === "active") {
+		return stage.progress !== null && stage.progress !== undefined
+			? `${Math.round(stage.progress * 100)}%`
+			: "running";
 	}
-	if (stage.state === "failed") {
-		return "failed";
-	}
-	return stage.state;
+	return null;
 }
 
 function stateGlyph(state: StageState) {
@@ -91,6 +103,7 @@ export function PipelineDiagram({
 					view?.progress !== null && view?.progress !== undefined
 						? view.progress * 100
 						: null;
+				const meta = stageMeta(view);
 				return (
 					<div className={`stage ${state}`} key={stage.key}>
 						<div className="stage-num">stage {index + 1}</div>
@@ -100,20 +113,27 @@ export function PipelineDiagram({
 						</div>
 						{compact ? null : (
 							<>
-								<div className="stage-sub">{stage.sublabel}</div>
-								<div className="stage-state">{stageMeta(view)}</div>
+								<div className="mono muted stage-sub">{stage.sublabel}</div>
 								{view?.note ? (
 									<div className="stage-note">{view.note}</div>
+								) : null}
+								{meta ? (
+									<div className="stage-note done-note">{meta}</div>
 								) : null}
 							</>
 						)}
 						{state === "active" && progress !== null ? (
 							<div className="progressbar" aria-hidden="true">
-								<span style={{ width: `${progress}%` }} />
+								<div style={{ width: `${progress}%` }} />
+							</div>
+						) : null}
+						{state === "active" && progress === null ? (
+							<div className="progressbar indeterminate" aria-hidden="true">
+								<div />
 							</div>
 						) : null}
 						{compact ? (
-							<span className="stage-state">{stageMeta(view)}</span>
+							<span className="stage-state">{meta ?? view?.note ?? ""}</span>
 						) : null}
 					</div>
 				);

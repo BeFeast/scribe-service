@@ -3,6 +3,7 @@ import React from "react";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { type FailureJob, FailureRow } from "../components/FailureRow";
 import { JobCard, type JobCardJob } from "../components/JobCard";
+import { IconPlus, IconRefresh } from "../components/ShellIcons";
 import { CMDK_OPEN_EVENT } from "../constants";
 import { useAuth } from "../hooks/useAuth";
 import { usePoll } from "../hooks/usePoll";
@@ -14,6 +15,13 @@ type ActiveJobsResponse = {
 
 type RecentFailuresResponse = {
 	jobs: FailureJob[];
+};
+
+type OpsResponse = {
+	worker_pool?: {
+		active: number;
+		total: number;
+	};
 };
 
 type QueueProps = {
@@ -43,6 +51,7 @@ export function Queue({ navigate }: QueueProps) {
 	const auth = useAuth();
 	const [active, setActive] = React.useState<JobCardJob[]>([]);
 	const [failures, setFailures] = React.useState<FailureJob[]>([]);
+	const [ops, setOps] = React.useState<OpsResponse | null>(null);
 	const [error, setError] = React.useState<string | null>(null);
 	const [loading, setLoading] = React.useState(true);
 	const [clearingId, setClearingId] = React.useState<number | null>(null);
@@ -57,16 +66,23 @@ export function Queue({ navigate }: QueueProps) {
 	const load = React.useCallback(
 		async (signal: AbortSignal) => {
 			try {
-				const [activeResponse, failuresResponse] = await Promise.all([
-					auth.protectedFetch("/api/jobs/active", { signal }),
-					auth.protectedFetch("/api/jobs/recent-failures?limit=5", { signal }),
-				]);
+				const [activeResponse, failuresResponse, opsResponse] =
+					await Promise.all([
+						auth.protectedFetch("/api/jobs/active", { signal }),
+						auth.protectedFetch("/api/jobs/recent-failures?limit=5", {
+							signal,
+						}),
+						auth.protectedFetch("/api/ops", { signal }).catch(() => null),
+					]);
 				if (!activeResponse.ok || !failuresResponse.ok) {
 					throw new Error("queue endpoints unavailable");
 				}
 				const activeBody = (await activeResponse.json()) as ActiveJobsResponse;
 				const failuresBody =
 					(await failuresResponse.json()) as RecentFailuresResponse;
+				if (opsResponse?.ok) {
+					setOps((await opsResponse.json()) as OpsResponse);
+				}
 				const fetchedActive = activeBody.jobs ?? [];
 				const cancelled = cancelledIdsRef.current;
 				if (cancelled.size > 0) {
@@ -169,13 +185,19 @@ export function Queue({ navigate }: QueueProps) {
 		}
 	}, [auth, cancelBusyId, cancelCandidate]);
 
+	const workers = ops?.worker_pool;
+
 	return (
-		<section className="pane queue-page">
+		<section className="pane queue-page" data-testid="queue-pane">
 			<header className="pane-header">
 				<div>
 					<h1 className="pane-h1">Queue</h1>
 					<div className="pane-sub">
-						{active.length} in flight &middot;{" "}
+						{active.length} in flight &middot; workers{" "}
+						<span className="tnum">
+							{workers ? `${workers.active}/${workers.total}` : "0/0"}
+						</span>{" "}
+						busy &middot;{" "}
 						{error ? (
 							<span className="chip warn">stale</span>
 						) : (
@@ -191,7 +213,7 @@ export function Queue({ navigate }: QueueProps) {
 						className="btn"
 						onClick={() => void load(new AbortController().signal)}
 					>
-						Poll now
+						<IconRefresh size={14} /> Poll now
 					</button>
 					<button
 						type="button"
@@ -200,7 +222,7 @@ export function Queue({ navigate }: QueueProps) {
 							document.dispatchEvent(new CustomEvent(CMDK_OPEN_EVENT))
 						}
 					>
-						Submit URL
+						<IconPlus size={14} /> Submit URL
 					</button>
 				</div>
 			</header>
@@ -246,7 +268,7 @@ export function Queue({ navigate }: QueueProps) {
 						className="text-link"
 						onClick={() => navigate({ page: "ops", params: {} })}
 					>
-						all failures
+						all failures →
 					</button>
 				</div>
 				{failures.length > 0 ? (
