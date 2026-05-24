@@ -37,6 +37,8 @@ export let CURRENT_TRANSCRIPT_STATE = { loading: false, error: null };
 export let CURRENT_JOB = null;
 export let CURRENT_JOB_STATE = { loading: false, error: null };
 export let CURRENT_JOB_LOG = { connected: false, error: null, lines: [] };
+export let DISPLAY_CURRENCY = "ILS";
+export let PUBLIC_BASE_URL = "";
 
 export function setRuntimeData(next) {
 	TRANSCRIPTS = next.transcripts ?? TRANSCRIPTS;
@@ -57,6 +59,10 @@ export function setRuntimeData(next) {
 		error: null,
 		lines: [],
 	};
+	DISPLAY_CURRENCY = normalizeDisplayCurrency(
+		next.config?.display_currency ?? DISPLAY_CURRENCY,
+	);
+	PUBLIC_BASE_URL = next.config?.public_base_url ?? PUBLIC_BASE_URL;
 	if (
 		CURRENT_TRANSCRIPT &&
 		!TRANSCRIPTS.some((row) => row.id === CURRENT_TRANSCRIPT.id)
@@ -123,7 +129,36 @@ export function fmtDate(iso) {
 }
 
 export function fmtUsd(value) {
+	return fmtDisplayCurrency(value);
+}
+
+export function fmtDisplayCurrency(value, currency = DISPLAY_CURRENCY) {
 	if (value == null || Number.isNaN(Number(value))) return "\u2014";
 	const number = Number(value);
-	return `$${number.toFixed(number < 0.1 ? 4 : 2)}`;
+	const normalized = normalizeDisplayCurrency(currency);
+	const fractionDigits = Math.abs(number) < 0.1 ? 4 : 2;
+	if (normalized === "ILS") {
+		return `₪${number.toFixed(fractionDigits)} ILS`;
+	}
+	return new Intl.NumberFormat(undefined, {
+		style: "currency",
+		currency: normalized,
+		minimumFractionDigits: fractionDigits,
+		maximumFractionDigits: fractionDigits,
+	}).format(number);
+}
+
+export function normalizeDisplayCurrency(value) {
+	const normalized = String(value || "")
+		.trim()
+		.toUpperCase();
+	return ["ILS", "USD", "EUR"].includes(normalized) ? normalized : "ILS";
+}
+
+export function publicBaseUrl() {
+	if (PUBLIC_BASE_URL) return PUBLIC_BASE_URL;
+	if (typeof window !== "undefined" && window.location?.origin) {
+		return window.location.origin;
+	}
+	return "https://scribe.oklabs.uk/";
 }

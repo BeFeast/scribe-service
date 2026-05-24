@@ -4,7 +4,7 @@ import { useAuth } from "../hooks/useAuth";
 import { adaptUsers } from "./adapters.js";
 import { fetchJson, responseMessage } from "./api.jsx";
 import { IconCards, IconCopy, IconDot, IconExternal, IconFeed, IconMoon, IconPlus, IconRefresh, IconSparkle, IconSun, IconTable, IconX } from "./icons.jsx";
-import { STATS, fmtRelative, fmtUsd } from "./data.js";
+import { STATS, fmtDisplayCurrency, fmtRelative, normalizeDisplayCurrency } from "./data.js";
 // Settings page — config values that map to scribe/config.py settings.
 
 const DEFAULT_PROMPT = `You are a careful, ruthless reader. Given a transcript of a YouTube video, produce a Markdown summary with the following sections:
@@ -27,7 +27,7 @@ Style:
 - If you don't know something, omit it. Do not hedge.
 - Markdown only. No HTML.`;
 
-export function SettingsPage({ t, setTweak, users: runtimeUsers = [] }) {
+export function SettingsPage({ t, setTweak, users: runtimeUsers = [], onConfigSaved }) {
   const auth = useAuth();
   const [config, setConfig] = React.useState(null);
   const [configDraft, setConfigDraft] = React.useState(null);
@@ -41,6 +41,7 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [] }) {
   const capUsagePct = cap > 0 ? Math.min(100, (STATS.vast_spend_24h / cap) * 100) : 0;
   const webhook = configDraft?.webhook_default ?? "";
   const publicBase = configDraft?.public_base_url ?? "";
+  const displayCurrency = normalizeDisplayCurrency(configDraft?.display_currency);
   const workerConcurrency = Number(configDraft?.worker_concurrency ?? STATS.worker_pool.total ?? 2);
   const keepBotwallRetries = Boolean(configDraft?.bot_wall_retry);
   const embedTranscript = Boolean(configDraft?.webhook_embed_transcript);
@@ -105,6 +106,7 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [] }) {
       });
       setConfig(body?.config ?? {});
       setConfigDraft(configValues(body?.config ?? {}));
+      onConfigSaved && onConfigSaved(body?.config ?? {});
       setConfigState({ loading: false, error: null, saved: body?.restart_required?.length ? `Saved · restart required for ${body.restart_required.join(", ")}` : "Saved" });
     } catch (error) {
       setConfigState({ loading: false, error: messageOf(error), saved: null });
@@ -180,14 +182,40 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [] }) {
               <input type="number" step="0.25" min="0" value={cap}
                      onChange={(e) => setDraft("daily_spend_cap_usd", parseFloat(e.target.value) || 0)}
                      style={{width: 100}}/>
-              <span className="muted mono" style={{fontSize: 12}}>USD</span>
+              <span className="muted mono" style={{fontSize: 12}}>{displayCurrency}</span>
               <span className="muted" style={{fontSize: 12, marginLeft: 16}}>
-                Current 24h spend: <span className="tnum" style={{color: "var(--fg-soft)"}}>{fmtUsd(STATS.vast_spend_24h)}</span>
+                Current 24h spend: <span className="tnum" style={{color: "var(--fg-soft)"}}>{fmtDisplayCurrency(STATS.vast_spend_24h, displayCurrency)}</span>
                 {" "}({capUsagePct.toFixed(0)}%)
               </span>
             </div>
+            <span className="muted mono" style={{fontSize: 11.5}}>
+              Display formatting only; cap storage and backend metrics remain USD-backed.
+            </span>
             <div className="bar-track" style={{maxWidth: 260}}>
               <div style={{width: `${capUsagePct}%`}}/>
+            </div>
+          </div>
+        </div>
+
+        <div className="settings-row">
+          <div className="row-label">
+            Display currency
+            <span className="hint">Controls product spend/cost labels. It does not perform FX conversion.</span>
+          </div>
+          <div className="row-control">
+            <div className="seg" style={{width: "fit-content"}}>
+              {[
+                ["ILS", "NIS / ILS"],
+                ["USD", "USD"],
+                ["EUR", "EUR"],
+              ].map(([value, label]) => (
+                <button key={value}
+                        className={displayCurrency === value ? "active" : ""}
+                        aria-pressed={displayCurrency === value}
+                        onClick={() => setDraft("display_currency", value)}>
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
         </div>
@@ -236,7 +264,7 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [] }) {
             <input type="url" value={publicBase}
                    onChange={(e) => setDraft("public_base_url", e.target.value)}/>
             <span className="muted mono" style={{fontSize: 11.5}}>
-              shortlinks resolve to <code>go.oklabs.uk/&lt;slug&gt;</code> → <code>{publicBase}/transcripts/142</code>
+              Share links are minted from <code>public_base_url</code>; production uses <code>https://scribe.oklabs.uk/share/&lt;token&gt;</code>.
             </span>
           </div>
         </div>
@@ -425,6 +453,7 @@ function configPayload(values) {
     webhook_default: values.webhook_default ?? "",
     webhook_embed_transcript: Boolean(values.webhook_embed_transcript),
     public_base_url: values.public_base_url ?? "",
+    display_currency: normalizeDisplayCurrency(values.display_currency),
   };
 }
 

@@ -210,6 +210,22 @@ def test_settings_appearance_is_the_only_variant_control_surface() -> None:
     assert ".tweaks-panel" not in source
 
 
+def test_production_spa_polish_source_guards() -> None:
+    source = production_sources()
+    settings = read("design-app/settings.jsx")
+    transcript = read("design-app/transcript-detail.jsx")
+
+    assert "go.oklabs.uk" not in source
+    assert "Transcript excerpt" not in transcript
+    assert "<span>Transcript</span>" in transcript
+    assert "display_currency" in settings
+    assert "NIS / ILS" in settings
+    assert "USD" in settings
+    assert "EUR" in settings
+    assert "public_base_url" in settings
+    assert "/share/&lt;token&gt;" in settings
+
+
 def test_core_route_wiring_uses_real_backend_actions_where_present() -> None:
     transcript = read("design-app/transcript-detail.jsx")
     command = read("design-app/command-palette.jsx")

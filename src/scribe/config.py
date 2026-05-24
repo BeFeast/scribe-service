@@ -98,8 +98,8 @@ def parse_runtime_config_value(key: str, value: Any) -> bool | float | int | str
             raise ValueError(f"{key} must be one of: v1, v2, v3")
         return value
     if spec.kind == "display_currency":
-        if not isinstance(value, str) or value.strip().upper() not in {"USD", "EUR", "ILS", "GBP"}:
-            raise ValueError(f"{key} must be one of: USD, EUR, ILS, GBP")
+        if not isinstance(value, str) or value.strip().upper() not in {"ILS", "USD", "EUR"}:
+            raise ValueError(f"{key} must be one of: ILS, USD, EUR")
         return value.strip().upper()
     if spec.kind == "short_description_language":
         if not isinstance(value, str) or value.strip().lower() not in {"ru", "en"}:
@@ -210,7 +210,7 @@ class Settings(BaseSettings):
     webhook_default: str = ""
     webhook_embed_transcript: bool = False
     prompt_template_active_version: str = "v1"
-    display_currency: str = "USD"
+    display_currency: str = "ILS"
     short_description_language: str = "ru"
     default_owner_email: str = ""
     default_owner_subject: str = ""

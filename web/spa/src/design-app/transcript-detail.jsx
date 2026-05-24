@@ -2,8 +2,8 @@
 import React from "react";
 import { useAuth } from "../hooks/useAuth";
 import { IconAlert, IconArrow, IconCheck, IconClock, IconCopy, IconDownload, IconExternal, IconLink, IconRSS, IconRefresh, IconSparkle, IconWave, IconX } from "./icons.jsx";
-import { CURRENT_TRANSCRIPT, CURRENT_TRANSCRIPT_STATE, TRANSCRIPTS, fmtDuration, fmtRelative, fmtUsd } from "./data.js";
-// Transcript detail — title, meta, summary (rendered from MD), transcript excerpt.
+import { CURRENT_TRANSCRIPT, CURRENT_TRANSCRIPT_STATE, TRANSCRIPTS, fmtDuration, fmtRelative, fmtUsd, publicBaseUrl } from "./data.js";
+// Transcript detail — title, meta, summary (rendered from MD), transcript body.
 
 export function TranscriptDetail({ id, navigate, onRefresh }) {
   const auth = useAuth();
@@ -167,7 +167,7 @@ export function TranscriptDetail({ id, navigate, onRefresh }) {
       )}
 
       <div className="section-label">
-        <span>Transcript excerpt</span>
+        <span>Transcript</span>
         <div className="row" style={{gap: 6}}>
           <span className="mono muted" style={{fontSize: 11}}>
             ~{Math.round((t.duration_seconds || 1) / 60)} min · {t.lang}
@@ -226,9 +226,10 @@ function ShareSheet({ t, onClose, copy, copyFromEndpoint, download, auth, copied
   const ref = React.useRef(null);
   const [visibility, setVisibility] = React.useState("public");
   const [shareUrl, setShareUrl] = React.useState(null);
-  const fullUrl = `scribe.oklabs.uk/transcripts/${t.id}`;
-  const shortlink = (t.summary_shortlink || `go.oklabs.uk/${t.id}s`).replace(/^https?:\/\//, "");
-  const displayShareUrl = splitShareUrl(shareUrl, shortlink);
+  const baseUrl = normalizedPublicBaseUrl();
+  const fullUrl = `${baseUrl}/transcripts/${t.id}`;
+  const fallbackShareUrl = `${baseUrl}/share/...`;
+  const displayShareUrl = splitShareUrl(shareUrl || fallbackShareUrl);
 
   React.useEffect(() => {
     function onDoc(e) {
@@ -260,7 +261,7 @@ function ShareSheet({ t, onClose, copy, copyFromEndpoint, download, auth, copied
       });
       if (!response.ok) throw new Error("HTTP " + response.status);
       const body = await response.json();
-      const url = body.share_url || ("https://" + shortlink);
+      const url = body.share_url || (body.token ? `${baseUrl}/share/${body.token}` : fallbackShareUrl);
       setShareUrl(url);
       copy(url, "sl");
     } catch (error) {
@@ -372,13 +373,11 @@ function ShareSheet({ t, onClose, copy, copyFromEndpoint, download, auth, copied
   );
 }
 
-function splitShareUrl(shareUrl, fallbackShortlink) {
-  if (!shareUrl) {
-    return {
-      scheme: "go.oklabs.uk/",
-      path: fallbackShortlink.replace(/^go\.oklabs\.uk\//, ""),
-    };
-  }
+function normalizedPublicBaseUrl() {
+  return publicBaseUrl().replace(/\/+$/, "");
+}
+
+function splitShareUrl(shareUrl) {
   try {
     const url = new URL(shareUrl);
     const pathname = url.pathname === "/" ? "" : url.pathname.replace(/^\//, "");

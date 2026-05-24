@@ -48,6 +48,7 @@ function ScribeApp() {
 			error: runtime.currentJob.error,
 		},
 		currentJobLog: runtime.currentJobLog,
+		config: runtime.config,
 	});
 
 	const setTweak = React.useCallback(
@@ -139,7 +140,14 @@ function ScribeApp() {
 			);
 			break;
 		case "settings":
-			page = <SettingsPage t={t} setTweak={setTweak} users={runtime.users} />;
+			page = (
+				<SettingsPage
+					t={t}
+					setTweak={setTweak}
+					users={runtime.users}
+					onConfigSaved={runtime.applyConfig}
+				/>
+			);
 			break;
 		default:
 			page = (

@@ -1,19 +1,20 @@
 import React from "react";
-import { adaptFailure, adaptJob, adaptLibraryRow, adaptOps, adaptTranscript, adaptUsers } from "./adapters.js";
+import { adaptConfig, adaptFailure, adaptJob, adaptLibraryRow, adaptOps, adaptTranscript, adaptUsers } from "./adapters.js";
 
 export function useScribeRuntime(auth, route) {
-	const [core, setCore] = React.useState({ loading: true, error: null, transcripts: [], activeJobs: [], failures: [], stats: adaptOps(null), spendSeries: [], users: [] });
+	const [core, setCore] = React.useState({ loading: true, error: null, transcripts: [], activeJobs: [], failures: [], stats: adaptOps(null), spendSeries: [], users: [], config: adaptConfig(null) });
 	const [currentTranscript, setCurrentTranscript] = React.useState({ loading: false, error: null, value: null });
 	const [currentJob, setCurrentJob] = React.useState({ loading: false, error: null, value: null });
 	const [currentJobLog, setCurrentJobLog] = React.useState({ connected: false, error: null, lines: [] });
 
 	const refreshCore = React.useCallback(async (signal) => {
 		try {
-			const [library, jobs, failures, ops] = await Promise.all([
+			const [library, jobs, failures, ops, config] = await Promise.all([
 				fetchJson(auth, "/api/library?limit=100", signal),
 				fetchJson(auth, "/api/jobs/active", signal),
 				fetchJson(auth, "/api/jobs/recent-failures?limit=12", signal).catch(() => ({ jobs: [] })),
 				fetchJson(auth, "/api/ops", signal).catch(() => null),
+				fetchJson(auth, "/api/config", signal).catch(() => null),
 			]);
 			const stats = adaptOps(ops);
 			setCore((previous) => ({
@@ -25,6 +26,7 @@ export function useScribeRuntime(auth, route) {
 				failures: (failures?.jobs ?? ops?.recent_failures ?? []).map(adaptFailure),
 				stats,
 				spendSeries: ops?.spend_series_14d ?? [],
+				config: adaptConfig(config?.config),
 			}));
 		} catch (error) {
 			if (!signal?.aborted) {
@@ -169,6 +171,9 @@ export function useScribeRuntime(auth, route) {
 			if (!signal?.aborted) setCurrentJob({ loading: false, error: null, value: job });
 			await refreshCore(new AbortController().signal);
 			return job;
+		},
+		applyConfig: (config) => {
+			setCore((previous) => ({ ...previous, config: adaptConfig(config) }));
 		},
 	};
 }
