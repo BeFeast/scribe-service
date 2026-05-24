@@ -2,6 +2,14 @@ import React from "react";
 
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PrivateShareLinks } from "../components/PrivateShareLinks";
+import {
+	IconCards,
+	IconFeed,
+	IconPlus,
+	IconSearch,
+	IconTable,
+} from "../components/ShellIcons";
+import { CMDK_OPEN_EVENT } from "../constants";
 import { useAuth } from "../hooks/useAuth";
 import { usePoll } from "../hooks/usePoll";
 import {
@@ -64,18 +72,12 @@ type ActiveJobsResponse = {
 	jobs: ActiveJob[];
 };
 
-type JobView = {
-	job_id: number;
-	video_id: string;
-	status: string;
-	deduplicated?: boolean;
-};
-
 type LibraryProps = {
 	layout: LibraryLayout;
 	displayCurrency: DisplayCurrency;
 	route: Route;
 	navigate: (route: Route) => void;
+	setLibraryLayout: (layout: LibraryLayout) => void;
 };
 
 const terminalStatuses = new Set(["done", "failed", "cancelled", "canceled"]);
@@ -156,18 +158,6 @@ async function readErrorMessage(response: Response): Promise<string> {
 	return `HTTP ${response.status} ${response.statusText}`.trim();
 }
 
-function submitErrorMessage(status: number, body: unknown): string {
-	if (
-		typeof body === "object" &&
-		body !== null &&
-		"detail" in body &&
-		typeof body.detail === "string"
-	) {
-		return body.detail;
-	}
-	return `Submit failed: ${status}`;
-}
-
 type LibraryError = { kind: "auth" } | { kind: "service"; message: string };
 
 export function Library({
@@ -175,17 +165,11 @@ export function Library({
 	displayCurrency,
 	route,
 	navigate,
+	setLibraryLayout,
 }: LibraryProps) {
 	const auth = useAuth();
 	const selectedTag = route.params.tag;
 	const [query, setQuery] = React.useState("");
-	const [submitUrl, setSubmitUrl] = React.useState("");
-	const [submitState, setSubmitState] = React.useState<
-		| { state: "idle" }
-		| { state: "submitting" }
-		| { state: "success"; job: JobView }
-		| { state: "error"; message: string }
-	>({ state: "idle" });
 	const [debouncedQuery, setDebouncedQuery] = React.useState("");
 	const [rows, setRows] = React.useState<LibraryRow[]>([]);
 	const [total, setTotal] = React.useState(0);
@@ -306,125 +290,92 @@ export function Library({
 		}
 	};
 	const authRequired = error?.kind === "auth";
-	const submitTrimmed = submitUrl.trim();
-	const canSubmitUrl =
-		submitTrimmed.length > 0 &&
-		submitState.state !== "submitting" &&
-		!authRequired;
-	const submitMessage =
-		submitState.state === "success"
-			? `Queued job #${submitState.job.job_id}`
-			: submitState.state === "error"
-				? submitState.message
-				: null;
-	const submitClass =
-		submitState.state === "error"
-			? "library-submit-status err-msg"
-			: "library-submit-status muted";
-	const submitJob = async (event: React.FormEvent<HTMLFormElement>) => {
-		event.preventDefault();
-		if (!canSubmitUrl) {
-			return;
-		}
-		setSubmitState({ state: "submitting" });
-		try {
-			const response = await auth.protectedFetch("/jobs", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ url: submitTrimmed, source: "manual" }),
-			});
-			const body = (await response.json()) as unknown;
-			if (!response.ok) {
-				setSubmitState({
-					state: "error",
-					message: submitErrorMessage(response.status, body),
-				});
-				return;
-			}
-			setSubmitUrl("");
-			setSubmitState({ state: "success", job: body as JobView });
-			retry();
-		} catch (submitError) {
-			setSubmitState({
-				state: "error",
-				message:
-					submitError instanceof Error ? submitError.message : "Submit failed",
-			});
-		}
-	};
+	const openCommandPalette = () =>
+		document.dispatchEvent(new CustomEvent(CMDK_OPEN_EVENT));
 
 	return (
-		<section className="library-page pane">
-			<header className="library-hero">
-				<div className="library-title">
-					<p className="section-label">Library</p>
-					<h1 className="pane-h1">Transcripts</h1>
-					<div className="library-meta">
-						<span className="chip info">{total} transcripts</span>
+		<section className="pane library-page">
+			<header className="pane-header">
+				<div>
+					<h1 className="pane-h1">Library</h1>
+					<div className="pane-sub">
+						{total} transcript{total === 1 ? "" : "s"}
 						{selectedTag !== undefined ? (
-							<a
-								className="chip"
-								href={routeToHref({ page: "library", params: {} })}
-								onClick={(event) =>
-									handleRouteAnchorClick(
-										event,
-										{ page: "library", params: {} },
-										navigate,
-									)
-								}
-							>
-								tag: {selectedTag}
-							</a>
+							<>
+								{" "}
+								/ tag <code className="active-filter-code">{selectedTag}</code>
+								<a
+									className="clear-filter-link"
+									href={routeToHref({ page: "library", params: {} })}
+									onClick={(event) =>
+										handleRouteAnchorClick(
+											event,
+											{ page: "library", params: {} },
+											navigate,
+										)
+									}
+								>
+									clear
+								</a>
+							</>
 						) : null}
 						{isLoading ? (
 							<span className="muted" aria-live="polite">
-								Loading rows...
+								{" "}
+								/ loading rows...
 							</span>
 						) : null}
 					</div>
 				</div>
-				<div className="library-actions">
-					<label className="library-search">
-						<span>Search</span>
-						<input
-							type="search"
-							value={query}
-							onChange={(event) => setQuery(event.currentTarget.value)}
-							placeholder="Title or summary"
-							disabled={authRequired}
-						/>
-					</label>
-					<form className="library-submit" onSubmit={submitJob}>
-						<label>
-							<span>Submit URL</span>
-							<input
-								type="url"
-								value={submitUrl}
-								onChange={(event) => {
-									setSubmitUrl(event.currentTarget.value);
-									if (submitState.state !== "idle") {
-										setSubmitState({ state: "idle" });
-									}
-								}}
-								placeholder="https://youtu.be/..."
-								disabled={authRequired}
-							/>
-						</label>
-						<button
-							type="submit"
-							className="btn primary"
-							disabled={!canSubmitUrl}
-						>
-							{submitState.state === "submitting" ? "Submitting" : "Submit"}
-						</button>
-						{submitMessage !== null ? (
-							<p className={submitClass}>{submitMessage}</p>
-						) : null}
-					</form>
+				<div className="pane-actions">
+					<button
+						type="button"
+						className="btn primary"
+						onClick={openCommandPalette}
+						disabled={authRequired}
+					>
+						<IconPlus size={14} /> Submit URL
+					</button>
 				</div>
 			</header>
 
 			<InFlightStrip navigate={navigate} />
+
+			<div className="lib-toolbar">
+				<label className="search">
+					<IconSearch size={14} />
+					<input
+						type="search"
+						value={query}
+						onChange={(event) => setQuery(event.currentTarget.value)}
+						placeholder="Search titles + transcripts..."
+						disabled={authRequired}
+					/>
+				</label>
+				<div className="seg" role="tablist" aria-label="Layout">
+					<LayoutButton
+						label="Table layout"
+						active={layout === "table"}
+						onClick={() => setLibraryLayout("table")}
+					>
+						<IconTable size={14} />
+					</LayoutButton>
+					<LayoutButton
+						label="Feed layout"
+						active={layout === "feed"}
+						onClick={() => setLibraryLayout("feed")}
+					>
+						<IconFeed size={14} />
+					</LayoutButton>
+					<LayoutButton
+						label="Cards layout"
+						active={layout === "cards"}
+						onClick={() => setLibraryLayout("cards")}
+					>
+						<IconCards size={14} />
+					</LayoutButton>
+				</div>
+			</div>
 
 			{error?.kind === "auth" ? (
 				<div
@@ -531,8 +482,6 @@ export function Library({
 							rows={rows}
 							displayCurrency={displayCurrency}
 							navigate={navigate}
-							onDelete={requestDeleteTranscript}
-							deleteBusyId={deleteBusyId}
 						/>
 					) : null}
 					{layout === "cards" ? (
@@ -606,9 +555,22 @@ function InFlightStrip({ navigate }: { navigate: (route: Route) => void }) {
 				<span className="live-dot" aria-hidden="true" />
 				<strong>In flight</strong>
 				<span className="muted">
-					{jobs.length} job{jobs.length === 1 ? "" : "s"}
+					/ {jobs.length} job{jobs.length === 1 ? "" : "s"}
 				</span>
 				{error ? <span className="chip warn">poll delayed</span> : null}
+				<div className="spacer" />
+				<a
+					href={routeToHref({ page: "queue", params: {} })}
+					onClick={(event) =>
+						handleRouteAnchorClick(
+							event,
+							{ page: "queue", params: {} },
+							navigate,
+						)
+					}
+				>
+					open queue -
+				</a>
 			</div>
 			{jobs.map((job) => (
 				<InFlightRow key={job.id} job={job} navigate={navigate} />
@@ -651,15 +613,40 @@ function InFlightRow({
 		>
 			<span className="inflight-copy">
 				<strong>{job.title ?? job.source_label ?? job.video_id}</strong>
-				<span>
+				<span className="mono">
 					job {job.id} / {activeStage} / {formatElapsed(job.elapsed_s)}
 				</span>
 			</span>
 			<span className="bar-track" aria-label={`${activeStage} progress`}>
 				<span style={{ width: `${progress}%` }} />
 			</span>
-			<span className="chip run">{job.status}</span>
+			<span className="mono muted">{job.status}</span>
 		</a>
+	);
+}
+
+function LayoutButton({
+	label,
+	active,
+	onClick,
+	children,
+}: {
+	label: string;
+	active: boolean;
+	onClick: () => void;
+	children: React.ReactNode;
+}) {
+	return (
+		<button
+			type="button"
+			className={active ? "active" : ""}
+			role="tab"
+			aria-selected={active}
+			title={label}
+			onClick={onClick}
+		>
+			{children}
+		</button>
 	);
 }
 
@@ -679,24 +666,21 @@ function LibTable({
 	return (
 		<div className="table-wrap">
 			<table className="lib-table">
-				<colgroup>
-					<col className="lib-table-title-col" />
-					<col className="lib-table-tags-col" />
-					<col className="lib-table-meta-col" />
-					<col className="lib-table-created-col" />
-				</colgroup>
 				<thead>
 					<tr>
+						<th className="col-num">#</th>
 						<th>Title</th>
-						<th>Tags</th>
-						<th>Meta</th>
-						<th>Created</th>
+						<th className="col-tags">Tags</th>
+						<th className="col-len">Length</th>
+						<th className="col-time">Created</th>
+						<th className="col-actions">Actions</th>
 					</tr>
 				</thead>
 				<tbody>
 					{rows.map((row) => (
 						<tr key={row.id}>
-							<td>
+							<td className="col-num">{row.id}</td>
+							<td className="col-title">
 								<a
 									className="link-button table-title"
 									href={routeToHref({
@@ -713,27 +697,29 @@ function LibTable({
 								>
 									{row.title}
 								</a>
-								<p className="feed-excerpt">{row.summary_excerpt}</p>
 								{row.is_partial ? (
 									<span className="chip warn">partial</span>
 								) : null}
+							</td>
+							<td className="col-tags">
+								<TagList row={row} navigate={navigate} />
+							</td>
+							<td className="col-meta col-len">
+								{formatDuration(row.duration_seconds)}
+							</td>
+							<td className="col-meta col-time">
+								{formatDate(row.created_at)}
+							</td>
+							<td className="col-actions">
 								<RowLinks
 									row={row}
 									onDelete={onDelete}
 									busy={deleteBusyId === row.id}
 								/>
+								<span className="sr-only">
+									{formatUsdCost(row.vast_cost, displayCurrency)}
+								</span>
 							</td>
-							<td>
-								<TagList row={row} navigate={navigate} />
-							</td>
-							<td className="muted">
-								<div className="table-meta-stack">
-									<span>{formatDuration(row.duration_seconds)}</span>
-									<span>{row.lang ?? "lang n/a"}</span>
-									<span>{formatUsdCost(row.vast_cost, displayCurrency)}</span>
-								</div>
-							</td>
-							<td className="tnum">{formatDate(row.created_at)}</td>
 						</tr>
 					))}
 				</tbody>
@@ -746,53 +732,52 @@ function LibFeed({
 	rows,
 	displayCurrency,
 	navigate,
-	onDelete,
-	deleteBusyId,
 }: {
 	rows: LibraryRow[];
 	displayCurrency: DisplayCurrency;
 	navigate: (route: Route) => void;
-	onDelete: (row: LibraryRow) => void;
-	deleteBusyId: number | null;
 }) {
 	return (
 		<div className="lib-feed">
 			{rows.map((row) => (
-				<article className="feed-item library-feed-row" key={row.id}>
+				<article className="feed-item" key={row.id}>
 					<div className="feed-num">#{row.id}</div>
 					<div className="feed-body">
-						<div className="feed-meta-top detail-meta">
+						<div className="feed-meta-top">
 							<span className="tnum">{formatDate(row.created_at)}</span>
+							<span className="sep">/</span>
 							<span>{formatDuration(row.duration_seconds)}</span>
+							<span className="sep">/</span>
 							<span>{row.lang ?? "lang n/a"}</span>
+							<span className="sep">/</span>
 							<span>{formatUsdCost(row.vast_cost, displayCurrency)}</span>
 							{row.is_partial ? (
-								<span className="chip warn">partial</span>
+								<>
+									<span className="sep">/</span>
+									<span className="chip warn">partial</span>
+								</>
 							) : null}
 						</div>
-						<a
-							className="link-button feed-title"
-							href={routeToHref({
-								page: "transcript",
-								params: { id: row.id },
-							})}
-							onClick={(event) =>
-								handleRouteAnchorClick(
-									event,
-									{ page: "transcript", params: { id: row.id } },
-									navigate,
-								)
-							}
-						>
-							{row.title}
-						</a>
+						<h2 className="feed-title">
+							<a
+								className="link-button"
+								href={routeToHref({
+									page: "transcript",
+									params: { id: row.id },
+								})}
+								onClick={(event) =>
+									handleRouteAnchorClick(
+										event,
+										{ page: "transcript", params: { id: row.id } },
+										navigate,
+									)
+								}
+							>
+								{row.title}
+							</a>
+						</h2>
 						<p className="feed-excerpt">{row.summary_excerpt}</p>
 						<TagList row={row} navigate={navigate} />
-						<RowLinks
-							row={row}
-							onDelete={onDelete}
-							busy={deleteBusyId === row.id}
-						/>
 					</div>
 				</article>
 			))}
@@ -816,36 +801,45 @@ function LibCards({
 	return (
 		<div className="lib-cards">
 			{rows.map((row) => (
-				<article className="card lib-card" key={row.id}>
-					<div className="card-meta-top detail-meta">
+				<article className="card" key={row.id}>
+					<div className="card-meta-top">
 						<span>#{row.id}</span>
+						<span className="sep">/</span>
 						<span>{formatDate(row.created_at)}</span>
+						<span className="sep">/</span>
+						<span>{formatDuration(row.duration_seconds)}</span>
 						{row.is_partial ? <span className="chip warn">partial</span> : null}
 					</div>
-					<a
-						className="link-button feed-title"
-						href={routeToHref({
-							page: "transcript",
-							params: { id: row.id },
-						})}
-						onClick={(event) =>
-							handleRouteAnchorClick(
-								event,
-								{ page: "transcript", params: { id: row.id } },
-								navigate,
-							)
-						}
-					>
-						{row.title}
-					</a>
-					<p className="feed-excerpt">{row.summary_excerpt}</p>
-					<TagList row={row} navigate={navigate} />
-					<RowMeta row={row} displayCurrency={displayCurrency} />
-					<RowLinks
-						row={row}
-						onDelete={onDelete}
-						busy={deleteBusyId === row.id}
-					/>
+					<h3 className="card-title">
+						<a
+							className="link-button"
+							href={routeToHref({
+								page: "transcript",
+								params: { id: row.id },
+							})}
+							onClick={(event) =>
+								handleRouteAnchorClick(
+									event,
+									{ page: "transcript", params: { id: row.id } },
+									navigate,
+								)
+							}
+						>
+							{row.title}
+						</a>
+					</h3>
+					<p className="card-excerpt">{row.summary_excerpt}</p>
+					<div className="card-foot">
+						<TagList row={row} navigate={navigate} />
+					</div>
+					<div className="card-actions">
+						<RowMeta row={row} displayCurrency={displayCurrency} />
+						<RowLinks
+							row={row}
+							onDelete={onDelete}
+							busy={deleteBusyId === row.id}
+						/>
+					</div>
 				</article>
 			))}
 		</div>
@@ -863,7 +857,7 @@ function TagList({
 		return <span className="muted">untagged</span>;
 	}
 	return (
-		<div className="detail-tags">
+		<div className="feed-tags">
 			{row.tags.map((tag) => {
 				const tagRoute: Route = { page: "library", params: { tag } };
 				return (

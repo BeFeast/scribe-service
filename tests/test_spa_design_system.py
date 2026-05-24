@@ -204,26 +204,23 @@ def test_source_css_gzip_size_budget() -> None:
     assert len(gzip.compress(css)) <= 30_000
 
 
-def test_library_submit_status_does_not_shift_toolbar_row() -> None:
-    """Regression for #121: the queued/error status must keep the Submit
-    URL input aligned with the Search input, while still reserving
-    in-flow vertical space so wrapped messages do not overlap the next
-    row."""
+def test_library_toolbar_uses_design_source_structure() -> None:
+    """The Library route must keep the design toolbar instead of the old
+    split Search / Submit URL page-header form."""
     css = STYLES.read_text(encoding="utf-8")
 
-    # Top-aligning the actions grid keeps both cells' input baselines
-    # locked to the same Y regardless of whether the status row exists.
-    start = css.index(".library-actions {")
+    start = css.index(".lib-toolbar {")
     block = css[start : css.index("}", start)]
-    assert "align-items: start" in block
+    assert "display: flex" in block
+    assert "justify-content: space-between" in block
 
-    # Status must remain in normal flow (spanning the form's columns)
-    # so wrapping messages reserve their own vertical space rather
-    # than overlapping subsequent rows.
-    start = css.index(".library-submit-status {")
+    start = css.index(".lib-toolbar .search {")
     block = css[start : css.index("}", start)]
-    assert "grid-column: 1 / -1" in block
-    assert "position: absolute" not in block
+    assert "position: relative" in block
+    assert "min-width: 0" in block
+
+    assert ".library-actions {" not in css
+    assert ".library-submit {" not in css
 
 
 def test_live_visual_qa_script_covers_required_routes_and_responsive_viewports() -> None:
@@ -268,8 +265,8 @@ def test_responsive_shell_and_route_surfaces_prevent_viewport_overflow() -> None
     for selector in (
         ".content-pane",
         ".library-results",
-        ".library-search",
-        ".library-submit label",
+        ".main",
+        ".lib-toolbar .search",
         ".inflight-copy",
         ".cmdk-submit .label",
         ".cmdk-result-body",
@@ -283,9 +280,10 @@ def test_responsive_shell_and_route_surfaces_prevent_viewport_overflow() -> None
     narrow = css[css.index("@media (max-width: 820px)") :]
     assert ".shell-body" in narrow
     assert "grid-template-columns: 1fr" in narrow
+    assert ".app" in narrow
     assert ".sidebar" in narrow
     assert "position: static" in narrow
-    assert ".library-actions" in narrow
+    assert ".lib-toolbar" in narrow
 
     mobile = css[css.index("@media (max-width: 560px)") :]
     assert ".topbar-access" in mobile

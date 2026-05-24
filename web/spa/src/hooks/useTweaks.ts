@@ -1,8 +1,8 @@
 import React from "react";
 
-export type ScribeVariant = "field";
-export type ScribeTheme = "light";
-export type ScribeDensity = "compact";
+export type ScribeVariant = "paper" | "terminal" | "console" | "field";
+export type ScribeTheme = "light" | "dark";
+export type ScribeDensity = "compact" | "cozy" | "comfy";
 export type LibraryLayout = "feed" | "table" | "cards";
 
 export type Tweaks = {
@@ -23,9 +23,14 @@ export const DEFAULT_TWEAKS: Tweaks = {
 
 type TweakAction = { type: "replace"; value: Tweaks };
 
-const variants = new Set<ScribeVariant>(["field"]);
-const themes = new Set<ScribeTheme>(["light"]);
-const densities = new Set<ScribeDensity>(["compact"]);
+const variants = new Set<ScribeVariant>([
+	"paper",
+	"terminal",
+	"console",
+	"field",
+]);
+const themes = new Set<ScribeTheme>(["light", "dark"]);
+const densities = new Set<ScribeDensity>(["compact", "cozy", "comfy"]);
 const libraryLayouts = new Set<LibraryLayout>(["feed", "table", "cards"]);
 
 function readStoredTweaks(): Tweaks {
