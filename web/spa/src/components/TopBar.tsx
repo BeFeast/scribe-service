@@ -17,7 +17,7 @@ export function TopBar({ route }: TopBarProps) {
 	const screenLabel = routeLabel(route);
 
 	return (
-		<div className="topbar">
+		<header className="topbar">
 			<a className="brand" href="#/library" aria-label="Scribe library">
 				<span className="brand-mark" aria-hidden="true">
 					<svg
@@ -100,6 +100,6 @@ export function TopBar({ route }: TopBarProps) {
 			>
 				<IconRSS size={16} />
 			</a>
-		</div>
+		</header>
 	);
 }

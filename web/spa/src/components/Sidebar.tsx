@@ -332,7 +332,11 @@ function SidebarPanel({
 	}
 	if (status === "loading") {
 		return (
-			<p className="loading-state sidebar-state" data-state="loading">
+			<p
+				className="loading-state sidebar-state"
+				data-state="loading"
+				aria-busy="true"
+			>
 				<span className="spinner" />
 				Loading...
 			</p>

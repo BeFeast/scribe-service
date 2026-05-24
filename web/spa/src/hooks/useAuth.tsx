@@ -342,7 +342,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 				? "Signed in"
 				: clerkConfigured
 					? "Sign in required"
-					: "Unauthorized";
+					: "Read-only";
 
 	const startRedirect = React.useCallback(
 		async (mode: "sign-in" | "sign-up") => {
