@@ -205,11 +205,13 @@ function StatusBars({ stats }: { stats: Record<string, number> }) {
 function SystemRow({ item }: { item: SystemSnapshot }) {
 	const tone =
 		item.status === "ok" ? "ok" : item.status === "warn" ? "warn" : "err";
+	const glyph = item.status === "ok" ? "●" : item.status === "warn" ? "◐" : "○";
 	return (
 		<div className="ops-system-row">
-			<span className={`status-glyph ${tone}`}>
-				{item.status === "ok" ? "●" : "○"}
+			<span className={`status-glyph ${tone}`} aria-hidden="true">
+				{glyph}
 			</span>
+			<span className={`ops-system-status ${tone}`}>{item.status}</span>
 			<span className="muted">{item.label}</span>
 			<div className="spacer" />
 			<span className="ops-system-value">{item.value}</span>
@@ -289,10 +291,10 @@ export function Ops({ displayCurrency, navigate }: OpsProps) {
 			: 0;
 	const spendCls = spendPct > 0.85 ? "err" : spendPct > 0.6 ? "warn" : "";
 	const failures = snapshot?.recent_failures ?? [];
-	const failuresToday = failures.filter((failure) => {
-		const failedAt = new Date(failure.updated_at).getTime();
-		return Number.isFinite(failedAt) && Date.now() - failedAt < 86400000;
-	}).length;
+	const failureSummary =
+		failures.length >= 50
+			? `showing ${compactNumber(failures.length)} most recent (capped)`
+			: `showing ${compactNumber(failures.length)} most recent`;
 
 	return (
 		<section className="pane ops-page">
@@ -431,13 +433,8 @@ export function Ops({ displayCurrency, navigate }: OpsProps) {
 					</div>
 
 					<div className="section-label split ops-section-label">
-						<span>Recent failures · 7d</span>
-						<span className="mono muted">
-							{compactNumber(failures.length)} failed · last 24h:{" "}
-							<span className="err-text tnum">
-								{compactNumber(failuresToday)}
-							</span>
-						</span>
+						<span>Recent failures</span>
+						<span className="mono muted">{failureSummary}</span>
 					</div>
 					{failures.length === 0 ? (
 						<div className="empty-queue">

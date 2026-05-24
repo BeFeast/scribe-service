@@ -28,7 +28,7 @@ type ActiveJobsResponse = {
 type OpsResponse = {
 	vast_spend_24h?: number;
 	daily_spend_cap_usd?: number;
-	recent_failures?: Array<{ updated_at?: string }>;
+	recent_failures?: unknown[];
 	worker_pool?: {
 		active?: number;
 		total?: number;
@@ -50,7 +50,7 @@ type SidebarData = {
 	libraryTotal: number;
 	tags: TagCount[];
 	queueCount: number;
-	failuresToday: number;
+	recentFailures: number;
 	pipeline: PipelineStats;
 };
 
@@ -80,18 +80,6 @@ function tagCountsFromLibrary(body: LibraryResponse): TagCount[] {
 		.slice(0, 8);
 }
 
-function isToday(value: string | undefined): boolean {
-	if (value === undefined) {
-		return false;
-	}
-	const date = new Date(value);
-	if (Number.isNaN(date.getTime())) {
-		return false;
-	}
-	const now = new Date();
-	return date.toDateString() === now.toDateString();
-}
-
 function sidebarDataFromResponses(
 	library: LibraryResponse,
 	activeJobs: ActiveJobsResponse,
@@ -103,8 +91,7 @@ function sidebarDataFromResponses(
 		libraryTotal: library.total ?? library.rows?.length ?? 0,
 		tags: tagCountsFromLibrary(library),
 		queueCount: activeJobs.jobs?.length ?? 0,
-		failuresToday:
-			ops.recent_failures?.filter((row) => isToday(row.updated_at)).length ?? 0,
+		recentFailures: ops.recent_failures?.length ?? 0,
 		pipeline: {
 			workers: `${active}/${total}`,
 			vastSpend24h: ops.vast_spend_24h ?? 0,
@@ -285,8 +272,8 @@ function NavCount({
 			</span>
 		);
 	}
-	if (page === "ops" && (data?.failuresToday ?? 0) > 0) {
-		return <span className="count count-err">{data?.failuresToday}!</span>;
+	if (page === "ops" && (data?.recentFailures ?? 0) > 0) {
+		return <span className="count count-err">!</span>;
 	}
 	return <span className="count" aria-hidden="true" />;
 }

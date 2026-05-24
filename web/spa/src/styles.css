@@ -1861,6 +1861,25 @@ a {
 	background: var(--bg-card);
 }
 
+.ops-system-status {
+	min-width: 2rem;
+	font-size: 0.68rem;
+	font-weight: 700;
+	text-transform: uppercase;
+}
+
+.ops-system-status.ok {
+	color: var(--ok);
+}
+
+.ops-system-status.warn {
+	color: var(--warn);
+}
+
+.ops-system-status.err {
+	color: var(--err);
+}
+
 .ops-system-value {
 	overflow-wrap: anywhere;
 	color: var(--fg-soft);
