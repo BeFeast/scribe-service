@@ -116,7 +116,7 @@ function formatDuration(seconds: number | null): string {
 
 function formatElapsed(seconds: number): string {
 	const minutes = Math.floor(seconds / 60);
-	const rest = seconds % 60;
+	const rest = Math.floor(seconds % 60);
 	return minutes > 0 ? `${minutes}m ${rest}s` : `${rest}s`;
 }
 
