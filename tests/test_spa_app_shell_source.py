@@ -261,6 +261,48 @@ def test_core_route_wiring_uses_real_backend_actions_where_present() -> None:
     assert "STATS.system" in read("design-app/ops.jsx")
 
 
+def test_transcript_summary_frontmatter_renders_as_properties_panel() -> None:
+    transcript = read("design-app/transcript-detail.jsx")
+    styles = read("styles.css")
+
+    assert "function splitFrontmatter" in transcript
+    assert "function SummaryBody" in transcript
+    assert "function PropertiesPanel" in transcript
+    assert '<SummaryBody src={t.summary_md}' in transcript
+    assert '<Markdown src={summary.body}/>' in transcript
+    assert '<Markdown src={t.summary_md}/>' not in transcript
+    assert "className={open ? \"fm-panel\" : \"fm-panel collapsed\"}" in transcript
+    assert 'aria-label="Summary properties"' in transcript
+    assert 'navigate("library", { tag: value.target })' in transcript
+    assert 'navigate("library", { tag: stripHash(item) })' in transcript
+
+    for marker in (
+        ".fm-panel",
+        ".fm-header",
+        ".fm-row",
+        ".fm-pill",
+        ".fm-link",
+        ".fm-tag",
+        ".fm-copy",
+        ".body-dimmed",
+    ):
+        assert marker in styles
+
+
+def test_transcript_summary_copy_still_uses_full_markdown() -> None:
+    transcript = read("design-app/transcript-detail.jsx")
+
+    assert (
+        'copyFromEndpoint("/transcripts/" + t.id + "/summary.md", "all", t.summary_md)'
+        in transcript
+    )
+    assert (
+        'copyFromEndpoint("/transcripts/" + t.id + "/summary.md", "summary", t.summary_md || "")'
+        in transcript
+    )
+    assert 'const path = "/transcripts/" + t.id + "/" + kind + ".md"' in transcript
+
+
 def test_production_sources_do_not_use_browser_native_dialogs_or_old_globals() -> None:
     source = production_sources()
     forbidden_dialog = re.compile(r"\b(?:window\.)?(alert|confirm|prompt)\s*\(")

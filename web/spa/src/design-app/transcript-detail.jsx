@@ -5,6 +5,24 @@ import { IconAlert, IconArrow, IconCheck, IconClock, IconCopy, IconDownload, Ico
 import { CURRENT_TRANSCRIPT, CURRENT_TRANSCRIPT_STATE, TRANSCRIPTS, fmtDuration, fmtRelative, fmtUsd, publicBaseUrl } from "./data.js";
 // Transcript detail — title, meta, summary (rendered from MD), transcript body.
 
+const LANG_LABELS = {
+  ar: "Arabic",
+  de: "German",
+  en: "English",
+  es: "Spanish",
+  fr: "French",
+  he: "Hebrew",
+  it: "Italian",
+  ja: "Japanese",
+  ko: "Korean",
+  pl: "Polish",
+  pt: "Portuguese",
+  ru: "Russian",
+  tr: "Turkish",
+  uk: "Ukrainian",
+  zh: "Chinese",
+};
+
 export function TranscriptDetail({ id, navigate, onRefresh }) {
   const auth = useAuth();
   const t = CURRENT_TRANSCRIPT || TRANSCRIPTS.find((r) => r.id === id);
@@ -162,7 +180,7 @@ export function TranscriptDetail({ id, navigate, onRefresh }) {
               </button>
             </div>
           </div>
-          <div className="prose"><Markdown src={t.summary_md}/></div>
+          <SummaryBody src={t.summary_md} dimmed={regenerating} navigate={navigate}/>
         </>
       )}
 
@@ -428,6 +446,202 @@ function Markdown({ src }) {
   const parts = React.useMemo(() => parseMd(src), [src]);
   return <>{parts}</>;
 }
+function SummaryBody({ src, dimmed, navigate }) {
+  const summary = React.useMemo(() => splitFrontmatter(src), [src]);
+
+  return (
+    <div className={dimmed ? "body-dimmed" : undefined}>
+      {summary.props && <PropertiesPanel props={summary.props} navigate={navigate}/>}
+      <div className="prose"><Markdown src={summary.body}/></div>
+    </div>
+  );
+}
+
+function splitFrontmatter(src) {
+  if (!src || !src.startsWith("---")) return { props: null, body: src || "" };
+  const end = src.indexOf("\n---", 3);
+  if (end === -1) return { props: null, body: src };
+  const yaml = src.slice(3, end).replace(/^\n+/, "");
+  const body = src.slice(end + 4).replace(/^\n+/, "");
+  const props = parseFrontmatter(yaml);
+  return { props: props.length ? props : null, body };
+}
+
+function parseFrontmatter(yaml) {
+  const props = [];
+  const lines = yaml.replace(/\r\n/g, "\n").split("\n");
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index] || "";
+    const match = /^([A-Za-z0-9_-]+)\s*:\s*(.*)$/.exec(line);
+    if (!match) {
+      index += 1;
+      continue;
+    }
+    const key = match[1];
+    let raw = match[2].trim();
+    if (raw.startsWith('"') && !closedDoubleQuote(raw)) {
+      index += 1;
+      while (index < lines.length && !closedDoubleQuote(raw)) {
+        raw = `${raw} ${(lines[index] || "").trim()}`;
+        index += 1;
+      }
+    } else {
+      index += 1;
+    }
+    props.push({ key, raw, value: parseFrontmatterValue(raw) });
+  }
+  return props;
+}
+
+function closedDoubleQuote(value) {
+  return !value.startsWith('"') || (value.length > 1 && value.endsWith('"'));
+}
+
+function parseFrontmatterValue(raw) {
+  if (!raw) return "";
+  const unquoted = unwrapYamlString(raw);
+  const wiki = /^\[\[([^\]]+)\]\]$/.exec(unquoted);
+  if (wiki) return { kind: "wikilink", target: wiki[1] };
+  if (raw.startsWith("[") && raw.endsWith("]")) {
+    return {
+      kind: "list",
+      items: raw.slice(1, -1).split(",").map((item) => unwrapYamlString(item.trim())).filter(Boolean),
+    };
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(unquoted)) return { kind: "date", value: unquoted };
+  return unquoted;
+}
+
+function unwrapYamlString(value) {
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+function PropertiesPanel({ props, navigate }) {
+  const [open, setOpen] = React.useState(true);
+  const [copied, setCopied] = React.useState(null);
+
+  function copyValue(prop) {
+    try {
+      navigator.clipboard && navigator.clipboard.writeText(scalarToCopy(prop.value));
+      setCopied(prop.key);
+      setTimeout(() => setCopied(null), 1400);
+    } catch {
+      setCopied("err:" + prop.key);
+      setTimeout(() => setCopied(null), 1800);
+    }
+  }
+
+  return (
+    <section className={open ? "fm-panel" : "fm-panel collapsed"} aria-label="Summary properties">
+      <button className="fm-header" type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+        <span className="fm-caret">{open ? "▾" : "▸"}</span>
+        <span>Properties</span>
+        <span className="fm-count">{props.length}</span>
+        <span className="spacer"/>
+        <span className="fm-source">frontmatter</span>
+      </button>
+      {open && (
+        <div className="fm-rows">
+          {props.map((prop) => (
+            <div className="fm-row" key={prop.key}>
+              <div className="fm-name">
+                <PropertyIcon prop={prop}/>
+                <span>{formatPropName(prop.key)}</span>
+              </div>
+              <div className="fm-value">
+                <PropertyValue prop={prop} navigate={navigate}/>
+              </div>
+              <button className="fm-copy" type="button" onClick={() => copyValue(prop)} title={`Copy ${formatPropName(prop.key)}`}>
+                {copied === prop.key ? "copied" : <IconCopy size={12}/>}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PropertyValue({ prop, navigate }) {
+  const key = prop.key.toLowerCase();
+  const value = prop.value;
+  if ((key === "type" || key === "category") && typeof value === "string") {
+    return <span className="fm-pill accent">{value.toUpperCase()}</span>;
+  }
+  if ((key === "language" || key === "lang") && typeof value === "string") {
+    const code = value.toLowerCase();
+    return <><span className="fm-pill">{code.toUpperCase()}</span><span className="fm-lang-label">{LANG_LABELS[code] || value}</span></>;
+  }
+  if ((key === "short_description" || key === "description" || key === "summary") && typeof value === "string") {
+    return <span className="fm-description">{value}</span>;
+  }
+  if (value && typeof value === "object" && value.kind === "date") {
+    return <><span className="tnum">{value.value}</span><span className="fm-date-human">· {formatHumanDate(value.value)}</span></>;
+  }
+  if (value && typeof value === "object" && value.kind === "wikilink") {
+    return (
+      <button className="fm-link" type="button" onClick={() => navigate("library", { tag: value.target })}>
+        [[{value.target}]]
+      </button>
+    );
+  }
+  if (value && typeof value === "object" && value.kind === "list") {
+    return (
+      <span className="fm-tags">
+        {value.items.map((item) => (
+          <button className="fm-tag" type="button" key={item} onClick={() => navigate("library", { tag: stripHash(item) })}>
+            #{stripHash(item)}
+          </button>
+        ))}
+      </span>
+    );
+  }
+  if ((key === "source" || key === "url" || key === "link") && typeof value === "string") {
+    return <button className="fm-link" type="button" onClick={() => navigate("library", { tag: stripWiki(value) })}>{value}</button>;
+  }
+  return <span>{String(value)}</span>;
+}
+
+function PropertyIcon({ prop }) {
+  const key = prop.key.toLowerCase();
+  if (key === "type" || key === "category") return <IconSparkle size={13}/>;
+  if (key === "date" || key === "created" || key === "updated") return <IconClock size={13}/>;
+  if (key === "source" || key === "url" || key === "link") return <IconLink size={13}/>;
+  if (key === "tags" || key === "labels") return <span aria-hidden="true">#</span>;
+  if (key === "language" || key === "lang") return <span aria-hidden="true">A</span>;
+  return <span aria-hidden="true">≡</span>;
+}
+
+function formatPropName(key) {
+  return key.replaceAll("_", " ");
+}
+
+function formatHumanDate(value) {
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+function scalarToCopy(value) {
+  if (value && typeof value === "object" && value.kind === "list") return value.items.join(", ");
+  if (value && typeof value === "object" && value.kind === "wikilink") return `[[${value.target}]]`;
+  if (value && typeof value === "object" && value.kind === "date") return value.value;
+  return String(value);
+}
+
+function stripHash(value) {
+  return String(value).replace(/^#/, "");
+}
+
+function stripWiki(value) {
+  const match = /^\[\[([^\]]+)\]\]$/.exec(String(value));
+  return match ? match[1] : String(value);
+}
+
 function parseMd(md) {
   const lines = md.split("\n");
   const out = [];
