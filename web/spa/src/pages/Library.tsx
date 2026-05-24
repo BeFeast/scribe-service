@@ -124,7 +124,7 @@ function formatElapsed(seconds: number): string {
 
 function previewSummary(row: LibraryRow): string {
 	if (row.is_partial || row.summary_excerpt.trim() === "") {
-		return "Whisper finished; summary regeneration pending. POST /transcripts/{id}/resummarize to retry.";
+		return "Transcription finished. Summary regeneration is pending.";
 	}
 	return row.summary_excerpt
 		.replace(/\*\*(.+?)\*\*/g, "$1")
@@ -159,6 +159,9 @@ function handleKeyboardOpen(
 	event: React.KeyboardEvent,
 	open: () => void,
 ): void {
+	if (event.target !== event.currentTarget) {
+		return;
+	}
 	if (event.key === "Enter" || event.key === " ") {
 		event.preventDefault();
 		open();
@@ -728,13 +731,14 @@ function LibTable({
 										page: "transcript",
 										params: { id: row.id },
 									})}
-									onClick={(event) =>
+									onClick={(event) => {
+										event.stopPropagation();
 										handleRouteAnchorClick(
 											event,
 											{ page: "transcript", params: { id: row.id } },
 											navigate,
-										)
-									}
+										);
+									}}
 								>
 									{row.title}
 								</a>
@@ -782,7 +786,7 @@ function LibFeed({
 	return (
 		<div className="lib-feed">
 			{rows.map((row) => (
-				<div className="feed-item" key={row.id}>
+				<article className="feed-item" key={row.id}>
 					<div className="feed-num">#{row.id}</div>
 					<div className="feed-body">
 						<div className="feed-meta-top">
@@ -826,7 +830,7 @@ function LibFeed({
 							busy={deleteBusyId === row.id}
 						/>
 					</div>
-				</div>
+				</article>
 			))}
 		</div>
 	);
@@ -848,7 +852,7 @@ function LibCards({
 	return (
 		<div className="lib-cards">
 			{rows.map((row) => (
-				<div className="card" key={row.id}>
+				<article className="card" key={row.id}>
 					<div className="card-meta-top">
 						<span>#{row.id}</span>
 						<span className="sep">·</span>
@@ -887,7 +891,7 @@ function LibCards({
 							busy={deleteBusyId === row.id}
 						/>
 					</div>
-				</div>
+				</article>
 			))}
 		</div>
 	);
