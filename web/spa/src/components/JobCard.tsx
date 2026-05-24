@@ -4,6 +4,7 @@ import {
 	routeToHref,
 } from "../hooks/useRoute";
 import { PipelineDiagram, type StageMap } from "./PipelineDiagram";
+import { IconArrow, IconClock, IconX } from "./ShellIcons";
 import { StatusChip } from "./StatusChip";
 
 export type JobCardJob = {
@@ -48,16 +49,20 @@ export function JobCard({
 				<div className="mono muted">
 					job_id <span className="soft">{job.id}</span>
 				</div>
+				<div className="job-card-dot">·</div>
 				<div className="mono muted">via {source}</div>
 				<div className="spacer" />
 				<StatusChip status={job.status} />
-				<span className="mono muted">{formatElapsed(job.elapsed_s)}</span>
+				<span className="mono muted job-card-elapsed">
+					<IconClock size={11} />
+					{formatElapsed(job.elapsed_s)}
+				</span>
 				<a
 					className="btn ghost"
 					href={routeToHref(jobRoute)}
 					onClick={(event) => handleRouteAnchorClick(event, jobRoute, navigate)}
 				>
-					Open
+					Open <IconArrow size={11} />
 				</a>
 				{onCancel ? (
 					<button
@@ -67,6 +72,7 @@ export function JobCard({
 						disabled={cancelBusy || cancelDisabled}
 						aria-busy={cancelBusy || undefined}
 					>
+						<IconX size={12} />
 						{cancelBusy ? "Cancelling" : "Cancel"}
 					</button>
 				) : null}

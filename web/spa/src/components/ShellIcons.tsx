@@ -67,6 +67,47 @@ export const IconPlus = (props: IconProps) => (
 	</Icon>
 );
 
+export const IconX = (props: IconProps) => (
+	<Icon {...props}>
+		<path d="M4 4l8 8M12 4l-8 8" />
+	</Icon>
+);
+
+export const IconArrow = (props: IconProps) => (
+	<Icon {...props}>
+		<path d="M3 8h10M9 4l4 4-4 4" />
+	</Icon>
+);
+
+export const IconExternal = (props: IconProps) => (
+	<Icon {...props}>
+		<path d="M9 3h4v4M13 3l-6 6" />
+		<path d="M11 9v3.5a.5.5 0 01-.5.5h-7a.5.5 0 01-.5-.5v-7a.5.5 0 01.5-.5H7" />
+	</Icon>
+);
+
+export const IconCopy = (props: IconProps) => (
+	<Icon {...props}>
+		<rect x="5" y="5" width="8" height="8" rx="1" />
+		<path d="M3 11V4a1 1 0 011-1h7" />
+	</Icon>
+);
+
+export const IconRefresh = (props: IconProps) => (
+	<Icon {...props}>
+		<path d="M13 4v3h-3" />
+		<path d="M3 12v-3h3" />
+		<path d="M13 7a5 5 0 00-9-1.5M3 9a5 5 0 009 1.5" />
+	</Icon>
+);
+
+export const IconClock = (props: IconProps) => (
+	<Icon {...props}>
+		<circle cx="8" cy="8" r="5.5" />
+		<path d="M8 5v3l2 1.5" />
+	</Icon>
+);
+
 export const IconTable = (props: IconProps) => (
 	<Icon {...props}>
 		<rect x="2.5" y="3.5" width="11" height="9" rx="0.5" />

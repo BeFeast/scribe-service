@@ -76,8 +76,8 @@ export function LogTail({ jobId, status, error }: LogTailProps) {
 
 	return (
 		<section className="log-tail" aria-label="Log tail">
-			<div className="section-heading">
-				<h2>Pipeline log</h2>
+			<div className="section-label split">
+				<span>Pipeline log</span>
 				<span className="mono muted">
 					{!terminal ? <span className="live-dot" aria-hidden="true" /> : null}
 					{!terminal ? " tailing" : " terminal"}

@@ -404,6 +404,7 @@ def render_job_view(session: Session, job: Job) -> JobView:
     now = dt.datetime.now(dt.UTC)
     return JobView(
         job_id=job.id, url=job.url, video_id=job.video_id, status=job.status.value,
+        title=job.title or (transcript.title if transcript else None),
         **_source_fields(job.url),
         error=job.error, callback_url=job.callback_url,
         transcript=_brief(transcript) if transcript else None,

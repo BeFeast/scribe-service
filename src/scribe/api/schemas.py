@@ -113,6 +113,7 @@ class JobView(BaseModel):
     job_id: int
     url: str
     video_id: str
+    title: str | None = None
     source_url: str | None = None
     source_label: str | None = None
     status: str

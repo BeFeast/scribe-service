@@ -235,6 +235,77 @@ def test_queue_active_jobs_can_cancel_running_jobs() -> None:
     ) in queue
 
 
+def test_queue_and_job_detail_match_handoff_structure_and_real_wiring() -> None:
+    queue = read("pages/Queue.tsx")
+    detail = read("pages/JobDetail.tsx")
+    job_card = read("components/JobCard.tsx")
+    pipeline = read("components/PipelineDiagram.tsx")
+    failure_row = read("components/FailureRow.tsx")
+    log_tail = read("components/LogTail.tsx")
+    source = queue + detail + job_card + pipeline + failure_row + log_tail
+
+    for expected in (
+        'className="pane queue-page"',
+        '<h1 className="pane-h1">Queue</h1>',
+        "workers",
+        "busy",
+        "<IconRefresh size={14} /> Poll now",
+        "<IconPlus size={14} /> Submit URL",
+        "document.dispatchEvent(new CustomEvent(CMDK_OPEN_EVENT))",
+        "Recent terminal jobs &middot; failed",
+        'className="job-card-header"',
+        'className="job-card-dot"',
+        'className="job-card-open"',
+        "<PipelineDiagram stages={job.stages} compact />",
+        'className="queue-back"',
+        'className="row job-detail-meta-row"',
+        'className="detail-h1"',
+        'className="detail-meta"',
+        "<PipelineDiagram stages={job.stages} />",
+        'className="log-tail"',
+        "Pipeline log",
+        "Job actions",
+        'className="runtime-notes"',
+    ):
+        assert expected in source
+
+    for expected in (
+        "Waiting for a worker slot",
+        "yt-dlp · residential IP",
+        "faster-whisper · Vast.ai GPU",
+        "codex CLI · prompt template v3",
+        "Shortlinks · webhook · DB write",
+        'grid-template-columns: repeat(5',
+        ".pipeline .stage.active",
+        ".pipeline .stage.done",
+        ".pipeline .stage.failed",
+    ):
+        assert expected in pipeline + read("styles.css")
+
+    assert 'auth.protectedFetch("/api/jobs/active"' in queue
+    assert 'auth.protectedFetch("/api/jobs/recent-failures?limit=5"' in queue
+    assert 'auth.protectedFetch("/api/ops"' in queue + detail
+    assert "usePoll(load, 2000)" in queue
+    assert "usePoll(load, 2000, { enabled: id !== undefined && !isTerminal })" in detail
+    assert "`/admin/jobs/${job.job_id}/retry`" in detail
+    assert "`/admin/jobs/${job.job_id}/cancel`" in detail
+    assert "ConfirmDialog" in detail
+    assert "job.source_url" in detail
+    assert "job.source_label" in detail
+    assert "useEventSource" in log_tail
+    assert "`/api/jobs/${jobId}/log/stream`" in log_tail
+
+    for forbidden in (
+        "Math.random",
+        'new Date("2026-05-16T09:45:32Z")',
+        "buildLog(",
+        "https://youtu.be/${",
+        "window.confirm",
+        "job-panel",
+    ):
+        assert forbidden not in source
+
+
 def test_live_update_hooks_wrap_poll_and_eventsource_lifecycles() -> None:
     use_poll = read("hooks/usePoll.ts")
     use_event_source = read("hooks/useEventSource.ts")
