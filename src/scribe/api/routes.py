@@ -1743,6 +1743,26 @@ def _metric_freshness(timestamp: float, *, fresh_seconds: int) -> tuple[str, str
     return f"last signal {iso} ({age}s ago)", status
 
 
+
+USD_DISPLAY_RATES = {
+    "USD": 1.0,
+    "ILS": 3.7,
+    "EUR": 0.92,
+}
+
+
+def _format_usd_display(value: float) -> str:
+    currency = settings.display_currency.strip().upper()
+    if currency not in USD_DISPLAY_RATES:
+        currency = "ILS"
+    converted = float(value) * USD_DISPLAY_RATES[currency]
+    fraction_digits = 4 if abs(converted) < 0.1 else 2
+    if currency == "ILS":
+        return f"₪{converted:.{fraction_digits}f} ILS"
+    if currency == "EUR":
+        return f"€{converted:.{fraction_digits}f}"
+    return f"${converted:.{fraction_digits}f}"
+
 def _system_snapshot(
     *,
     backup: BackupSnapshot,
@@ -1758,10 +1778,12 @@ def _system_snapshot(
     """
     vast_pct = (spend_24h / daily_cap) if daily_cap > 0 else 0
     vast_status = "err" if vast_pct > 0.95 else "warn" if vast_pct > 0.85 else "ok"
+    spend_label = _format_usd_display(spend_24h)
+    cap_label = _format_usd_display(daily_cap)
     vast_value = (
-        f"24h spend ${spend_24h:.2f} / ${daily_cap:.2f} cap"
+        f"24h spend {spend_label} / {cap_label} cap"
         if daily_cap > 0
-        else f"24h spend ${spend_24h:.2f} · cap disabled"
+        else f"24h spend {spend_label} · cap disabled"
     )
     codex_value, codex_status = _metric_freshness(
         float(metrics.gauge_value(metrics.last_codex_success_timestamp)),
