@@ -263,13 +263,16 @@ def test_live_visual_qa_script_covers_required_routes_and_responsive_viewports()
     assert 'const DENSITIES = ["compact", "cozy", "comfy"]' in script
     assert 'const LIBRARY_LAYOUTS = ["table", "feed", "cards"]' in script
     assert "smokeVariantMatrix" in script
-    assert "clickTweaksButton" in script
+    assert "clickSettingsButton" in script
     assert "await sleep(30);" in script
     assert "variantMatrixFailures" in script
     assert "closeCommandPalette" in script
     assert "commandPaletteMismatch" in script
-    assert "panelRect.right > 0" in script
-    assert "panelRect.bottom > 0" in script
+    assert "controlsRect.right > 0" in script
+    assert "controlsRect.bottom > 0" in script
+    assert "tweaksPanelPresent" in script
+    assert "libraryContentFailures" in script
+    assert "transcriptContentFailures" in script
     assert 'dataset.variant !== "field"' in script
     assert 'dataset.theme !== "light"' in script
     assert 'dataset.density !== "compact"' in script
@@ -296,7 +299,7 @@ def test_responsive_shell_and_route_surfaces_prevent_viewport_overflow() -> None
     ):
         assert "min-width: 0" in rule_block(selector)
 
-    for selector in (".table-wrap", ".pipeline.compact"):
+    for selector in (".pipeline.compact",):
         assert "overflow-x: auto" in rule_block(selector)
     assert "overflow: auto" in rule_block(".access-table-wrap")
 

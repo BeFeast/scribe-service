@@ -37,7 +37,7 @@ def test_app_mounts_shell_and_placeholder_router() -> None:
     assert "TopBar" in source
     assert "Sidebar" in source
     assert "CommandPalette" in source
-    assert "TweaksPanel" in source
+    assert "TweaksPanel" not in source
     assert "useRoute" in source
     assert "Library" in source
     assert "layout={tweaks.libraryLayout}" in source
@@ -55,7 +55,8 @@ def test_confirm_dialog_is_in_app_not_browser_prompt() -> None:
     transcript = read("pages/Transcript.tsx")
 
     assert "ConfirmDialog" in library
-    assert "ConfirmDialog" in transcript
+    assert "danger-zone" in transcript
+    assert "Yes, delete" in transcript
     assert 'className="settings-modal compact confirm-dialog"' in dialog
     assert 'aria-modal="true"' in dialog
     assert "window.confirm" not in library + transcript + dialog
@@ -583,16 +584,18 @@ def test_tweaks_defaults_persist_and_apply_to_html_dataset() -> None:
     assert "dataset.libraryLayout = tweaks.libraryLayout" in source
 
 
-def test_tweaks_panel_exposes_design_variant_theme_density_controls() -> None:
+def test_settings_appearance_exposes_design_variant_theme_density_controls() -> None:
     hooks = read("hooks/useTweaks.ts")
     topbar = read("components/TopBar.tsx")
-    panel = read("components/TweaksPanel.tsx")
+    settings = read("pages/Settings.tsx")
 
     assert 'export type ScribeTheme = "light" | "dark";' in hooks
     for value in ('"paper"', '"terminal"', '"console"', '"field"'):
-        assert value in panel
-    assert 'const themeOptions: ScribeTheme[] = ["light", "dark"]' in panel
-    assert 'const densityOptions: ScribeDensity[] = ["compact", "cozy", "comfy"]' in panel
+        assert value in settings
+    assert 'value={tweaks.theme}' in settings
+    assert 'options={["paper", "terminal", "console", "field"]}' in settings
+    assert 'options={["compact", "cozy", "comfy"]}' in settings
+    assert 'value={tweaks.libraryLayout}' in settings
     assert "Toggle theme" in topbar
     assert "replaceTweaks({ ...tweaks, theme:" in topbar
 
@@ -652,17 +655,16 @@ def test_route_hook_uses_typed_hash_routes() -> None:
 
 def test_spa_internal_navigation_uses_real_relative_anchors() -> None:
     sidebar = read("components/Sidebar.tsx")
-    tweaks = read("components/TweaksPanel.tsx")
     library = read("pages/Library.tsx")
     transcript = read("pages/Transcript.tsx")
     job_card = read("components/JobCard.tsx")
     failure_row = read("components/FailureRow.tsx")
     job_detail = read("pages/JobDetail.tsx")
     route = read("hooks/useRoute.ts")
-    source = sidebar + tweaks + library + transcript + job_card + failure_row + job_detail
+    source = sidebar + library + transcript + job_card + failure_row + job_detail
 
     assert 'href={routeToHref(nextRoute)}' in sidebar
-    assert 'href={routeToHref(item.route)}' in tweaks
+    assert "TweaksPanel" not in read("main.tsx")
     assert 'className="job-card-open"' in job_card
     assert 'className="failure-action"' in failure_row
     assert "row.summary_shortlink" not in library
@@ -736,7 +738,8 @@ def test_transcript_detail_matches_handoff_structure_and_real_wiring() -> None:
         'className="detail-footer"',
         'className="danger-zone"',
         'className="btn danger"',
-        "<ConfirmDialog",
+        'className="row danger-actions"',
+        "Yes, delete",
         "<Markdown body={summaryBody} />",
         "<Markdown body={stripFrontmatter(record.transcript_md)} />",
     ):

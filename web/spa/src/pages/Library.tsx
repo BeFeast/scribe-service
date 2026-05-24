@@ -473,6 +473,7 @@ export function Library({
 							rows={rows}
 							displayCurrency={displayCurrency}
 							navigate={navigate}
+							onTag={(tag) => navigate({ page: "library", params: { tag } })}
 							onDelete={requestDeleteTranscript}
 							deleteBusyId={deleteBusyId}
 						/>
@@ -482,6 +483,7 @@ export function Library({
 							rows={rows}
 							displayCurrency={displayCurrency}
 							navigate={navigate}
+							onTag={(tag) => navigate({ page: "library", params: { tag } })}
 							onDelete={requestDeleteTranscript}
 							deleteBusyId={deleteBusyId}
 						/>
@@ -491,6 +493,7 @@ export function Library({
 							rows={rows}
 							displayCurrency={displayCurrency}
 							navigate={navigate}
+							onTag={(tag) => navigate({ page: "library", params: { tag } })}
 							onDelete={requestDeleteTranscript}
 							deleteBusyId={deleteBusyId}
 						/>
@@ -651,81 +654,114 @@ function LayoutButton({
 	);
 }
 
+function transcriptRoute(row: LibraryRow): Route {
+	return { page: "transcript", params: { id: row.id } };
+}
+
+function openTranscript(
+	event: React.MouseEvent<HTMLElement>,
+	row: LibraryRow,
+	navigate: (route: Route) => void,
+) {
+	if (
+		event.defaultPrevented ||
+		(event.target instanceof Element &&
+			event.target.closest("a,button,input,select,textarea") !== null)
+	) {
+		return;
+	}
+	navigate(transcriptRoute(row));
+}
+
+function openTranscriptFromKey(
+	event: React.KeyboardEvent<HTMLElement>,
+	row: LibraryRow,
+	navigate: (route: Route) => void,
+) {
+	if (event.key !== "Enter" && event.key !== " ") {
+		return;
+	}
+	if (
+		event.target instanceof Element &&
+		event.target.closest("a,button,input,select,textarea") !== null
+	) {
+		return;
+	}
+	event.preventDefault();
+	navigate(transcriptRoute(row));
+}
+
 function LibTable({
 	rows,
 	displayCurrency,
 	navigate,
+	onTag,
 	onDelete,
 	deleteBusyId,
 }: {
 	rows: LibraryRow[];
 	displayCurrency: DisplayCurrency;
 	navigate: (route: Route) => void;
+	onTag: (tag: string) => void;
 	onDelete: (row: LibraryRow) => void;
 	deleteBusyId: number | null;
 }) {
 	return (
-		<div className="table-wrap">
-			<table className="lib-table">
-				<thead>
-					<tr>
-						<th className="col-num">#</th>
-						<th>Title</th>
-						<th className="col-tags">Tags</th>
-						<th className="col-len">Length</th>
-						<th className="col-time">Created</th>
-						<th className="col-actions">Actions</th>
+		<table className="lib-table">
+			<thead>
+				<tr>
+					<th className="col-num">#</th>
+					<th>Title</th>
+					<th className="col-tags">Tags</th>
+					<th className="col-len">Length</th>
+					<th className="col-time">Created</th>
+					<th className="col-actions">Actions</th>
+				</tr>
+			</thead>
+			<tbody>
+				{rows.map((row) => (
+					<tr
+						key={row.id}
+						className="lib-row"
+						onClick={(event) => openTranscript(event, row, navigate)}
+						onKeyDown={(event) => openTranscriptFromKey(event, row, navigate)}
+					>
+						<td className="col-num">{row.id}</td>
+						<td className="col-title">
+							{row.is_partial ? (
+								<span className="chip warn">partial</span>
+							) : null}
+							<a
+								className="link-button table-title"
+								href={routeToHref(transcriptRoute(row))}
+								onClick={(event) =>
+									handleRouteAnchorClick(event, transcriptRoute(row), navigate)
+								}
+							>
+								{row.title}
+							</a>
+						</td>
+						<td className="col-tags">
+							<TagList row={row} onTag={onTag} />
+						</td>
+						<td className="col-meta col-len">
+							{formatDuration(row.duration_seconds)}
+						</td>
+						<td className="col-meta col-time">{formatDate(row.created_at)}</td>
+						<td className="col-actions">
+							<RowLinks
+								row={row}
+								onDelete={onDelete}
+								busy={deleteBusyId === row.id}
+							/>
+							<span className="sr-only">
+								{formatUsdCost(row.vast_cost, displayCurrency)}
+							</span>
+						</td>
 					</tr>
-				</thead>
-				<tbody>
-					{rows.map((row) => (
-						<tr key={row.id}>
-							<td className="col-num">{row.id}</td>
-							<td className="col-title">
-								<a
-									className="link-button table-title"
-									href={routeToHref({
-										page: "transcript",
-										params: { id: row.id },
-									})}
-									onClick={(event) =>
-										handleRouteAnchorClick(
-											event,
-											{ page: "transcript", params: { id: row.id } },
-											navigate,
-										)
-									}
-								>
-									{row.title}
-								</a>
-								{row.is_partial ? (
-									<span className="chip warn">partial</span>
-								) : null}
-							</td>
-							<td className="col-tags">
-								<TagList row={row} navigate={navigate} />
-							</td>
-							<td className="col-meta col-len">
-								{formatDuration(row.duration_seconds)}
-							</td>
-							<td className="col-meta col-time">
-								{formatDate(row.created_at)}
-							</td>
-							<td className="col-actions">
-								<RowLinks
-									row={row}
-									onDelete={onDelete}
-									busy={deleteBusyId === row.id}
-								/>
-								<span className="sr-only">
-									{formatUsdCost(row.vast_cost, displayCurrency)}
-								</span>
-							</td>
-						</tr>
-					))}
-				</tbody>
-			</table>
-		</div>
+				))}
+			</tbody>
+		</table>
 	);
 }
 
@@ -733,32 +769,39 @@ function LibFeed({
 	rows,
 	displayCurrency,
 	navigate,
+	onTag,
 	onDelete,
 	deleteBusyId,
 }: {
 	rows: LibraryRow[];
 	displayCurrency: DisplayCurrency;
 	navigate: (route: Route) => void;
+	onTag: (tag: string) => void;
 	onDelete: (row: LibraryRow) => void;
 	deleteBusyId: number | null;
 }) {
 	return (
 		<div className="lib-feed">
 			{rows.map((row) => (
-				<article className="feed-item" key={row.id}>
+				<article
+					className="feed-item"
+					key={row.id}
+					onClick={(event) => openTranscript(event, row, navigate)}
+					onKeyDown={(event) => openTranscriptFromKey(event, row, navigate)}
+				>
 					<div className="feed-num">#{row.id}</div>
 					<div className="feed-body">
 						<div className="feed-meta-top">
 							<span className="tnum">{formatDate(row.created_at)}</span>
-							<span className="sep">/</span>
+							<span className="sep">·</span>
 							<span>{formatDuration(row.duration_seconds)}</span>
-							<span className="sep">/</span>
+							<span className="sep">·</span>
 							<span>{row.lang ?? "lang n/a"}</span>
-							<span className="sep">/</span>
+							<span className="sep">·</span>
 							<span>{formatUsdCost(row.vast_cost, displayCurrency)}</span>
 							{row.is_partial ? (
 								<>
-									<span className="sep">/</span>
+									<span className="sep">·</span>
 									<span className="chip warn">partial</span>
 								</>
 							) : null}
@@ -781,8 +824,8 @@ function LibFeed({
 								{row.title}
 							</a>
 						</h2>
-						<p className="feed-excerpt">{row.summary_excerpt}</p>
-						<TagList row={row} navigate={navigate} />
+						<p className="feed-excerpt">{previewSummary(row)}</p>
+						<TagList row={row} onTag={onTag} />
 						<RowLinks
 							row={row}
 							onDelete={onDelete}
@@ -799,24 +842,31 @@ function LibCards({
 	rows,
 	displayCurrency,
 	navigate,
+	onTag,
 	onDelete,
 	deleteBusyId,
 }: {
 	rows: LibraryRow[];
 	displayCurrency: DisplayCurrency;
 	navigate: (route: Route) => void;
+	onTag: (tag: string) => void;
 	onDelete: (row: LibraryRow) => void;
 	deleteBusyId: number | null;
 }) {
 	return (
 		<div className="lib-cards">
 			{rows.map((row) => (
-				<article className="card" key={row.id}>
+				<article
+					className="card"
+					key={row.id}
+					onClick={(event) => openTranscript(event, row, navigate)}
+					onKeyDown={(event) => openTranscriptFromKey(event, row, navigate)}
+				>
 					<div className="card-meta-top">
 						<span>#{row.id}</span>
-						<span className="sep">/</span>
+						<span className="sep">·</span>
 						<span>{formatDate(row.created_at)}</span>
-						<span className="sep">/</span>
+						<span className="sep">·</span>
 						<span>{formatDuration(row.duration_seconds)}</span>
 						{row.is_partial ? <span className="chip warn">partial</span> : null}
 					</div>
@@ -838,9 +888,9 @@ function LibCards({
 							{row.title}
 						</a>
 					</h3>
-					<p className="card-excerpt">{row.summary_excerpt}</p>
+					<p className="card-excerpt">{previewSummary(row)}</p>
 					<div className="card-foot">
-						<TagList row={row} navigate={navigate} />
+						<TagList row={row} onTag={onTag} />
 					</div>
 					<div className="card-actions">
 						<RowMeta row={row} displayCurrency={displayCurrency} />
@@ -858,16 +908,16 @@ function LibCards({
 
 function TagList({
 	row,
-	navigate,
+	onTag,
 }: {
 	row: LibraryRow;
-	navigate: (route: Route) => void;
+	onTag: (tag: string) => void;
 }) {
 	if (row.tags === null || row.tags.length === 0) {
 		return <span className="muted">untagged</span>;
 	}
 	return (
-		<div className="feed-tags">
+		<div className="row-tags feed-tags">
 			{row.tags.map((tag) => {
 				const tagRoute: Route = { page: "library", params: { tag } };
 				return (
@@ -875,9 +925,11 @@ function TagList({
 						className="tag tag-button"
 						key={tag}
 						href={routeToHref(tagRoute)}
-						onClick={(event) =>
-							handleRouteAnchorClick(event, tagRoute, navigate)
-						}
+						onClick={(event) => {
+							event.preventDefault();
+							event.stopPropagation();
+							onTag(tag);
+						}}
 					>
 						{tag}
 					</a>
@@ -936,4 +988,14 @@ function RowLinks({
 			</button>
 		</div>
 	);
+}
+
+function previewSummary(row: LibraryRow): string {
+	if (row.summary_excerpt.trim() !== "") {
+		return row.summary_excerpt;
+	}
+	if (row.is_partial) {
+		return "Whisper finished; summary regeneration pending. POST /transcripts/{id}/resummarize to retry.";
+	}
+	return "Summary preview unavailable.";
 }

@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const BASE_URL = process.env.SCRIBE_VISUAL_QA_BASE_URL ?? "http://10.10.0.13:13120/";
+const API_BASE_URL = process.env.SCRIBE_VISUAL_QA_API_BASE_URL ?? "http://10.10.0.13:13120/";
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const OUT_DIR = process.env.SCRIBE_VISUAL_QA_OUT_DIR ?? join(ROOT, "artifacts/visual-qa");
 const CHROME = process.env.CHROME_BIN ?? "google-chrome";
@@ -36,7 +37,7 @@ function sleep(ms) {
 
 async function fetchJson(path) {
 	try {
-		const response = await fetch(new URL(path, BASE_URL), {
+		const response = await fetch(new URL(path, API_BASE_URL), {
 			headers: { Accept: "application/json" },
 		});
 		if (!response.ok) {
@@ -251,6 +252,13 @@ async function captureRoute(cdp, route, viewport) {
 						density: doc.dataset.density || "",
 						libraryLayout: doc.dataset.libraryLayout || "",
 					},
+					tweaksPanelPresent: Boolean(document.querySelector(".tweaks-panel")),
+					libraryContentCount: document.querySelectorAll(".lib-table tbody tr, .feed-item, .lib-cards .card").length,
+					libraryServiceError: Boolean(document.querySelector(".library-state.error-state, .service-error")),
+					libraryEmpty: Boolean(document.querySelector(".library-state.empty-state")),
+					transcriptTitleLength: document.querySelector(".detail-h1")?.textContent?.trim().length || 0,
+					transcriptBodyLength: document.querySelector(".transcript-body")?.textContent?.trim().length || 0,
+					transcriptUnavailable: Boolean(document.querySelector(".failure-row .err-title, .transcript-unavailable")),
 					bodyScrollWidth: scrolling?.scrollWidth ?? 0,
 					innerWidth: window.innerWidth,
 					horizontalOverflow: (scrolling?.scrollWidth ?? 0) > window.innerWidth + 1,
@@ -317,13 +325,14 @@ async function openCommandPalette(cdp) {
 	});
 }
 
-async function clickTweaksButton(cdp, rowLabel, value) {
+async function clickSettingsButton(cdp, rowLabel, value) {
 	return await evaluate(
 		cdp,
 		`(() => {
-			const rows = Array.from(document.querySelectorAll(".tweak-row"));
-			const row = rows.find((candidate) => candidate.querySelector(":scope > span")?.textContent?.trim() === ${JSON.stringify(rowLabel)});
+			const rows = Array.from(document.querySelectorAll(".settings-row"));
+			const row = rows.find((candidate) => candidate.querySelector(".row-label")?.textContent?.trim() === ${JSON.stringify(rowLabel)});
 			if (!row) return false;
+			row.scrollIntoView({ block: "center" });
 			const button = Array.from(row.querySelectorAll("button")).find((candidate) => candidate.textContent?.trim() === ${JSON.stringify(value)});
 			if (!button) return false;
 			button.click();
@@ -339,7 +348,7 @@ async function smokeVariantMatrix(cdp) {
 		deviceScaleFactor: 1,
 		mobile: false,
 	});
-	await cdp.send("Page.navigate", { url: absolute("#/library") });
+	await cdp.send("Page.navigate", { url: absolute("#/settings") });
 	await waitForLoad(cdp);
 	await sleep(WAIT_MS);
 	await closeCommandPalette(cdp);
@@ -350,24 +359,23 @@ async function smokeVariantMatrix(cdp) {
 			for (const density of DENSITIES) {
 				for (const libraryLayout of LIBRARY_LAYOUTS) {
 					const clicks = [
-						await clickTweaksButton(cdp, "Variant", variant),
+						await clickSettingsButton(cdp, "Visual variant", variant),
 					];
 					await sleep(30);
-					clicks.push(await clickTweaksButton(cdp, "Theme", theme));
+					clicks.push(await clickSettingsButton(cdp, "Theme", theme === "light" ? "Light" : "Dark"));
 					await sleep(30);
-					clicks.push(await clickTweaksButton(cdp, "Density", density));
+					clicks.push(await clickSettingsButton(cdp, "Density", density));
 					await sleep(30);
-					clicks.push(await clickTweaksButton(cdp, "Library", libraryLayout));
+					clicks.push(await clickSettingsButton(cdp, "Library default layout", libraryLayout === "table" ? "Table" : libraryLayout === "feed" ? "Feed" : "Cards"));
 					await sleep(80);
-					const state = await evaluate(
+					const settingsState = await evaluate(
 						cdp,
 						`(() => {
 							const doc = document.documentElement;
 							const scrolling = document.scrollingElement;
-							const panel = document.querySelector(".tweaks-panel");
-							const layoutSelector = ${JSON.stringify(libraryLayout === "table" ? ".lib-table" : libraryLayout === "feed" ? ".lib-feed" : ".lib-cards")};
-							const activeButtons = Array.from(document.querySelectorAll(".tweaks-panel .seg.active")).map((button) => button.textContent?.trim());
-							const panelRect = panel?.getBoundingClientRect();
+							const appearance = Array.from(document.querySelectorAll(".settings-group")).find((group) => group.querySelector("h2")?.textContent?.trim() === "Appearance");
+							const activeButtons = Array.from(appearance?.querySelectorAll(".seg button[aria-pressed='true']") || []).map((button) => button.textContent?.trim());
+							const controlsRect = appearance?.getBoundingClientRect();
 							return {
 								dataset: {
 									variant: doc.dataset.variant || "",
@@ -376,13 +384,33 @@ async function smokeVariantMatrix(cdp) {
 									libraryLayout: doc.dataset.libraryLayout || "",
 								},
 								activeButtons,
-								layoutVisible: Boolean(document.querySelector(layoutSelector)),
-								controlsReachable: Boolean(panelRect && panelRect.width > 0 && panelRect.height > 0 && panelRect.left < window.innerWidth && panelRect.top < window.innerHeight && panelRect.right > 0 && panelRect.bottom > 0),
+								tweaksPanelPresent: Boolean(document.querySelector(".tweaks-panel")),
+								controlsReachable: Boolean(controlsRect && controlsRect.width > 0 && controlsRect.height > 0 && controlsRect.left < window.innerWidth && controlsRect.top < window.innerHeight && controlsRect.right > 0 && controlsRect.bottom > 0),
 								horizontalOverflow: (scrolling?.scrollWidth ?? 0) > window.innerWidth + 1,
 							};
 						})()`,
 					);
-					results.push({ variant, theme, density, libraryLayout, clicks, state });
+					await cdp.send("Page.navigate", { url: absolute("#/library") });
+					await waitForLoad(cdp);
+					await sleep(600);
+					const libraryState = await evaluate(
+						cdp,
+						`(() => {
+							const scrolling = document.scrollingElement;
+							const layoutSelector = ${JSON.stringify(libraryLayout === "table" ? ".lib-table" : libraryLayout === "feed" ? ".lib-feed" : ".lib-cards")};
+							return {
+								layoutVisible: Boolean(document.querySelector(layoutSelector)),
+								libraryContentCount: document.querySelectorAll(".lib-table tbody tr, .feed-item, .lib-cards .card").length,
+								libraryServiceError: Boolean(document.querySelector(".library-state.error-state, .service-error")),
+								libraryEmpty: Boolean(document.querySelector(".library-state.empty-state")),
+								horizontalOverflow: (scrolling?.scrollWidth ?? 0) > window.innerWidth + 1,
+							};
+						})()`,
+					);
+					results.push({ variant, theme, density, libraryLayout, clicks, state: { ...settingsState, ...libraryState } });
+					await cdp.send("Page.navigate", { url: absolute("#/settings") });
+					await waitForLoad(cdp);
+					await sleep(300);
 				}
 			}
 		}
@@ -464,8 +492,19 @@ async function main() {
 		await writeFile(join(OUT_DIR, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 		cdp.close();
 
-		const runtimeErrors = manifest.routes.flatMap((route) => route.consoleErrors);
+		const runtimeErrors = manifest.routes
+			.flatMap((route) => route.consoleErrors)
+			.filter((message) => !/favicon\.ico|\/jobs\/\d+/.test(message));
 		const defaultRows = manifest.routes.filter((route) => route.key === "library");
+		const routeTweaksPanelRows = manifest.routes.filter((route) => route.state.tweaksPanelPresent);
+		const libraryContentFailures = manifest.routes.filter((route) =>
+			route.key === "library" &&
+			(route.state.libraryContentCount < 1 || route.state.libraryServiceError || route.state.libraryEmpty)
+		);
+		const transcriptContentFailures = manifest.routes.filter((route) =>
+			route.key.startsWith("transcript-") &&
+			(route.state.transcriptTitleLength < 1 || route.state.transcriptBodyLength < 1 || route.state.transcriptUnavailable)
+		);
 		const defaultMismatch = defaultRows.filter(
 			(route) =>
 				route.state.dataset.variant !== "field" ||
@@ -486,9 +525,13 @@ async function main() {
 				state.dataset.density !== row.density ||
 				state.dataset.libraryLayout !== row.libraryLayout ||
 				!state.activeButtons.includes(row.variant) ||
-				!state.activeButtons.includes(row.theme) ||
+				!state.activeButtons.includes(row.theme === "light" ? "Light" : "Dark") ||
 				!state.activeButtons.includes(row.density) ||
-				!state.activeButtons.includes(row.libraryLayout) ||
+				!state.activeButtons.includes(row.libraryLayout === "table" ? "Table" : row.libraryLayout === "feed" ? "Feed" : "Cards") ||
+				state.tweaksPanelPresent ||
+				state.libraryContentCount < 1 ||
+				state.libraryServiceError ||
+				state.libraryEmpty ||
 				!state.layoutVisible ||
 				!state.controlsReachable ||
 				state.horizontalOverflow
@@ -498,6 +541,9 @@ async function main() {
 		if (
 			missing.length > 0 ||
 			runtimeErrors.length > 0 ||
+			routeTweaksPanelRows.length > 0 ||
+			libraryContentFailures.length > 0 ||
+			transcriptContentFailures.length > 0 ||
 			defaultMismatch.length > 0 ||
 			commandPaletteMismatch.length > 0 ||
 			overflowRows.length > 0 ||
@@ -508,6 +554,9 @@ async function main() {
 					{
 						missing,
 						runtimeErrors,
+						routeTweaksPanelRows,
+						libraryContentFailures,
+						transcriptContentFailures,
 						defaultMismatch,
 						commandPaletteMismatch,
 						overflowRows,

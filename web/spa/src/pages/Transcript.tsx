@@ -1,8 +1,20 @@
 import React from "react";
 
-import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Markdown } from "../components/Markdown";
 import { copyTextToClipboard } from "../components/PrivateShareLinks";
+import {
+	IconAlert,
+	IconCheck,
+	IconClock,
+	IconCopy,
+	IconDownload,
+	IconExternal,
+	IconLink,
+	IconRefresh,
+	IconSparkle,
+	IconWave,
+	IconX,
+} from "../components/ShellIcons";
 import { useAuth } from "../hooks/useAuth";
 import {
 	type Route,
@@ -51,116 +63,7 @@ type CopyState = {
 	message: string;
 };
 
-type IconProps = {
-	size?: number;
-	style?: React.CSSProperties;
-};
-
 const COPY_RESET_MS = 4500;
-
-function Icon({
-	size = 16,
-	children,
-	style,
-}: IconProps & { children: React.ReactNode }) {
-	return (
-		<svg
-			width={size}
-			height={size}
-			viewBox="0 0 16 16"
-			fill="none"
-			stroke="currentColor"
-			strokeWidth="1.5"
-			strokeLinecap="round"
-			strokeLinejoin="round"
-			style={style}
-			aria-hidden="true"
-		>
-			{children}
-		</svg>
-	);
-}
-
-const IconAlert = (props: IconProps) => (
-	<Icon {...props}>
-		<path d="M8 2l6 11H2L8 2z" />
-		<path d="M8 6v3.2" />
-		<path d="M8 12h.01" />
-	</Icon>
-);
-
-const IconCheck = (props: IconProps) => (
-	<Icon {...props}>
-		<path d="M3 8.5l3 3L13 4" />
-	</Icon>
-);
-
-const IconClock = (props: IconProps) => (
-	<Icon {...props}>
-		<circle cx="8" cy="8" r="5.5" />
-		<path d="M8 4.8V8l2.1 1.5" />
-	</Icon>
-);
-
-const IconCopy = (props: IconProps) => (
-	<Icon {...props}>
-		<rect x="5.5" y="5.5" width="7" height="7" rx="1" />
-		<path d="M3.5 10.5h-.4A1.1 1.1 0 012 9.4V3.1A1.1 1.1 0 013.1 2h6.3a1.1 1.1 0 011.1 1.1v.4" />
-	</Icon>
-);
-
-const IconDownload = (props: IconProps) => (
-	<Icon {...props}>
-		<path d="M8 2.5v7" />
-		<path d="M5 7l3 3 3-3" />
-		<path d="M3 12.5h10" />
-	</Icon>
-);
-
-const IconExternal = (props: IconProps) => (
-	<Icon {...props}>
-		<path d="M6 4H3.5A1.5 1.5 0 002 5.5v7A1.5 1.5 0 003.5 14h7a1.5 1.5 0 001.5-1.5V10" />
-		<path d="M9 2h5v5" />
-		<path d="M8 8l6-6" />
-	</Icon>
-);
-
-const IconLink = (props: IconProps) => (
-	<Icon {...props}>
-		<path d="M6.8 10.7l-1.2 1.2a2.7 2.7 0 01-3.8-3.8l1.8-1.8a2.7 2.7 0 013.8 0" />
-		<path d="M9.2 5.3l1.2-1.2a2.7 2.7 0 013.8 3.8l-1.8 1.8a2.7 2.7 0 01-3.8 0" />
-		<path d="M6 10l4-4" />
-	</Icon>
-);
-
-const IconRefresh = (props: IconProps) => (
-	<Icon {...props}>
-		<path d="M13 5a5 5 0 00-8.7-1.9L3 4.5" />
-		<path d="M3 2v2.5h2.5" />
-		<path d="M3 11a5 5 0 008.7 1.9L13 11.5" />
-		<path d="M13 14v-2.5h-2.5" />
-	</Icon>
-);
-
-const IconSparkle = (props: IconProps) => (
-	<Icon {...props}>
-		<path d="M8 1.8l1.2 3.3L12.5 6.3 9.2 7.5 8 10.8 6.8 7.5 3.5 6.3l3.3-1.2L8 1.8z" />
-		<path d="M12.5 10.2l.5 1.2 1.2.5-1.2.5-.5 1.2-.5-1.2-1.2-.5 1.2-.5.5-1.2z" />
-	</Icon>
-);
-
-const IconWave = (props: IconProps) => (
-	<Icon {...props}>
-		<path d="M2 8c1.2 0 1.2-3.5 2.4-3.5S5.6 12 6.8 12 8 5.2 9.2 5.2s1.2 5.3 2.4 5.3S12.8 8 14 8" />
-	</Icon>
-);
-
-const IconX = (props: IconProps) => (
-	<Icon {...props}>
-		<path d="M4 4l8 8" />
-		<path d="M12 4l-8 8" />
-	</Icon>
-);
 
 function formatDuration(seconds?: number | null): string {
 	if (seconds === null || seconds === undefined) {
@@ -979,27 +882,37 @@ export function Transcript({ id, displayCurrency, navigate }: TranscriptProps) {
 						pipeline.
 					</div>
 				</div>
-				<button
-					className="btn danger"
-					type="button"
-					onClick={() => setConfirmDeleteOpen(true)}
-					disabled={deleting}
-				>
-					Delete...
-				</button>
+				{confirmDeleteOpen ? (
+					<div className="row danger-actions">
+						<button
+							className="btn ghost"
+							type="button"
+							onClick={() => setConfirmDeleteOpen(false)}
+							disabled={deleting}
+						>
+							Cancel
+						</button>
+						<button
+							className="btn danger"
+							type="button"
+							onClick={deleteTranscript}
+							disabled={deleting}
+						>
+							<IconX size={12} />
+							{deleting ? "Deleting" : "Yes, delete"}
+						</button>
+					</div>
+				) : (
+					<button
+						className="btn danger"
+						type="button"
+						onClick={() => setConfirmDeleteOpen(true)}
+						disabled={deleting}
+					>
+						Delete...
+					</button>
+				)}
 			</div>
-
-			{confirmDeleteOpen ? (
-				<ConfirmDialog
-					title="Delete transcript"
-					body={`Delete "${record.title}"? This removes the transcript row and its share links.`}
-					confirmLabel="Delete"
-					busyLabel="Deleting"
-					busy={deleting}
-					onCancel={() => setConfirmDeleteOpen(false)}
-					onConfirm={deleteTranscript}
-				/>
-			) : null}
 		</section>
 	);
 }
