@@ -65,7 +65,7 @@ type SectionItem = {
 };
 
 type ResultItem = {
-	type: "transcript" | "job" | "cmd";
+	type: "transcript" | "job" | "cmd" | "recent";
 	key: string;
 	title: string;
 	hint: string;
@@ -361,6 +361,14 @@ function isSelectable(item: PaletteItem): item is ResultItem {
 	return !isSection(item) && item.type !== "empty";
 }
 
+function recentTranscriptHint(transcript: LibraryRow): string {
+	return `submitted ${fmtRelative(transcript.created_at)} · #${transcript.id} · done`;
+}
+
+function recentJobHint(job: ActiveJob): string {
+	return `submitted recently · job ${job.id} · ${job.status}`;
+}
+
 export function isCommandPaletteShortcut(event: KeyboardEvent): boolean {
 	const key = event.key.toLowerCase();
 	return (
@@ -533,23 +541,9 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 					close();
 				},
 			}));
-		list.push({ section: "In flight" });
 		if (matchedJobs.length > 0) {
+			list.push({ section: "In flight" });
 			list.push(...matchedJobs);
-		} else {
-			list.push({
-				type: "empty",
-				key: "empty-jobs",
-				title:
-					loadState.state === "loading"
-						? "Loading active jobs"
-						: "No active jobs",
-				hint:
-					loadState.state === "loading"
-						? "Checking the worker queue"
-						: "Paste a YouTube URL to submit one",
-				keywords: "",
-			});
 		}
 
 		list.push({ section: "Navigate" });
@@ -569,6 +563,37 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 					close();
 				},
 			});
+		}
+
+		if (lower.length === 0) {
+			const recentItems = [
+				...jobs.slice(0, 2).map<ResultItem>((job) => ({
+					type: "recent",
+					key: `recent-job-${job.id}`,
+					title: job.title || job.video_id,
+					hint: recentJobHint(job),
+					keywords: `${job.title ?? ""} ${job.video_id} ${job.status} ${job.source ?? ""}`,
+					onPick: () => {
+						navigate(route("job", job.id));
+						close();
+					},
+				})),
+				...library.slice(0, 3).map<ResultItem>((transcript) => ({
+					type: "recent",
+					key: `recent-transcript-${transcript.id}`,
+					title: transcript.title,
+					hint: recentTranscriptHint(transcript),
+					keywords: `${transcript.title} ${transcript.video_id} ${(transcript.tags ?? []).join(" ")}`,
+					onPick: () => {
+						navigate(route("transcript", transcript.id));
+						close();
+					},
+				})),
+			].slice(0, 3);
+			if (recentItems.length > 0) {
+				list.push({ section: "Recent submissions" });
+				list.push(...recentItems);
+			}
 		}
 
 		if (loadState.state === "auth") {
@@ -876,7 +901,7 @@ export function CommandPalette({ navigate }: CommandPaletteProps) {
 					</span>
 					<div className="grow" />
 					<span className="muted">
-						paste any youtube URL for instant submit
+						tip: paste any youtube URL for instant submit
 					</span>
 				</div>
 			</dialog>
