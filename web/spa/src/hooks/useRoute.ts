@@ -16,6 +16,15 @@ export type Route = {
 	};
 };
 
+const ROUTE_LABELS: Record<RoutePage, string> = {
+	library: "Library",
+	transcript: "Transcript",
+	queue: "Queue",
+	job: "Job",
+	ops: "Ops",
+	settings: "Settings",
+};
+
 type RouteAction =
 	| { type: "navigate"; route: Route }
 	| { type: "sync"; route: Route };
@@ -77,6 +86,19 @@ export function routeToHref(route: Route): string {
 	}
 	const query = params.toString();
 	return `#/${parts.join("/")}${query ? `?${query}` : ""}`;
+}
+
+export function routeLabel(route: Route): string {
+	if (
+		(route.page === "transcript" || route.page === "job") &&
+		route.params.id !== undefined
+	) {
+		return `${ROUTE_LABELS[route.page]} #${route.params.id}`;
+	}
+	if (route.page === "library" && route.params.tag !== undefined) {
+		return `${ROUTE_LABELS[route.page]} / ${route.params.tag}`;
+	}
+	return ROUTE_LABELS[route.page];
 }
 
 export function handleRouteAnchorClick(
