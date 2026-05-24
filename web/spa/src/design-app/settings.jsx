@@ -27,6 +27,8 @@ Style:
 - If you don't know something, omit it. Do not hedge.
 - Markdown only. No HTML.`;
 
+export const CLERK_PROFILE_UNAVAILABLE = "Clerk profile management is unavailable in this deployment";
+
 export function SettingsPage({ t, setTweak, users: runtimeUsers = [], onConfigSaved }) {
   const auth = useAuth();
   const [config, setConfig] = React.useState(null);
@@ -702,14 +704,14 @@ function CurrentSession({ me }) {
   async function manageInClerk() {
     const action = clerkProfileAction();
     if (!action) {
-      setAccountState({ error: "Clerk profile management is not available in this runtime", saved: null, signingOut: false });
+      setAccountState({ error: CLERK_PROFILE_UNAVAILABLE, saved: null, signingOut: false });
       return;
     }
     setAccountState({ error: null, saved: null, signingOut: false });
     try {
       await action();
-    } catch (error) {
-      setAccountState({ error: messageOf(error), saved: null, signingOut: false });
+    } catch (_error) {
+      setAccountState({ error: CLERK_PROFILE_UNAVAILABLE, saved: null, signingOut: false });
     }
   }
   async function signOut() {
@@ -743,7 +745,7 @@ function CurrentSession({ me }) {
       <button className="btn ghost"
               onClick={manageInClerk}
               disabled={!canManageClerk}
-              title={canManageClerk ? "Open Clerk profile management" : "Clerk profile management is unavailable for this session"}
+              title={canManageClerk ? "Open Clerk profile management" : CLERK_PROFILE_UNAVAILABLE}
               style={{fontSize: 12, padding: "4px 8px"}}>
         <IconExternal size={12}/> Manage in Clerk
       </button>
@@ -758,13 +760,24 @@ function CurrentSession({ me }) {
   );
 }
 
-function clerkProfileAction() {
+export function clerkProfileAction() {
   if (typeof window === "undefined" || !window.Clerk) return null;
   const clerk = window.Clerk;
-  for (const method of ["openUserProfile", "openProfile", "redirectToUserProfile"]) {
-    if (typeof clerk[method] === "function") return () => clerk[method]();
-  }
-  return null;
+  const actions = ["redirectToUserProfile", "openUserProfile", "openProfile"]
+    .filter((method) => typeof clerk[method] === "function")
+    .map((method) => () => clerk[method]());
+  if (actions.length === 0) return null;
+  return async () => {
+    for (const action of actions) {
+      try {
+        await action();
+        return;
+      } catch (_error) {
+        // Try the next Clerk runtime path, then surface stable product copy.
+      }
+    }
+    throw new Error(CLERK_PROFILE_UNAVAILABLE);
+  };
 }
 
 function UserRow({ u, openMenu, onOpenMenu, onToggle, onSetRole }) {
