@@ -13,6 +13,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from scribe.runtime_config import RuntimeConfigError, load_infisical_settings, redact_values
 
+_DEFAULT_SUMMARY_PROVIDERS: tuple[str, ...] = ("codex", "claude", "freellmapi")
+
 ConfigKind = Literal[
     "bool",
     "float",
@@ -173,11 +175,36 @@ class Settings(BaseSettings):
     codex_model: str = ""
     # "minimal" is rejected by the API (codex default tools need >= low).
     codex_reasoning: str = "low"
+    codex_timeout_secs: int = 600
 
     # Lock file ensuring at most one codex invocation runs at a time inside
     # the container. ChatGPT OAuth refresh tokens are single-use; concurrent
     # codex processes would race the refresh and revoke each other's tokens.
     codex_lock_path: str = "/tmp/scribe-codex.lock"
+
+    # Fallback summary providers tried in order when codex (or any earlier
+    # provider) fails. Sourced from SCRIBE_SUMMARY_PROVIDERS as a
+    # comma-separated, case-insensitive list. Unknown names are dropped at
+    # build-time with a warning so a typo in env does not crash the worker.
+    summary_providers: list[str] = list(_DEFAULT_SUMMARY_PROVIDERS)
+
+    # Claude CLI fallback. `claude_bin` resolves via PATH inside the container.
+    # `claude_effort` maps to the CLI's --effort flag (xhigh|high|medium|low).
+    claude_bin: str = "claude"
+    claude_model: str = "opus[1m]"
+    claude_effort: str = "xhigh"
+    claude_timeout_secs: int = 600
+
+    # FreeLLMAPI proxy fallback. The API key is sourced at runtime from
+    # Infisical (path /ai/freellmapi, secret FREELLMAPI_UNIFIED_API_KEY) and
+    # injected into SCRIBE_FREELLMAPI_API_KEY by the container entrypoint —
+    # never paste it into source or fixtures. `freellmapi_model` is a
+    # placeholder; the provider probes GET ${base_url}/models once and falls
+    # back to the configured value if discovery is unavailable.
+    freellmapi_base_url: str = "http://10.10.0.13:13032/v1"
+    freellmapi_api_key: str = ""
+    freellmapi_model: str = "gpt-4o-mini"
+    freellmapi_timeout_secs: int = 600
 
     # Directory containing transcript-summary.v*.md and transcript-summary.active.
     # Operators can bind-mount this path to persist prompt edits across deploys.
@@ -244,6 +271,21 @@ class Settings(BaseSettings):
     # Backups run nightly; flag as stale once the heartbeat is >25h old (one
     # missed cron tick). 0 disables the staleness check.
     backup_stale_after_seconds: int = 90_000
+
+    @field_validator("summary_providers", mode="before")
+    @classmethod
+    def _parse_summary_providers(cls, value: Any) -> list[str]:
+        """Accept either a comma-separated env string or a list. Names are
+        lowercased and stripped; unknown names are kept (callers reject them
+        at chain-build time with a clear error)."""
+        if value is None or value == "":
+            return list(_DEFAULT_SUMMARY_PROVIDERS)
+        if isinstance(value, str):
+            parts = [p.strip().lower() for p in value.split(",")]
+            return [p for p in parts if p]
+        if isinstance(value, list):
+            return [str(p).strip().lower() for p in value if str(p).strip()]
+        raise ValueError("summary_providers must be a list or comma-separated string")
 
     @field_validator("trusted_cidrs")
     @classmethod

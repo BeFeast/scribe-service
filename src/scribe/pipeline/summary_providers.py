@@ -17,18 +17,30 @@ trial; success returns the breaker to `closed`, failure restarts the cooldown.
 Breaker state is in-process. On container restart everyone resets to `closed`
 — restart is a strong signal that conditions may have changed.
 
-The codex backend currently lives in `scribe.pipeline.summarizer.summarize`;
-this module defines the shared contract additional backends will plug into.
+Concrete provider classes (`CodexProvider`, `ClaudeProvider`,
+`FreeLLMAPIProvider`) live below the chain machinery and are the production
+backends wired up by `build_provider_chain`. The legacy entrypoint
+`scribe.pipeline.summarizer.summarize` builds the chain at call time and
+translates `ProviderError(chain_exhausted)` into `SummarizeError`.
 """
 from __future__ import annotations
 
+import fcntl
+import json
 import logging
+import os
+import subprocess
+import tempfile
 import threading
 import time
 from collections import deque
-from typing import Protocol, runtime_checkable
+from pathlib import Path
+from typing import Any, Protocol, runtime_checkable
 
-from scribe.config import settings
+import httpx
+
+from scribe.config import Settings
+from scribe.config import settings as default_settings
 from scribe.obs import metrics
 from scribe.pipeline.summary_validator import (
     ProviderError,
@@ -41,12 +53,17 @@ from scribe.pipeline.summary_validator import (
 
 __all__ = [
     "CircuitBreaker",
+    "ClaudeProvider",
+    "CodexProvider",
+    "FreeLLMAPIProvider",
+    "PROVIDER_REGISTRY",
     "ProviderError",
     "ProviderTimeoutError",
     "ProviderUnavailableError",
     "ProviderUsageLimitError",
     "SummaryProvider",
     "SummaryResult",
+    "build_provider_chain",
     "get_breaker",
     "summarize_with_chain",
     "validate_and_canonicalize",
@@ -205,9 +222,9 @@ def get_breaker(name: str) -> CircuitBreaker:
         if breaker is None:
             breaker = CircuitBreaker(
                 name,
-                window_secs=settings.summary_breaker_window_secs,
-                threshold=settings.summary_breaker_threshold,
-                cooldown_secs=settings.summary_breaker_cooldown_secs,
+                window_secs=default_settings.summary_breaker_window_secs,
+                threshold=default_settings.summary_breaker_threshold,
+                cooldown_secs=default_settings.summary_breaker_cooldown_secs,
             )
             _breakers[name] = breaker
             metrics.summary_provider_state.labels(provider=name).set(
@@ -229,7 +246,10 @@ def _publish_state(breaker: CircuitBreaker) -> None:
 
 
 def summarize_with_chain(
-    providers: list[SummaryProvider], prompt: str
+    providers: list[SummaryProvider],
+    prompt: str,
+    *,
+    attempts: list[tuple[str, str]] | None = None,
 ) -> SummaryResult:
     """Try each provider in order, consulting its circuit breaker first.
 
@@ -240,12 +260,19 @@ def summarize_with_chain(
     chain advances; any other exception (auth, runtime error) propagates
     immediately.
 
+    `attempts`, if supplied, is appended in-place with `(provider_name,
+    outcome_description)` per attempted provider so the caller can build a
+    multi-provider error message. It is also exposed on the raised
+    `ProviderError(chain_exhausted)` as `.attempts`.
+
     Raises `ProviderError(reason="chain_exhausted")` if every provider failed
     or was skipped, or `ProviderError(reason="no_providers")` if the chain is
     empty.
     """
     if not providers:
         raise ProviderError(reason="no_providers", details="empty provider chain")
+
+    local_attempts: list[tuple[str, str]] = attempts if attempts is not None else []
 
     last_error: ProviderError | None = None
     had_fallback: bool = False
@@ -264,6 +291,7 @@ def summarize_with_chain(
             metrics.summary_provider_calls_total.labels(
                 provider=name, result="skipped_tripped"
             ).inc()
+            local_attempts.append((name, "skipped_tripped"))
             had_fallback = True
             continue
 
@@ -277,11 +305,15 @@ def summarize_with_chain(
             breaker.record(outcome, mode=mode)
             _publish_state(breaker)
             log.warning(
-                "summary provider %s failed (%s): %s",
-                name,
-                outcome,
-                exc.details or exc.reason,
+                "scribe.summary.provider_fallback",
+                extra={
+                    "provider": name,
+                    "outcome": outcome,
+                    "reason": exc.reason,
+                    "details": exc.details,
+                },
             )
+            local_attempts.append((name, f"{outcome}: {exc.details or exc.reason}"))
             last_error = exc
             had_fallback = True
             continue
@@ -291,18 +323,318 @@ def summarize_with_chain(
         ).inc()
         breaker.record("success", mode=mode)
         _publish_state(breaker)
+        local_attempts.append((name, "success"))
 
         chain_label = "success_after_fallback" if had_fallback else "success_first"
         metrics.summary_chain_outcome_total.labels(outcome=chain_label).inc()
+        log.info(
+            "scribe.summary.provider_success",
+            extra={"provider": name, "chain_outcome": chain_label},
+        )
         return result
 
     metrics.summary_chain_outcome_total.labels(outcome="all_failed").inc()
     if last_error is None:
-        raise ProviderError(
+        err = ProviderError(
             reason="chain_exhausted",
             details="all providers skipped (tripped)",
         )
-    raise ProviderError(
-        reason="chain_exhausted",
-        details=f"all providers failed; last={last_error.reason}: {last_error.details}",
-    )
+    else:
+        err = ProviderError(
+            reason="chain_exhausted",
+            details=f"all providers failed; last={last_error.reason}: {last_error.details}",
+        )
+    err.attempts = list(local_attempts)  # type: ignore[attr-defined]
+    raise err
+
+
+# ---------- concrete provider implementations --------------------------------
+
+_CODEX_USAGE_LIMIT_PATTERNS = ("usage limit", "rate limit", "quota exceeded")
+_CODEX_TOKEN_REVOKED_PATTERNS = (
+    "token_revoked",
+    "refresh_token_reused",
+    "Encountered invalidated oauth token",
+    "Your access token could not be refreshed because your refresh token",
+    "Please log out and sign in again",
+)
+_CLAUDE_USAGE_LIMIT_PATTERNS = (
+    "usage limit",
+    "rate limit",
+    "quota exceeded",
+    "Claude AI usage limit reached",
+    "5-hour limit reached",
+    "weekly limit reached",
+)
+_CLAUDE_UNAVAILABLE_PATTERNS = (
+    "command not found",
+    "not logged in",
+    "authentication required",
+    "please run `claude login`",
+)
+
+
+def _matches_any(text: str, needles: tuple[str, ...]) -> bool:
+    lowered = text.lower()
+    return any(n.lower() in lowered for n in needles)
+
+
+class CodexProvider:
+    """codex CLI backend. Serialised via `fcntl.flock` on
+    `settings.codex_lock_path` so concurrent codex runs do not race the
+    single-use OAuth refresh token.
+
+    Maps codex stderr signatures into typed `ProviderError` subclasses:
+      * token_revoked / refresh_token_reused / "Please log out and sign in
+        again" → `ProviderUnavailableError` (caller may also fire the operator
+        Telegram alert after the whole chain fails).
+      * "usage limit" / "rate limit" / "quota exceeded" → `ProviderUsageLimitError`.
+      * subprocess timeout → `ProviderTimeoutError`.
+      * Any other non-zero return → generic `ProviderError`.
+    """
+
+    name = "codex"
+
+    def __init__(self, settings_obj: Settings | None = None) -> None:
+        self._settings = settings_obj or default_settings
+        self.last_token_revoked_stderr: str | None = None
+
+    def summarize(self, prompt: str) -> SummaryResult:
+        s = self._settings
+        lock_path = Path(s.codex_lock_path)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            with tempfile.TemporaryDirectory(prefix="scribe-codex-") as tmp:
+                out_file = Path(tmp) / "summary.md"
+                cmd = [
+                    s.codex_bin, "exec",
+                    "--skip-git-repo-check",
+                    "--dangerously-bypass-approvals-and-sandbox",
+                    "-c", f"model_reasoning_effort={s.codex_reasoning}",
+                    "-o", str(out_file),
+                ]
+                if s.codex_model:
+                    cmd += ["-m", s.codex_model]
+                cmd += ["-"]  # read prompt from stdin
+                try:
+                    proc = subprocess.run(
+                        cmd,
+                        input=prompt,
+                        text=True,
+                        capture_output=True,
+                        timeout=s.codex_timeout_secs,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    raise ProviderTimeoutError(
+                        reason="timeout",
+                        details=f"codex exec timed out after {s.codex_timeout_secs}s",
+                    ) from exc
+                stderr = proc.stderr or ""
+                if proc.returncode != 0 or not out_file.is_file():
+                    stderr_tail = stderr or proc.stdout or ""
+                    if _matches_any(stderr, _CODEX_TOKEN_REVOKED_PATTERNS):
+                        log.error("codex token revoked", extra={"rc": proc.returncode})
+                        metrics.codex_token_revoked_total.inc()
+                        self.last_token_revoked_stderr = stderr_tail
+                        raise ProviderUnavailableError(
+                            reason="codex_token_revoked",
+                            details=f"OAuth token revoked: {stderr_tail[-400:]}",
+                        )
+                    if _matches_any(stderr, _CODEX_USAGE_LIMIT_PATTERNS):
+                        raise ProviderUsageLimitError(
+                            reason="codex_usage_limit",
+                            details=stderr_tail[-400:],
+                        )
+                    raise ProviderError(
+                        reason="codex_error",
+                        details=f"rc={proc.returncode}: {stderr_tail[-2000:]}",
+                    )
+                summary_md = out_file.read_text(encoding="utf-8").strip()
+        finally:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(lock_fd)
+
+        if not summary_md:
+            raise ProviderError(reason="empty_response", details="codex produced empty output")
+        metrics.last_codex_success_timestamp.set(time.time())
+        return validate_and_canonicalize(summary_md)
+
+
+class ClaudeProvider:
+    """Claude CLI backend. Invokes `claude --model <m> --effort <e> -p <prompt>`
+    non-interactively. Detects usage-limit / unavailable stderr substrings and
+    maps them to the matching `ProviderError` subclass.
+    """
+
+    name = "claude"
+
+    def __init__(self, settings_obj: Settings | None = None) -> None:
+        self._settings = settings_obj or default_settings
+
+    def summarize(self, prompt: str) -> SummaryResult:
+        s = self._settings
+        cmd = [
+            s.claude_bin,
+            "--model", s.claude_model,
+            "--effort", s.claude_effort,
+            "-p", prompt,
+        ]
+        try:
+            proc = subprocess.run(
+                cmd,
+                text=True,
+                capture_output=True,
+                timeout=s.claude_timeout_secs,
+            )
+        except FileNotFoundError as exc:
+            raise ProviderUnavailableError(
+                reason="claude_missing",
+                details=f"{s.claude_bin} not found on PATH",
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ProviderTimeoutError(
+                reason="timeout",
+                details=f"claude timed out after {s.claude_timeout_secs}s",
+            ) from exc
+
+        stderr = proc.stderr or ""
+        if proc.returncode != 0:
+            tail = stderr or proc.stdout or ""
+            if _matches_any(stderr, _CLAUDE_USAGE_LIMIT_PATTERNS):
+                raise ProviderUsageLimitError(
+                    reason="claude_usage_limit",
+                    details=tail[-400:],
+                )
+            if _matches_any(stderr, _CLAUDE_UNAVAILABLE_PATTERNS):
+                raise ProviderUnavailableError(
+                    reason="claude_unavailable",
+                    details=tail[-400:],
+                )
+            raise ProviderError(
+                reason="claude_error",
+                details=f"rc={proc.returncode}: {tail[-2000:]}",
+            )
+
+        summary_md = (proc.stdout or "").strip()
+        if not summary_md:
+            raise ProviderError(
+                reason="empty_response",
+                details="claude produced empty output",
+            )
+        return validate_and_canonicalize(summary_md)
+
+
+class FreeLLMAPIProvider:
+    """FreeLLMAPI / OpenAI-compatible chat completions backend.
+
+    POSTs to `${base_url}/chat/completions` with bearer auth and returns the
+    first choice's content. 429 → `ProviderUsageLimitError`; 5xx →
+    `ProviderUnavailableError`; httpx timeout → `ProviderTimeoutError`; any
+    other transport error → `ProviderError`.
+    """
+
+    name = "freellmapi"
+
+    def __init__(self, settings_obj: Settings | None = None) -> None:
+        self._settings = settings_obj or default_settings
+
+    def summarize(self, prompt: str) -> SummaryResult:
+        s = self._settings
+        if not s.freellmapi_api_key.strip():
+            raise ProviderUnavailableError(
+                reason="freellmapi_no_api_key",
+                details="SCRIBE_FREELLMAPI_API_KEY not configured",
+            )
+        url = f"{s.freellmapi_base_url.rstrip('/')}/chat/completions"
+        body = {
+            "model": s.freellmapi_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+        }
+        headers = {
+            "Authorization": f"Bearer {s.freellmapi_api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            resp = httpx.post(
+                url,
+                content=json.dumps(body),
+                headers=headers,
+                timeout=s.freellmapi_timeout_secs,
+            )
+        except httpx.TimeoutException as exc:
+            raise ProviderTimeoutError(
+                reason="timeout",
+                details=f"freellmapi timed out after {s.freellmapi_timeout_secs}s",
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderUnavailableError(
+                reason="freellmapi_transport_error",
+                details=str(exc),
+            ) from exc
+
+        if resp.status_code == 429:
+            raise ProviderUsageLimitError(
+                reason="freellmapi_usage_limit",
+                details=resp.text[:400],
+            )
+        if 500 <= resp.status_code < 600:
+            raise ProviderUnavailableError(
+                reason="freellmapi_5xx",
+                details=f"{resp.status_code}: {resp.text[:400]}",
+            )
+        if resp.status_code >= 400:
+            raise ProviderError(
+                reason="freellmapi_http_error",
+                details=f"{resp.status_code}: {resp.text[:400]}",
+            )
+
+        try:
+            data: dict[str, Any] = resp.json()
+            choices = data["choices"]
+            content = choices[0]["message"]["content"]
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise ProviderError(
+                reason="freellmapi_bad_response",
+                details=f"could not parse choices[0].message.content: {exc}",
+            ) from exc
+
+        summary_md = (content or "").strip()
+        if not summary_md:
+            raise ProviderError(
+                reason="empty_response",
+                details="freellmapi returned empty content",
+            )
+        return validate_and_canonicalize(summary_md)
+
+
+PROVIDER_REGISTRY: dict[str, type[SummaryProvider]] = {
+    "codex": CodexProvider,
+    "claude": ClaudeProvider,
+    "freellmapi": FreeLLMAPIProvider,
+}
+
+
+def build_provider_chain(
+    settings_obj: Settings | None = None,
+) -> list[SummaryProvider]:
+    """Instantiate the configured provider chain.
+
+    Reads provider names from `settings.summary_providers`. Unknown names raise
+    `ValueError` rather than being silently dropped — a typo in env should be
+    surfaced loudly during process start, not buried in a fallback path.
+    """
+    s = settings_obj or default_settings
+    names: list[str] = list(s.summary_providers) if s.summary_providers else []
+    unknown = [n for n in names if n not in PROVIDER_REGISTRY]
+    if unknown:
+        raise ValueError(
+            "unknown summary providers in SCRIBE_SUMMARY_PROVIDERS: "
+            + ", ".join(unknown)
+            + f". Known providers: {sorted(PROVIDER_REGISTRY)}"
+        )
+    return [PROVIDER_REGISTRY[name](s) for name in names]
