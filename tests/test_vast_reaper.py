@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import logging
 from types import SimpleNamespace
 
 from scribe.worker import vast_reaper
@@ -131,13 +130,21 @@ def test_reaper_counts_delete_attempt_and_logs_delete_error(monkeypatch, caplog)
 
     monkeypatch.setattr(vast_reaper, "_vast", fake_vast)
 
-    with caplog.at_level(logging.WARNING, logger="scribe.worker.vast_reaper"):
-        assert vast_reaper.reap_vast_orphans(api_key="vast-key", max_age_minutes=60, now=now) == 1
+    # scribe.obs.logging.configure() wipes root handlers on import, so caplog
+    # can be broken in mixed-suite runs. Capture the logger calls directly.
+    warnings: list[tuple[str, dict]] = []
+    real_warning = vast_reaper.log.warning
+    def capture(msg, *args, **kwargs):
+        warnings.append((msg, kwargs.get("extra", {})))
+        return real_warning(msg, *args, **kwargs)
+    monkeypatch.setattr(vast_reaper.log, "warning", capture)
+
+    assert vast_reaper.reap_vast_orphans(api_key="vast-key", max_age_minutes=60, now=now) == 1
 
     assert counter.value == 1
-    failure = next(record for record in caplog.records if "failed to destroy" in record.message)
-    assert failure.vast_instance_id == 600
-    assert "HTTP 500" in failure.error
+    failure_msg, failure_extra = next((m, e) for m, e in warnings if "failed to destroy" in m)
+    assert failure_extra["vast_instance_id"] == 600
+    assert "HTTP 500" in failure_extra["error"]
 
 
 def test_reaper_skips_when_api_key_missing(monkeypatch):
