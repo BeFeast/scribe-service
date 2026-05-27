@@ -145,6 +145,13 @@ def test_recover_interrupted_job_retries_visible_vast_instance(db_session, monke
     video_id = "restart-visible-vast"
     db_session.execute(delete(Transcript).where(Transcript.video_id == video_id))
     db_session.execute(delete(Job).where(Job.video_id == video_id))
+    db_session.execute(
+        delete(Job).where(
+            Job.status.in_(
+                (JobStatus.downloading, JobStatus.transcribing, JobStatus.summarizing)
+            )
+        )
+    )
     db_session.commit()
 
     destroyed: list[int] = []
