@@ -152,6 +152,8 @@ class Settings(BaseSettings):
     # Vast.ai — whisper only
     vast_api_key: str = ""
     transcribe_timeout_secs: int = 1800
+    vast_orphan_reaper_max_age_minutes: int = 60
+    vast_orphan_reaper_interval_seconds: int = 300
 
     # Summary backend — codex CLI (MVP)
     codex_bin: str = "codex"

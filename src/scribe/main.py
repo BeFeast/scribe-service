@@ -5,6 +5,7 @@ so a single `uvicorn scribe.main:app` serves the API + web-UI and processes jobs
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -19,6 +20,7 @@ from scribe.config import settings
 from scribe.obs.logging import configure as configure_logging
 from scribe.web.views import router as web_router
 from scribe.worker.loop import start_workers
+from scribe.worker.vast_reaper import run_vast_reaper_loop
 
 # Structured JSON logging — replaces basicConfig. Honours SCRIBE_LOG_LEVEL.
 configure_logging()
@@ -35,14 +37,22 @@ async def lifespan(app: FastAPI):
         log.warning("auth test mode is enabled; test identity headers can impersonate local users")
     threads = []
     stop = None
+    reaper_task: asyncio.Task | None = None
     if not settings.app_start_workers or "PYTEST_CURRENT_TEST" in os.environ:
         log.info("workers disabled", extra={"pytest": "PYTEST_CURRENT_TEST" in os.environ})
     else:
         threads, stop = start_workers()
+        reaper_task = asyncio.create_task(run_vast_reaper_loop(), name="scribe-vast-orphan-reaper")
         log.info("workers started", extra={"thread_count": len(threads)})
     try:
         yield
     finally:
+        if reaper_task is not None:
+            reaper_task.cancel()
+            try:
+                await reaper_task
+            except asyncio.CancelledError:
+                pass
         if stop is not None:
             stop.set()
             for thread in threads:

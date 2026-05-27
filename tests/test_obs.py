@@ -19,6 +19,7 @@ def test_metrics_export_contains_scribe_metrics():
     assert "scribe_transcripts_total" in text
     assert "scribe_stage_duration_seconds" in text
     assert "scribe_vast_spend_usd_total" in text
+    assert "scribe_vast_orphans_destroyed_total" in text
     assert "scribe_worker_queue_depth" in text
     assert "scribe_last_success_timestamp_seconds" in text
     assert "scribe_codex_token_revoked_total" in text
