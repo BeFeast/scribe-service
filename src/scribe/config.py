@@ -160,11 +160,34 @@ class Settings(BaseSettings):
     codex_model: str = ""
     # "minimal" is rejected by the API (codex default tools need >= low).
     codex_reasoning: str = "low"
+    codex_timeout_secs: int = 600
 
     # Lock file ensuring at most one codex invocation runs at a time inside
     # the container. ChatGPT OAuth refresh tokens are single-use; concurrent
     # codex processes would race the refresh and revoke each other's tokens.
     codex_lock_path: str = "/tmp/scribe-codex.lock"
+
+    # Summary provider fallback chain. Tried in order; the first to return a
+    # canonicalisable response wins. The MVP retries every provider every job
+    # — circuit-breaker / per-provider state lands in a follow-up issue.
+    summary_providers: list[str] = ["codex", "claude", "freellmapi"]
+
+    # Claude CLI — second-stage fallback when codex is out of usage budget.
+    claude_bin: str = "claude"
+    claude_model: str = "opus[1m]"
+    claude_effort: str = "xhigh"
+    claude_timeout_secs: int = 600
+
+    # FreeLLMAPI — homelab OpenAI-compatible proxy used as the last-resort
+    # fallback. `freellmapi_api_key` is sourced from Infisical (path
+    # `/ai/freellmapi`, secret `FREELLMAPI_UNIFIED_API_KEY`) and must never be
+    # baked into source or fixtures. `freellmapi_model` is a placeholder; the
+    # worker probes `${base_url}/models` on first use to pick an available
+    # model alias because the proxy's exposed names are not guaranteed.
+    freellmapi_base_url: str = "http://10.10.0.13:13032/v1"
+    freellmapi_api_key: str = ""
+    freellmapi_model: str = "gpt-4o-mini"
+    freellmapi_timeout_secs: int = 600
 
     # Directory containing transcript-summary.v*.md and transcript-summary.active.
     # Operators can bind-mount this path to persist prompt edits across deploys.
@@ -231,6 +254,23 @@ class Settings(BaseSettings):
     # Backups run nightly; flag as stale once the heartbeat is >25h old (one
     # missed cron tick). 0 disables the staleness check.
     backup_stale_after_seconds: int = 90_000
+
+    @field_validator("summary_providers", mode="before")
+    @classmethod
+    def _parse_summary_providers(cls, value: Any) -> list[str]:
+        """Accept comma-separated env input or a JSON/Python list. Names are
+        normalised to lowercase so `SCRIBE_SUMMARY_PROVIDERS=Codex,Claude` and
+        `["codex","claude"]` both work."""
+        if value is None or value == "":
+            return ["codex", "claude", "freellmapi"]
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.startswith("["):
+                return value  # let pydantic parse the JSON list
+            return [item.strip().lower() for item in stripped.split(",") if item.strip()]
+        if isinstance(value, (list, tuple)):
+            return [str(item).strip().lower() for item in value if str(item).strip()]
+        return value
 
     @field_validator("trusted_cidrs")
     @classmethod
