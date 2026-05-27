@@ -44,6 +44,7 @@ function ScribeApp() {
 
 	setRuntimeData({
 		transcripts: runtime.transcripts,
+		libraryTotal: runtime.libraryTotal,
 		activeJobs: runtime.activeJobs,
 		failures: runtime.failures,
 		stats: runtime.stats,

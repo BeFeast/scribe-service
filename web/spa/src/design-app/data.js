@@ -32,6 +32,7 @@ export const FALLBACK_STATS = {
 };
 
 export let TRANSCRIPTS = [];
+export let LIBRARY_TOTAL = 0;
 export let ACTIVE_JOBS = [];
 export let RECENT_FAILURES = [];
 export let STATS = FALLBACK_STATS;
@@ -47,6 +48,9 @@ export let PUBLIC_BASE_URL = "";
 
 export function setRuntimeData(next) {
 	TRANSCRIPTS = next.transcripts ?? TRANSCRIPTS;
+	LIBRARY_TOTAL =
+		typeof next.libraryTotal === "number" ? next.libraryTotal : LIBRARY_TOTAL;
+	LIBRARY_TOTAL = Math.max(LIBRARY_TOTAL, TRANSCRIPTS.length);
 	ACTIVE_JOBS = next.activeJobs ?? ACTIVE_JOBS;
 	RECENT_FAILURES = next.failures ?? RECENT_FAILURES;
 	STATS = next.stats ?? STATS;
@@ -73,6 +77,7 @@ export function setRuntimeData(next) {
 		!TRANSCRIPTS.some((row) => row.id === CURRENT_TRANSCRIPT.id)
 	) {
 		TRANSCRIPTS = [CURRENT_TRANSCRIPT, ...TRANSCRIPTS];
+		LIBRARY_TOTAL = Math.max(LIBRARY_TOTAL, TRANSCRIPTS.length);
 	}
 	if (CURRENT_JOB && !ACTIVE_JOBS.some((job) => job.id === CURRENT_JOB.id)) {
 		ACTIVE_JOBS = [CURRENT_JOB, ...ACTIVE_JOBS];

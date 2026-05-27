@@ -1,7 +1,7 @@
 // biome-ignore-all lint: Claude Design source port; integration-only edits live in api/data/main.
 import React from "react";
 import { IconCards, IconFeed, IconPlus, IconSearch, IconTable } from "./icons.jsx";
-import { ACTIVE_JOBS, TRANSCRIPTS, fmtDuration, fmtElapsed, fmtRelative } from "./data.js";
+import { ACTIVE_JOBS, LIBRARY_TOTAL, TRANSCRIPTS, fmtDuration, fmtElapsed, fmtRelative } from "./data.js";
 // Library — list of all transcripts. Layout switchable: table / feed / cards.
 // Also surfaces in-flight jobs as a thin strip at the top.
 
@@ -110,13 +110,15 @@ export function LibraryPage({ navigate, t, setTweak, routeTag, loading, error, a
     return rows;
   }, [q, tag, TRANSCRIPTS]);
 
+  const transcriptCount = q || tag ? filtered.length : Math.max(LIBRARY_TOTAL, TRANSCRIPTS.length);
+
   return (
     <div className="pane">
       <div className="pane-header">
         <div>
           <h1 className="pane-h1">Library</h1>
           <div className="pane-sub">
-            {filtered.length} transcript{filtered.length !== 1 && "s"}
+            {transcriptCount} transcript{transcriptCount !== 1 && "s"}
             {tag && <> · tag <code style={{padding: "1px 6px", background: "var(--bg-soft)", borderRadius: 3}}>{tag}</code>
               <a onClick={() => setTag(null)} style={{marginLeft: 8, cursor: "pointer", color: "var(--link)"}}>clear</a></>}
           </div>

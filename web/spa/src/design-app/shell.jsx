@@ -1,7 +1,7 @@
 // biome-ignore-all lint: Claude Design source port; integration-only edits live in api/data/main.
 import React from "react";
 import { IconLibrary, IconMoon, IconOps, IconQueue, IconRSS, IconSearch, IconSettings, IconSun } from "./icons.jsx";
-import { ACTIVE_JOBS, RECENT_FAILURES, STATS, TRANSCRIPTS, fmtUsd, tagCounts } from "./data.js";
+import { ACTIVE_JOBS, LIBRARY_TOTAL, RECENT_FAILURES, STATS, TRANSCRIPTS, fmtUsd, tagCounts } from "./data.js";
 // Shell: top bar + sidebar nav. Calls navigate(page, params?) from props.
 
 export function TopBar({ onOpenCmdk, t, setTweak }) {
@@ -42,6 +42,7 @@ export function TopBar({ onOpenCmdk, t, setTweak }) {
 
 export function Sidebar({ page, navigate }) {
   const tags = tagCounts().slice(0, 8);
+  const transcriptCount = Math.max(LIBRARY_TOTAL, TRANSCRIPTS.length);
   const queueCount = ACTIVE_JOBS.length;
   const failuresToday = RECENT_FAILURES.filter(f => f.failed_at.startsWith("2026-05-16")).length;
   return (
@@ -50,7 +51,7 @@ export function Sidebar({ page, navigate }) {
       <a className={"nav-item " + (page === "library" ? "active" : "")}
          onClick={() => navigate("library")}>
         <IconLibrary size={15}/> <span>Library</span>
-        <span className="count">{TRANSCRIPTS.length}</span>
+        <span className="count">{transcriptCount}</span>
       </a>
       <a className={"nav-item " + (page === "queue" ? "active" : "")}
          onClick={() => navigate("queue")}>

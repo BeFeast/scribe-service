@@ -279,6 +279,14 @@ def test_core_route_wiring_uses_real_backend_actions_where_present() -> None:
     assert "SCRIBE_USERS" not in settings
     assert "fetchJson(auth" in api
     assert "auth.protectedFetch(\"/api/jobs/\" + id + \"/log/stream\"" in api
+    assert "libraryTotal: 0" in api
+    assert "libraryTotal: totalFromLibrary(library)" in api
+    assert "function totalFromLibrary" in api
+    assert "libraryTotal: runtime.libraryTotal" in read("main.jsx")
+    assert "export let LIBRARY_TOTAL = 0" in read("design-app/data.js")
+    assert "Math.max(LIBRARY_TOTAL, TRANSCRIPTS.length)" in read("design-app/data.js")
+    assert "Math.max(LIBRARY_TOTAL, TRANSCRIPTS.length)" in read("design-app/library.jsx")
+    assert "Math.max(LIBRARY_TOTAL, TRANSCRIPTS.length)" in read("design-app/shell.jsx")
     assert "currentJob.value?.id !== route.params.id" in api
     assert "setTimeout(load, 2000)" in api
     assert "export function isInFlight" in api
