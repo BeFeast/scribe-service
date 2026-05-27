@@ -20,6 +20,7 @@ from scribe.config import settings
 from scribe.obs.logging import configure as configure_logging
 from scribe.web.views import router as web_router
 from scribe.worker.loop import start_workers
+from scribe.worker.vast_budget import start_budget_monitor
 from scribe.worker.vast_reaper import run_vast_reaper_loop
 
 # Structured JSON logging — replaces basicConfig. Honours SCRIBE_LOG_LEVEL.
@@ -38,12 +39,16 @@ async def lifespan(app: FastAPI):
     threads = []
     stop = None
     reaper_task: asyncio.Task | None = None
+    budget_stop = None
     if not settings.app_start_workers or "PYTEST_CURRENT_TEST" in os.environ:
         log.info("workers disabled", extra={"pytest": "PYTEST_CURRENT_TEST" in os.environ})
     else:
         threads, stop = start_workers()
         reaper_task = asyncio.create_task(run_vast_reaper_loop(), name="scribe-vast-orphan-reaper")
+        budget_thread, budget_stop = start_budget_monitor()
+        threads.append(budget_thread)
         log.info("workers started", extra={"thread_count": len(threads)})
+        log.info("vast budget monitor started")
     try:
         yield
     finally:
@@ -53,10 +58,12 @@ async def lifespan(app: FastAPI):
                 await reaper_task
             except asyncio.CancelledError:
                 pass
+        if budget_stop is not None:
+            budget_stop.set()
         if stop is not None:
             stop.set()
-            for thread in threads:
-                thread.join(timeout=2.0)
+        for thread in threads:
+            thread.join(timeout=2.0)
 
 
 app = FastAPI(title="scribe", version="0.1.0", lifespan=lifespan)
