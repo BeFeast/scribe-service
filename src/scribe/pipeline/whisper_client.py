@@ -21,6 +21,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,12 +58,23 @@ class TranscribeResult:
     vast_cost: float
 
 
+def _noop_instance_created(_instance_id: int) -> None:
+    return None
+
+
 class _TranscribeRunContext:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        on_destroy_failed: Callable[[int], None] | None = None,
+        on_destroy_succeeded: Callable[[int], None] | None = None,
+    ) -> None:
         self._lock = threading.Lock()
         self._api_key = ""
         self._instance_id: int | None = None
         self._cancelled = False
+        self._on_destroy_failed = on_destroy_failed
+        self._on_destroy_succeeded = on_destroy_succeeded
 
     def set_api_key(self, api_key: str) -> None:
         with self._lock:
@@ -90,7 +102,14 @@ class _TranscribeRunContext:
             instance_id = self._instance_id
             self._instance_id = None
         if api_key and instance_id is not None:
-            _destroy_instance(api_key, instance_id)
+            try:
+                _destroy_instance(api_key, instance_id)
+            except Exception:
+                if self._on_destroy_failed is not None:
+                    self._on_destroy_failed(instance_id)
+                raise
+            if self._on_destroy_succeeded is not None:
+                self._on_destroy_succeeded(instance_id)
 
 
 # --- subprocess + http helpers ------------------------------------------
@@ -208,10 +227,16 @@ def _create_instance(api_key: str, offer: dict, public_key: str) -> int:
 
 
 def _destroy_instance(api_key: str, instance_id: int) -> None:
+    _vast(api_key, "DELETE", f"/instances/{instance_id}/", {}, timeout=45)
     try:
-        _vast(api_key, "DELETE", f"/instances/{instance_id}/", {}, timeout=45)
-    except Exception as exc:
-        print(f"Warning: failed to destroy Vast instance {instance_id}: {exc}", file=sys.stderr)
+        confirm = _vast(api_key, "GET", f"/instances/{instance_id}/", timeout=45)
+    except WhisperError as exc:
+        if "HTTP 404" in str(exc):
+            return
+        raise
+    if confirm.get("instances") is None:
+        return
+    raise WhisperError(f"Vast instance {instance_id} still present after destroy: {confirm}")
 
 
 def _get_instance(api_key: str, instance_id: int) -> dict:
@@ -304,6 +329,7 @@ def _transcribe_impl(
     wav: Path, *, title: str, source_url: str,
     model_size: str = "large-v3-turbo", compute_type: str = "float16",
     language: str = "auto", beam_size: int = 5,
+    on_instance_created: Callable[[int], None] = _noop_instance_created,
 ) -> TranscribeResult:
     """Transcribe a 16 kHz mono wav on a fresh Vast.ai GPU instance."""
     api_key = settings.vast_api_key.strip()
@@ -328,6 +354,7 @@ def _transcribe_impl(
         try:
             context.raise_if_cancelled()
             instance_id = _create_instance(api_key, offer, public_key)
+            on_instance_created(instance_id)
             context.set_instance(instance_id)
             context.raise_if_cancelled()
             startup_deadline = min(deadline, time.monotonic() + INSTANCE_READY_TIMEOUT)
@@ -395,13 +422,20 @@ def transcribe(
     wav: Path, *, title: str, source_url: str,
     model_size: str = "large-v3-turbo", compute_type: str = "float16",
     language: str = "auto", beam_size: int = 5,
+    on_instance_created: Callable[[int], None] | None = None,
+    on_destroy_failed: Callable[[int], None] | None = None,
+    on_destroy_succeeded: Callable[[int], None] | None = None,
 ) -> TranscribeResult:
     """Transcribe a 16 kHz mono wav on a fresh Vast.ai GPU instance."""
     timeout_secs = settings.transcribe_timeout_secs
     if timeout_secs <= 0:
         raise WhisperError("SCRIBE_TRANSCRIBE_TIMEOUT_SECS must be greater than 0")
 
-    context = _TranscribeRunContext()
+    context = _TranscribeRunContext(
+        on_destroy_failed=on_destroy_failed,
+        on_destroy_succeeded=on_destroy_succeeded,
+    )
+    notify_instance_created = on_instance_created or (lambda _instance_id: None)
     results: queue.Queue[TranscribeResult | BaseException] = queue.Queue(maxsize=1)
 
     def run() -> None:
@@ -415,6 +449,7 @@ def transcribe(
                 compute_type=compute_type,
                 language=language,
                 beam_size=beam_size,
+                on_instance_created=notify_instance_created,
             )
         except BaseException as exc:
             result = exc

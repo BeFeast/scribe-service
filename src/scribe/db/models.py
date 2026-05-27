@@ -130,6 +130,8 @@ class Job(Base):
     source: Mapped[str | None] = mapped_column(Text, nullable=True)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    vast_instance_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    destroy_failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Optional webhook target — scribe POSTs the final JobView JSON to
     # this URL on terminal status (done|failed). NULL = poll-only client.
     callback_url: Mapped[str | None] = mapped_column(Text, nullable=True)
