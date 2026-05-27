@@ -154,6 +154,9 @@ class Settings(BaseSettings):
     transcribe_timeout_secs: int = 1800
     vast_orphan_reaper_max_age_minutes: int = 60
     vast_orphan_reaper_interval_seconds: int = 300
+    vast_budget_baseline_usd_per_hour: float = 0.05
+    vast_budget_alert_multiplier: float = 5.0
+    vast_budget_check_interval_seconds: int = 3600
 
     # Summary backend — codex CLI (MVP)
     codex_bin: str = "codex"

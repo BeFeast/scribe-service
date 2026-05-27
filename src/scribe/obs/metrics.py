@@ -65,6 +65,11 @@ daily_spend_cap_pct = Gauge(
     "Rolling 24h Vast spend as a percent of the daily cap; 0 when cap disabled.",
 )
 
+vast_burn_rate_usd_per_hour = Gauge(
+    "scribe_vast_burn_rate_usd_per_hour",
+    "Current Vast.ai burn rate in USD/hour, sampled from live instances.",
+)
+
 
 def compute_daily_spend_cap_pct(spent_usd: float, cap_usd: float) -> float:
     """Percent of cap consumed. Returns 0.0 when the cap is disabled (<=0)."""
