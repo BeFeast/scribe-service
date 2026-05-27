@@ -30,17 +30,31 @@ import re
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 from scribe.alerts import send_admin_alert
 from scribe.config import settings
 from scribe.obs import metrics
 from scribe.pipeline import prompts
+from scribe.pipeline.summary_validator import (
+    ProviderError,
+    SummaryResult,
+    validate_and_canonicalize,
+)
 
 log = logging.getLogger("scribe.summarizer")
 
-_TAGS_RE = re.compile(r"^tags:\s*\[([^\]]*)\]", re.MULTILINE)
+# Re-exported so callers (and tests) can still write
+# `from scribe.pipeline.summarizer import SummaryResult` / `ProviderError`.
+__all__ = [
+    "CodexTokenRevokedError",
+    "LockTimeoutError",
+    "ProviderError",
+    "SummarizeError",
+    "SummaryResult",
+    "summarize",
+]
+
 _TAG_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _TAG_REPLACEMENTS = {
     "bytovaya-scena": "everyday-scene",
@@ -119,13 +133,6 @@ def _acquire_codex_lock(lock_fd: int, timeout: float | None) -> None:
             time.sleep(0.5)
 
 
-@dataclass
-class SummaryResult:
-    summary_md: str
-    tags: list[str]
-    short_description: str | None = None
-
-
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")
     return slug or "transcript"
@@ -151,22 +158,6 @@ def _short_description_language_name(code: str) -> str:
 
 def _is_token_revoked(stderr: str) -> bool:
     return any(sig in stderr for sig in _TOKEN_REVOKED_PATTERNS)
-
-
-def _extract_frontmatter_value(summary_md: str, key: str) -> str | None:
-    match = re.search(
-        rf"(?ms)^---\s*\n.*?^{re.escape(key)}:\s*(?P<value>.+?)\s*$.*?\n---\s*",
-        summary_md,
-    )
-    if not match:
-        return None
-    value = match.group("value").strip()
-    if (value.startswith('"') and value.endswith('"')) or (
-        value.startswith("'") and value.endswith("'")
-    ):
-        value = value[1:-1]
-    value = re.sub(r"\s+", " ", value).strip()
-    return value or None
 
 
 def _alert_token_revoked(stderr_tail: str) -> None:
@@ -260,19 +251,19 @@ def summarize(
     if not summary_md:
         raise SummarizeError("codex exec produced an empty summary")
     # Ops rollcall reads this gauge to flag the codex CLI as `warn` after >1h
-    # of silence. Sampled only on the success path so a stuck/revoked-token
-    # codex doesn't keep the timestamp fresh.
+    # of silence. Sampled only on the success path (codex CLI didn't error)
+    # so a stuck/revoked-token codex doesn't keep the timestamp fresh. A
+    # shape-invalid response still counts as a successful invocation from the
+    # auth/CLI side — the validator handles content-quality fallthrough below.
     metrics.last_codex_success_timestamp.set(time.time())
-    # strip accidental ``` fences wrapping the whole output
-    if summary_md.startswith("```"):
-        lines = summary_md.splitlines()
-        if len(lines) >= 2 and lines[-1].strip().startswith("```"):
-            summary_md = "\n".join(lines[1:-1]).strip()
 
-    tags: list[str] = []
-    match = _TAGS_RE.search(summary_md)
-    if match:
-        raw_tags = [t.strip().strip("\"'") for t in match.group(1).split(",") if t.strip()]
-        tags = _normalize_tags(raw_tags)
-    short_description = _extract_frontmatter_value(summary_md, "short_description")
-    return SummaryResult(summary_md=summary_md, tags=tags, short_description=short_description)
+    # Shape validation + canonicalisation. Raises ProviderError(shape_invalid)
+    # if the output can't be repaired, which the chain treats like a timeout.
+    result = validate_and_canonicalize(summary_md)
+    # Apply codex-specific tag content rules (slug regex, transliteration,
+    # rejected placeholders) on top of the shape-only validator output.
+    return SummaryResult(
+        summary_md=result.summary_md,
+        tags=_normalize_tags(result.tags),
+        short_description=result.short_description,
+    )

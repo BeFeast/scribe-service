@@ -16,7 +16,7 @@ short_description: "<1-2 complete {short_description_language_name} sentences fo
 tags: [llm, local-ai, performance]
 ---
 
-# <Тема на русском — краткая, ёмкая>
+## <Тема на русском — краткая, ёмкая>
 
 ## TL;DR
 
@@ -39,6 +39,9 @@ tags: [llm, local-ai, performance]
 
 ## Rules
 
+- The output must start with `---` and contain a YAML frontmatter block with `tags: [list of strings]` and `short_description: string`. The frontmatter block must end with `---` on its own line.
+- All section headers use `##`. No `#` H1 headers anywhere in the output.
+- No prose outside of the structured sections — everything below the frontmatter must live under a `##` section.
 - Language: Russian for summary content. `short_description` must be {short_description_language_name} for the library UI.
 - Tags must be English semantic lowercase slugs: English words only, hyphen-separated, no Cyrillic, no transliterated Russian/Hebrew/etc. Keep proper nouns or widely used product/project names such as `apple`, `apple-silicon`, or `claude-code`.
 - Do NOT paraphrase the transcript — ANALYZE it. Ask yourself: what is the author trying to convince me of? What evidence do they use?
