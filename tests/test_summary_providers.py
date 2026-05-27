@@ -162,12 +162,15 @@ def _patch_claude_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_claude_provider_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_claude_settings(monkeypatch)
 
-    def fake_run(cmd, text, capture_output, timeout):  # noqa: ARG001
+    def fake_run(cmd, *, input, text, capture_output, timeout):  # noqa: ARG001
         assert "-p" in cmd
+        assert input == "prompt-from-stdin"
+        # prompt MUST NOT be in argv — it goes via stdin to avoid E2BIG.
+        assert all(part != "prompt-from-stdin" for part in cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout=_OK_MARKDOWN, stderr="")
 
     monkeypatch.setattr(summary_providers.subprocess, "run", fake_run)
-    result = ClaudeProvider().summarize("prompt")
+    result = ClaudeProvider().summarize("prompt-from-stdin")
     assert isinstance(result, SummaryResult)
 
 
@@ -185,7 +188,7 @@ def test_claude_provider_usage_limit_stderr_maps_to_usage_limit_error(
 ) -> None:
     _patch_claude_settings(monkeypatch)
 
-    def fake_run(cmd, text, capture_output, timeout):  # noqa: ARG001
+    def fake_run(cmd, *, input, text, capture_output, timeout):  # noqa: ARG001
         return subprocess.CompletedProcess(cmd, 2, stdout="", stderr=stderr)
 
     monkeypatch.setattr(summary_providers.subprocess, "run", fake_run)
@@ -212,7 +215,7 @@ def test_claude_provider_timeout_maps_to_provider_timeout(
 ) -> None:
     _patch_claude_settings(monkeypatch)
 
-    def fake_run(cmd, text, capture_output, timeout):  # noqa: ARG001
+    def fake_run(cmd, *, input, text, capture_output, timeout):  # noqa: ARG001
         raise subprocess.TimeoutExpired(cmd, timeout)
 
     monkeypatch.setattr(summary_providers.subprocess, "run", fake_run)
@@ -223,7 +226,7 @@ def test_claude_provider_timeout_maps_to_provider_timeout(
 def test_claude_provider_unavailable_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_claude_settings(monkeypatch)
 
-    def fake_run(cmd, text, capture_output, timeout):  # noqa: ARG001
+    def fake_run(cmd, *, input, text, capture_output, timeout):  # noqa: ARG001
         return subprocess.CompletedProcess(
             cmd, 1, stdout="", stderr="please run `claude login` first"
         )
@@ -231,6 +234,24 @@ def test_claude_provider_unavailable_stderr(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(summary_providers.subprocess, "run", fake_run)
     with pytest.raises(ProviderUnavailableError):
         ClaudeProvider().summarize("prompt")
+
+
+def test_claude_provider_e2big_maps_to_provider_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Kernel argv limit (E2BIG) must surface as ProviderError, not raw OSError,
+    so the fallback chain advances rather than crashing."""
+    import errno
+
+    _patch_claude_settings(monkeypatch)
+
+    def fake_run(*args: Any, **kwargs: Any):  # noqa: ARG001
+        raise OSError(errno.E2BIG, "Argument list too long")
+
+    monkeypatch.setattr(summary_providers.subprocess, "run", fake_run)
+    with pytest.raises(ProviderError) as exc:
+        ClaudeProvider().summarize("prompt")
+    assert exc.value.reason == "claude_exec_failed"
 
 
 # ---------- FreeLLMAPIProvider -----------------------------------------------

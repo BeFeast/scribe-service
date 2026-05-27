@@ -477,15 +477,19 @@ class ClaudeProvider:
 
     def summarize(self, prompt: str) -> SummaryResult:
         s = self._settings
+        # Pass the prompt via stdin (-p enables non-interactive print mode and
+        # reads from stdin when no positional prompt is given). Avoids hitting
+        # the kernel argv size limit (E2BIG) for long transcripts.
         cmd = [
             s.claude_bin,
             "--model", s.claude_model,
             "--effort", s.claude_effort,
-            "-p", prompt,
+            "-p",
         ]
         try:
             proc = subprocess.run(
                 cmd,
+                input=prompt,
                 text=True,
                 capture_output=True,
                 timeout=s.claude_timeout_secs,
@@ -499,6 +503,13 @@ class ClaudeProvider:
             raise ProviderTimeoutError(
                 reason="timeout",
                 details=f"claude timed out after {s.claude_timeout_secs}s",
+            ) from exc
+        except OSError as exc:
+            # E2BIG (argument list too long), ENOMEM, etc. — keep them inside
+            # the fallback chain instead of bubbling out as raw OSError.
+            raise ProviderError(
+                reason="claude_exec_failed",
+                details=f"{type(exc).__name__}: {exc}",
             ) from exc
 
         stderr = proc.stderr or ""
