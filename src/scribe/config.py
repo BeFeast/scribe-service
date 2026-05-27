@@ -151,6 +151,7 @@ class Settings(BaseSettings):
 
     # Vast.ai — whisper only
     vast_api_key: str = ""
+    transcribe_timeout_secs: int = 1800
 
     # Summary backend — codex CLI (MVP)
     codex_bin: str = "codex"

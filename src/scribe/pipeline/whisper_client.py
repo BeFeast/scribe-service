@@ -11,11 +11,13 @@ display driver / cuda driver combination" failure seen on 2026-05-14).
 from __future__ import annotations
 
 import json
+import queue
 import shlex
 import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -41,6 +43,10 @@ class WhisperError(RuntimeError):
     pass
 
 
+class TranscribeTimeoutError(WhisperError):
+    pass
+
+
 @dataclass
 class TranscribeResult:
     transcript_md: str
@@ -49,6 +55,42 @@ class TranscribeResult:
     backend: str
     vast_instance_id: int
     vast_cost: float
+
+
+class _TranscribeRunContext:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._api_key = ""
+        self._instance_id: int | None = None
+        self._cancelled = False
+
+    def set_api_key(self, api_key: str) -> None:
+        with self._lock:
+            self._api_key = api_key
+
+    def set_instance(self, instance_id: int) -> None:
+        with self._lock:
+            self._instance_id = instance_id
+
+    def cancel(self) -> None:
+        with self._lock:
+            self._cancelled = True
+
+    def raise_if_cancelled(self) -> None:
+        with self._lock:
+            cancelled = self._cancelled
+        if cancelled:
+            raise TranscribeTimeoutError(
+                f"transcribe timed out after {settings.transcribe_timeout_secs}s"
+            )
+
+    def destroy_instance(self) -> None:
+        with self._lock:
+            api_key = self._api_key
+            instance_id = self._instance_id
+            self._instance_id = None
+        if api_key and instance_id is not None:
+            _destroy_instance(api_key, instance_id)
 
 
 # --- subprocess + http helpers ------------------------------------------
@@ -257,7 +299,8 @@ def _wait_remote_ready(host, port, key_path, started, deadline, price, max_cost)
 
 
 # --- public API ---------------------------------------------------------
-def transcribe(
+def _transcribe_impl(
+    context: _TranscribeRunContext,
     wav: Path, *, title: str, source_url: str,
     model_size: str = "large-v3-turbo", compute_type: str = "float16",
     language: str = "auto", beam_size: int = 5,
@@ -266,9 +309,12 @@ def transcribe(
     api_key = settings.vast_api_key.strip()
     if not api_key:
         raise WhisperError("SCRIBE_VAST_API_KEY is not set")
+    context.set_api_key(api_key)
+    context.raise_if_cancelled()
     key_path, public_key = _ensure_local_ssh_key()
     _ensure_vast_ssh_key(api_key, public_key)
     offers = _select_offers(api_key, max_price=MAX_PRICE_PER_HOUR)
+    context.raise_if_cancelled()
 
     started = time.monotonic()
     instance_id: int | None = None
@@ -280,18 +326,23 @@ def transcribe(
         price = float(offer.get("dph_total") or 0)
         deadline = _budget_deadline(started, price, MAX_JOB_COST, MAX_INSTANCE_SECONDS)
         try:
+            context.raise_if_cancelled()
             instance_id = _create_instance(api_key, offer, public_key)
+            context.set_instance(instance_id)
+            context.raise_if_cancelled()
             startup_deadline = min(deadline, time.monotonic() + INSTANCE_READY_TIMEOUT)
             host, port = _wait_for_ssh(api_key, instance_id, key_path, started, startup_deadline, price, MAX_JOB_COST)
             _wait_remote_ready(host, port, key_path, started, startup_deadline, price, MAX_JOB_COST)
             break
-        except (WhisperError, TimeoutError) as exc:
+        except (WhisperError, TimeoutError, TranscribeTimeoutError) as exc:
             last_err = exc
             print(f"Warning: Vast offer {offer.get('id')} unusable: {exc}", file=sys.stderr)
             if instance_id is not None:
-                _destroy_instance(api_key, instance_id)
+                context.destroy_instance()
                 instance_id = None
             host = port = None
+            if isinstance(exc, TranscribeTimeoutError):
+                raise
     if instance_id is None or host is None:
         raise WhisperError(f"no Vast instance became ready; last error: {last_err}")
 
@@ -307,6 +358,7 @@ def transcribe(
             _scp_to(host, port, key_path, remote_script, "/root/remote_transcribe.py")
             _scp_to(host, port, key_path, wav, "/root/work/input-16k.wav")
 
+            context.raise_if_cancelled()
             cmd = (
                 "cd /root && /opt/video-summary-venv/bin/python remote_transcribe.py "
                 f"--audio-file work/input-16k.wav "
@@ -321,6 +373,7 @@ def transcribe(
             _ensure_budget(started, deadline, price, MAX_JOB_COST)
             remote_timeout = max(120, int(deadline - time.monotonic()))
             _run([*_ssh_base(host, port, key_path), cmd], timeout=remote_timeout)
+            context.raise_if_cancelled()
             _scp_from(host, port, key_path, "/root/out/result.json", local_json)
             _scp_from(host, port, key_path, "/root/out/transcript.md", local_md)
 
@@ -335,4 +388,49 @@ def transcribe(
                 vast_cost=price * elapsed / 3600 if price else 0.0,
             )
     finally:
-        _destroy_instance(api_key, instance_id)
+        context.destroy_instance()
+
+
+def transcribe(
+    wav: Path, *, title: str, source_url: str,
+    model_size: str = "large-v3-turbo", compute_type: str = "float16",
+    language: str = "auto", beam_size: int = 5,
+) -> TranscribeResult:
+    """Transcribe a 16 kHz mono wav on a fresh Vast.ai GPU instance."""
+    timeout_secs = settings.transcribe_timeout_secs
+    if timeout_secs <= 0:
+        raise WhisperError("SCRIBE_TRANSCRIBE_TIMEOUT_SECS must be greater than 0")
+
+    context = _TranscribeRunContext()
+    results: queue.Queue[TranscribeResult | BaseException] = queue.Queue(maxsize=1)
+
+    def run() -> None:
+        try:
+            result = _transcribe_impl(
+                context,
+                wav,
+                title=title,
+                source_url=source_url,
+                model_size=model_size,
+                compute_type=compute_type,
+                language=language,
+                beam_size=beam_size,
+            )
+        except BaseException as exc:
+            result = exc
+        try:
+            results.put_nowait(result)
+        except queue.Full:
+            pass
+
+    thread = threading.Thread(target=run, name="scribe-transcribe-wallclock", daemon=True)
+    thread.start()
+    try:
+        result = results.get(timeout=timeout_secs)
+    except queue.Empty as exc:
+        context.cancel()
+        context.destroy_instance()
+        raise TranscribeTimeoutError(f"transcribe timed out after {timeout_secs}s") from exc
+    if isinstance(result, BaseException):
+        raise result
+    return result
