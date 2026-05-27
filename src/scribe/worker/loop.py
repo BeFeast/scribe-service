@@ -26,9 +26,11 @@ import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import select
+from sqlalchemy.orm import sessionmaker
 
 from scribe.api.routes import render_job_view, transition_job_status
 from scribe.config import settings
@@ -149,7 +151,70 @@ def _time_stage(stage: str):
 
 def _set_job_status(session, job: Job, status: JobStatus) -> None:
     """Update Job.status, count the transition, commit."""
+    if status == JobStatus.done and job.destroy_failed_at is not None:
+        raise RuntimeError(f"job {job.id} cannot be marked done while Vast destroy is unconfirmed")
     transition_job_status(session, job, status)
+
+
+def _record_vast_instance_created(job_id: int, instance_id: int, session_factory=SessionLocal) -> None:
+    with session_factory() as session:
+        job = session.get(Job, job_id)
+        if job is None:
+            return
+        job.vast_instance_id = instance_id
+        job.destroy_failed_at = None
+        session.commit()
+
+
+def _record_vast_destroy_failed(job_id: int, instance_id: int, session_factory=SessionLocal) -> None:
+    with session_factory() as session:
+        job = session.get(Job, job_id)
+        if job is None:
+            return
+        job.vast_instance_id = instance_id
+        job.destroy_failed_at = datetime.now(UTC)
+        session.commit()
+
+
+def _record_vast_destroy_succeeded(job_id: int, instance_id: int, session_factory=SessionLocal) -> None:
+    with session_factory() as session:
+        job = session.get(Job, job_id)
+        if job is None:
+            return
+        job.vast_instance_id = instance_id
+        job.destroy_failed_at = None
+        session.commit()
+
+
+def _retry_job_vast_destroy(job: Job) -> bool:
+    if job.vast_instance_id is None:
+        return True
+    api_key = settings.vast_api_key.strip()
+    if not api_key:
+        job.destroy_failed_at = datetime.now(UTC)
+        return False
+    try:
+        whisper_client._destroy_instance(api_key, job.vast_instance_id)
+    except Exception:
+        job.destroy_failed_at = datetime.now(UTC)
+        return False
+    job.destroy_failed_at = None
+    return True
+
+
+def retry_failed_vast_destroys(session) -> int:
+    jobs = session.scalars(
+        select(Job)
+        .where(Job.vast_instance_id.is_not(None), Job.destroy_failed_at.is_not(None))
+        .order_by(Job.id)
+        .with_for_update(skip_locked=True)
+    ).all()
+    recovered = 0
+    for job in jobs:
+        if _retry_job_vast_destroy(job):
+            recovered += 1
+    session.commit()
+    return recovered
 
 
 def _claim_next_job(session) -> Job | None:
@@ -184,6 +249,17 @@ def recover_interrupted_jobs(session) -> int:
     ).all()
     for job in jobs:
         old_status = job.status
+        if job.vast_instance_id is not None and not _retry_job_vast_destroy(job):
+            log.warning(
+                "interrupted job Vast destroy still unconfirmed",
+                extra={
+                    "job_id": job.id,
+                    "video_id": job.video_id,
+                    "vast_instance_id": job.vast_instance_id,
+                },
+            )
+            transition_job_status(session, job, JobStatus.failed)
+            continue
         log.warning(
             "requeueing interrupted job",
             extra={
@@ -238,6 +314,7 @@ def _summarize_and_finalize(session, job: Job, transcript: Transcript, title: st
     transcript.summary_md = summary.summary_md
     transcript.short_description = summary.short_description
     transcript.tags = summary.tags or None
+    session.refresh(job)
     _set_job_status(session, job, JobStatus.done)
     metrics.transcripts_total.labels(kind="promoted" if promoted else "full").inc()
     metrics.last_success_timestamp.set(time.time())
@@ -312,8 +389,26 @@ def process_job(session, job: Job) -> None:
                     wav = ffmpeg.to_wav_16k_mono(dl.audio_path, tmpdir / "input-16k.wav")
 
                 _set_job_status(session, job, JobStatus.transcribing)
+                vast_session_factory = sessionmaker(
+                    bind=session.get_bind(),
+                    autoflush=False,
+                    expire_on_commit=False,
+                )
                 with _time_stage("whisper"):
-                    tr = whisper_client.transcribe(wav, title=dl.title, source_url=job.url)
+                    tr = whisper_client.transcribe(
+                        wav,
+                        title=dl.title,
+                        source_url=job.url,
+                        on_instance_created=lambda instance_id: _record_vast_instance_created(
+                            job_id, instance_id, vast_session_factory
+                        ),
+                        on_destroy_failed=lambda instance_id: _record_vast_destroy_failed(
+                            job_id, instance_id, vast_session_factory
+                        ),
+                        on_destroy_succeeded=lambda instance_id: _record_vast_destroy_succeeded(
+                            job_id, instance_id, vast_session_factory
+                        ),
+                    )
                 # The ops rollcall reads this gauge to flag Vast.ai as `warn`
                 # after 24h with no launches.
                 metrics.last_vast_launch_timestamp.set(time.time())
@@ -370,6 +465,7 @@ def run_worker(stop: threading.Event) -> None:
     while not stop.is_set():
         session = SessionLocal()
         try:
+            retry_failed_vast_destroys(session)
             job = _claim_next_job(session)
             if job is None:
                 stop.wait(_POLL_INTERVAL)
