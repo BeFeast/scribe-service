@@ -43,6 +43,13 @@ vast_spend_usd_total = Counter(
     "Cumulative estimated Vast.ai spend in USD.",
 )
 
+# Stale scribe-labelled Vast instances destroyed by the orphan reaper.
+# Incremented before DELETE so failed API attempts are visible too.
+vast_orphans_destroyed_total = Counter(
+    "scribe_vast_orphans_destroyed_total",
+    "Stale scribe-labelled Vast.ai instances the orphan reaper attempted to destroy.",
+)
+
 # Rolling 24h Vast spend (USD) — same window the daily-spend cap uses.
 # Sampled from the DB on each /metrics scrape so alert rules can compare
 # directly against SCRIBE_DAILY_SPEND_CAP_USD.
