@@ -76,6 +76,28 @@ The service image runs `uv run alembic upgrade head` in its entrypoint before
 starting Uvicorn. If migrations fail, the container exits instead of serving
 traffic against a stale schema.
 
+## Operational logs
+
+The `scribe` compose service writes container stdout/stderr to journald with
+the Docker tag `scribe`, so logs survive `docker compose up --build scribe`
+replacing the container. To inspect logs from before the most recent redeploy
+on the devbox:
+
+```bash
+journalctl --since "7 days ago" CONTAINER_TAG=scribe
+```
+
+Narrow the time window when investigating an incident, for example:
+
+```bash
+journalctl --since "2026-05-24 00:00" --until "2026-05-27 12:00" CONTAINER_TAG=scribe
+```
+
+Retention check on the devbox, verified 2026-05-27: journald uses persistent
+storage under `/var/log/journal`, the visible journal spans 2026-04-23 through
+2026-05-27, and journal disk usage is about 425 MB on a 129 GB root filesystem.
+That is more than seven days of local journal capacity for scribe output.
+
 ## HTTP API (excerpt)
 
 | Method | Path | Description |

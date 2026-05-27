@@ -9,5 +9,9 @@ services:
     volumes:
       - ./data/codex-auth:/root/.codex          # codex auth JSON (transferred)
       - /mnt/nfs/scribe-tmp:/data/tmp           # TODO(task#12): NFS mount of TrueNAS
+    logging:
+      driver: journald
+      options:
+        tag: scribe
     restart: unless-stopped
     # network: reach db-dev Postgres — TODO(task#12)

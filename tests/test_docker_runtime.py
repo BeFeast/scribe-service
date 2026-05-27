@@ -16,3 +16,9 @@ def test_service_container_runs_migrations_before_uvicorn() -> None:
     exec_step = entrypoint.index('exec "$@"')
     assert migration_step < exec_step
     assert "set -eu" in entrypoint
+
+
+def test_compose_persists_scribe_logs_in_journald() -> None:
+    compose = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
+
+    assert "logging:\n      driver: journald\n      options:\n        tag: scribe" in compose
