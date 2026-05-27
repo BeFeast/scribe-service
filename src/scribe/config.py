@@ -153,6 +153,14 @@ class Settings(BaseSettings):
     vast_api_key: str = ""
     transcribe_timeout_secs: int = 1800
 
+    # Summary fallback-chain circuit breaker (see
+    # scribe.pipeline.summary_providers.CircuitBreaker). Per-provider in-process
+    # state: if the last `threshold` outcomes within `window_secs` are all
+    # trip-relevant errors, the provider is skipped for `cooldown_secs`.
+    summary_breaker_window_secs: int = 300
+    summary_breaker_threshold: int = 3
+    summary_breaker_cooldown_secs: int = 600
+
     # Summary backend — codex CLI (MVP)
     codex_bin: str = "codex"
     # empty = use the codex config.toml model (gpt-5.x family). gpt-5.4-nano/mini

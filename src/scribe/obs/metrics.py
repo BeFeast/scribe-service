@@ -139,6 +139,32 @@ webhook_attempts_total = Counter(
     labelnames=("outcome",),
 )
 
+# Summary-provider chain telemetry. The fallback chain calls each provider in
+# order; the circuit breaker (scribe.pipeline.summary_providers) short-circuits
+# providers that have failed often enough.
+#
+# result labels: success, usage_limit, unavailable, timeout, error, skipped_tripped.
+summary_provider_calls_total = Counter(
+    "scribe_summary_provider_calls_total",
+    "Summary provider invocations, labelled by provider and outcome.",
+    labelnames=("provider", "result"),
+)
+
+# Per-provider breaker state. 0=closed, 1=half_open, 2=tripped.
+summary_provider_state = Gauge(
+    "scribe_summary_provider_state",
+    "Circuit-breaker state per summary provider (0=closed, 1=half_open, 2=tripped).",
+    labelnames=("provider",),
+)
+
+# Outcome of the overall fallback chain run.
+# outcome labels: success_first, success_after_fallback, all_failed.
+summary_chain_outcome_total = Counter(
+    "scribe_summary_chain_outcome_total",
+    "Summary fallback-chain outcomes per run.",
+    labelnames=("outcome",),
+)
+
 
 def gauge_value(g: Gauge) -> float:
     """Read the current value of an unlabelled Gauge using prometheus_client's

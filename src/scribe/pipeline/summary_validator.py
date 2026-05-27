@@ -54,6 +54,18 @@ class ProviderError(RuntimeError):
         self.details = details
 
 
+class ProviderUsageLimitError(ProviderError):
+    """Provider rejected the call due to a usage cap (quota / rate limit)."""
+
+
+class ProviderUnavailableError(ProviderError):
+    """Provider service is unavailable (5xx, connection refused, DNS, etc.)."""
+
+
+class ProviderTimeoutError(ProviderError):
+    """Provider call exceeded the per-attempt wall-clock budget."""
+
+
 @dataclass
 class SummaryResult:
     """Canonical summary payload returned by a provider after validation."""
