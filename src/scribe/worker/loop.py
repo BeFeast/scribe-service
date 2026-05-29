@@ -38,6 +38,7 @@ from scribe.db.models import Job, JobStatus, Transcript
 from scribe.db.session import SessionLocal
 from scribe.obs import metrics
 from scribe.pipeline import downloader, ffmpeg, summarizer, whisper_client
+from scribe.worker import vast_budget
 
 log = logging.getLogger("scribe.worker")
 
@@ -184,6 +185,14 @@ def _record_vast_destroy_succeeded(job_id: int, instance_id: int, session_factor
         job.vast_instance_id = instance_id
         job.destroy_failed_at = None
         session.commit()
+
+
+def _enforce_monthly_cap(session_factory=SessionLocal) -> None:
+    """Read-only DB check called from the whisper client right before it asks
+    Vast for an instance. Raises WhisperError when the rolling 30-day spend
+    (including a conservative in-flight reservation) exceeds the cap."""
+    with session_factory() as session:
+        vast_budget.enforce_monthly_cap(session)
 
 
 def _retry_job_vast_destroy(job: Job) -> bool:
@@ -408,6 +417,7 @@ def process_job(session, job: Job) -> None:
                         on_destroy_succeeded=lambda instance_id: _record_vast_destroy_succeeded(
                             job_id, instance_id, vast_session_factory
                         ),
+                        check_monthly_cap=lambda: _enforce_monthly_cap(vast_session_factory),
                     )
                 # The ops rollcall reads this gauge to flag Vast.ai as `warn`
                 # after 24h with no launches.

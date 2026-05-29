@@ -29,13 +29,9 @@ from scribe.config import settings
 
 VAST_API = "https://console.vast.ai/api/v0"
 VAST_IMAGE = "ghcr.io/befeast/scribe-service-vast:cuda12.4-whisper"
-GPU_REGEX = r"\b(RTX\s+4090|(RTX\s+)?A[2456][05]00|A10|A40|L4|L40S?|RTX\s+(4000|4500|5000|5500|6000)(\s+Ada(\s+Generation)?)?)\b"
-MIN_CUDA = 12.4
-MAX_PRICE_PER_HOUR = 1.0
-MAX_JOB_COST = 0.25
+# Hard upper bound on a single instance's wall-clock budget; the per-job cost
+# guard (settings.vast_max_job_cost) usually trips well before this.
 MAX_INSTANCE_SECONDS = 1800
-OFFER_ATTEMPTS = 6
-INSTANCE_READY_TIMEOUT = 360
 
 REMOTE_TRANSCRIBE_SCRIPT = '#!/usr/bin/env -S uv run\n# /// script\n# requires-python = ">=3.10"\n# dependencies = [\n#   "faster-whisper>=1.1.1",\n# ]\n# ///\n\nimport argparse\nimport json\nimport re\nfrom datetime import datetime, timezone\nfrom pathlib import Path\n\nfrom faster_whisper import WhisperModel\n\n\ndef slugify(value: str) -> str:\n    slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")\n    return slug or "transcript"\n\n\ndef main() -> int:\n    parser = argparse.ArgumentParser()\n    parser.add_argument("--audio-file", required=True)\n    parser.add_argument("--title", required=True)\n    parser.add_argument("--source-url", required=True)\n    parser.add_argument("--model-size", default="large-v3-turbo")\n    parser.add_argument("--compute-type", default="float16")\n    parser.add_argument("--language", default="auto")\n    parser.add_argument("--beam-size", type=int, default=5)\n    parser.add_argument("--output-json", required=True)\n    parser.add_argument("--output-markdown", required=True)\n    args = parser.parse_args()\n\n    language = None if args.language == "auto" else args.language\n    model = WhisperModel(args.model_size, device="cuda", compute_type=args.compute_type)\n    segments, info = model.transcribe(args.audio_file, language=language, beam_size=args.beam_size, vad_filter=True)\n    collected = list(segments)\n    transcript_text = " ".join(segment.text.strip() for segment in collected if segment.text.strip()).strip()\n    duration = max((segment.end for segment in collected), default=None)\n    detected_language = getattr(info, "language", None) or "unknown"\n    language_probability = getattr(info, "language_probability", None)\n    generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")\n    backend = f"faster-whisper ({args.model_size}, {args.compute_type}, cuda)"\n    probability_text = "unknown" if language_probability is None else f"{language_probability:.3f}"\n    duration_text = "unknown" if duration is None else f"{duration:.2f}s"\n\n    markdown = (\n        f"# {args.title}\\n\\n"\n        "## Metadata\\n"\n        f"- Source URL: {args.source_url}\\n"\n        "- Source audio: Vast remote yt-dlp/ffmpeg pipeline\\n"\n        f"- Transcription model: {backend}\\n"\n        f"- Detected language: {detected_language}\\n"\n        f"- Language probability: {probability_text}\\n"\n        f"- Duration: {duration_text}\\n"\n        f"- Generated at: {generated_at}\\n\\n"\n        "## Transcript\\n\\n"\n        f"{transcript_text}\\n"\n    )\n    Path(args.output_markdown).write_text(markdown, encoding="utf-8")\n    Path(args.output_json).write_text(\n        json.dumps(\n            {\n                "title": args.title,\n                "detected_language": detected_language,\n                "language_probability": language_probability,\n                "duration_seconds": duration,\n                "backend": backend,\n                "transcript_characters": len(transcript_text),\n            },\n            ensure_ascii=False,\n        ),\n        encoding="utf-8",\n    )\n    print(f"TITLE:{args.title}")\n    print(f"DETECTED_LANGUAGE:{detected_language}")\n    print(f"TRANSCRIBE_BACKEND:{backend}")\n    print(f"TRANSCRIPT_CHARACTERS:{len(transcript_text)}")\n    return 0\n\n\nif __name__ == "__main__":\n    raise SystemExit(main())\n'
 
@@ -167,7 +163,13 @@ def _ensure_vast_ssh_key(api_key: str, public_key: str) -> None:
 
 
 # --- offers -------------------------------------------------------------
-def _select_offers(api_key: str, *, max_price: float) -> list[dict]:
+def _select_offers(
+    api_key: str,
+    *,
+    max_price: float,
+    gpu_regex: str,
+    min_cuda: float,
+) -> list[dict]:
     import re
 
     query = {
@@ -176,23 +178,41 @@ def _select_offers(api_key: str, *, max_price: float) -> list[dict]:
         "gpu_ram": {"gte": 16000}, "num_gpus": {"eq": 1},
     }
     offers = _vast(api_key, "POST", "/bundles/", query, timeout=60).get("offers", [])
-    pattern = re.compile(GPU_REGEX, re.IGNORECASE)
+    pattern = re.compile(gpu_regex, re.IGNORECASE)
     candidates = []
     for offer in offers:
         price = float(offer.get("dph_total") or 999)
         cuda = float(offer.get("cuda_max_good") or 0)
         reliability = float(offer.get("reliability") or offer.get("reliability2") or 0)
-        if (price <= max_price and cuda >= MIN_CUDA and reliability >= 0.90
+        if (price <= max_price and cuda >= min_cuda and reliability >= 0.90
                 and pattern.search(str(offer.get("gpu_name") or ""))):
             candidates.append(offer)
     if not candidates:
         raise WhisperError(
-            f"no Vast offer matched (max_price={max_price}, cuda_max_good>={MIN_CUDA}, gpu_regex, reliability>=0.90)"
+            f"no Vast offer matched (max_price={max_price}, cuda_max_good>={min_cuda}, gpu_regex, reliability>=0.90)"
         )
+    # Cheapest first; prefer high reliability and a fast network on ties so the
+    # CUDA image pull does not eat the ready-timeout budget.
     return sorted(
         candidates,
-        key=lambda o: (float(o.get("dph_total") or 999), -float(o.get("reliability") or o.get("reliability2") or 0)),
+        key=lambda o: (
+            float(o.get("dph_total") or 999),
+            -float(o.get("reliability") or o.get("reliability2") or 0),
+            -float(o.get("inet_down") or 0),
+        ),
     )
+
+
+def _is_no_such_ask(exc: BaseException) -> bool:
+    """Detect the offer→ask race: Vast returns HTTP 400 with 'no_such_ask' or
+    'not available' when the offer was rented by another tenant between
+    `_select_offers` and our `PUT /asks/{id}`. We can immediately try the next
+    candidate without spending the ready-timeout budget."""
+    text = str(exc)
+    if "HTTP 400" not in text:
+        return False
+    lowered = text.lower()
+    return "no_such_ask" in lowered or "not available" in lowered
 
 
 # --- instance lifecycle -------------------------------------------------
@@ -330,6 +350,7 @@ def _transcribe_impl(
     model_size: str = "large-v3-turbo", compute_type: str = "float16",
     language: str = "auto", beam_size: int = 5,
     on_instance_created: Callable[[int], None] = _noop_instance_created,
+    check_monthly_cap: Callable[[], None] | None = None,
 ) -> TranscribeResult:
     """Transcribe a 16 kHz mono wav on a fresh Vast.ai GPU instance."""
     api_key = settings.vast_api_key.strip()
@@ -337,9 +358,21 @@ def _transcribe_impl(
         raise WhisperError("SCRIBE_VAST_API_KEY is not set")
     context.set_api_key(api_key)
     context.raise_if_cancelled()
+    if check_monthly_cap is not None:
+        check_monthly_cap()
+    max_price = float(settings.vast_max_price_per_hour)
+    min_cuda = float(settings.vast_min_cuda)
+    max_job_cost = float(settings.vast_max_job_cost)
+    ready_timeout = int(settings.vast_instance_ready_timeout)
+    offer_attempts = max(1, int(settings.vast_offer_attempts))
     key_path, public_key = _ensure_local_ssh_key()
     _ensure_vast_ssh_key(api_key, public_key)
-    offers = _select_offers(api_key, max_price=MAX_PRICE_PER_HOUR)
+    offers = _select_offers(
+        api_key,
+        max_price=max_price,
+        gpu_regex=settings.vast_gpu_regex,
+        min_cuda=min_cuda,
+    )
     context.raise_if_cancelled()
 
     started = time.monotonic()
@@ -348,18 +381,39 @@ def _transcribe_impl(
     price = 0.0
     deadline = started + MAX_INSTANCE_SECONDS
     last_err: Exception | None = None
-    for offer in offers[:OFFER_ATTEMPTS]:
+    attempts = 0
+    for offer in offers:
+        if attempts >= offer_attempts:
+            break
         price = float(offer.get("dph_total") or 0)
-        deadline = _budget_deadline(started, price, MAX_JOB_COST, MAX_INSTANCE_SECONDS)
+        deadline = _budget_deadline(started, price, max_job_cost, MAX_INSTANCE_SECONDS)
         try:
             context.raise_if_cancelled()
             instance_id = _create_instance(api_key, offer, public_key)
+        except (WhisperError, TimeoutError) as exc:
+            last_err = exc
+            if _is_no_such_ask(exc):
+                # Offer→ask race: another tenant rented this offer between
+                # _select_offers and PUT /asks/{id}/. Don't burn an attempt
+                # slot or the ready-timeout budget — try the next candidate.
+                print(
+                    f"Notice: Vast offer {offer.get('id')} vanished (no_such_ask); trying next",
+                    file=sys.stderr,
+                )
+                instance_id = None
+                continue
+            attempts += 1
+            print(f"Warning: Vast offer {offer.get('id')} unusable: {exc}", file=sys.stderr)
+            instance_id = None
+            continue
+        attempts += 1
+        try:
             on_instance_created(instance_id)
             context.set_instance(instance_id)
             context.raise_if_cancelled()
-            startup_deadline = min(deadline, time.monotonic() + INSTANCE_READY_TIMEOUT)
-            host, port = _wait_for_ssh(api_key, instance_id, key_path, started, startup_deadline, price, MAX_JOB_COST)
-            _wait_remote_ready(host, port, key_path, started, startup_deadline, price, MAX_JOB_COST)
+            startup_deadline = min(deadline, time.monotonic() + ready_timeout)
+            host, port = _wait_for_ssh(api_key, instance_id, key_path, started, startup_deadline, price, max_job_cost)
+            _wait_remote_ready(host, port, key_path, started, startup_deadline, price, max_job_cost)
             break
         except (WhisperError, TimeoutError, TranscribeTimeoutError) as exc:
             last_err = exc
@@ -397,7 +451,7 @@ def _transcribe_impl(
                 f"--beam-size {int(beam_size)} "
                 "--output-json out/result.json --output-markdown out/transcript.md"
             )
-            _ensure_budget(started, deadline, price, MAX_JOB_COST)
+            _ensure_budget(started, deadline, price, max_job_cost)
             remote_timeout = max(120, int(deadline - time.monotonic()))
             _run([*_ssh_base(host, port, key_path), cmd], timeout=remote_timeout)
             context.raise_if_cancelled()
@@ -425,6 +479,7 @@ def transcribe(
     on_instance_created: Callable[[int], None] | None = None,
     on_destroy_failed: Callable[[int], None] | None = None,
     on_destroy_succeeded: Callable[[int], None] | None = None,
+    check_monthly_cap: Callable[[], None] | None = None,
 ) -> TranscribeResult:
     """Transcribe a 16 kHz mono wav on a fresh Vast.ai GPU instance."""
     timeout_secs = settings.transcribe_timeout_secs
@@ -450,6 +505,7 @@ def transcribe(
                 language=language,
                 beam_size=beam_size,
                 on_instance_created=notify_instance_created,
+                check_monthly_cap=check_monthly_cap,
             )
         except BaseException as exc:
             result = exc

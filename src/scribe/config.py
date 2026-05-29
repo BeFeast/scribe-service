@@ -160,6 +160,32 @@ class Settings(BaseSettings):
     vast_budget_alert_multiplier: float = 5.0
     vast_budget_check_interval_seconds: int = 3600
 
+    # Offer-selection tunables. Defaults intentionally permissive so a thin
+    # Vast market does not instantly fail jobs (see #254). All overridable
+    # via Infisical (SCRIBE_VAST_GPU_REGEX, SCRIBE_VAST_MIN_CUDA, ...).
+    vast_gpu_regex: str = (
+        r"\b("
+        r"RTX\s+3090|RTX\s+4080|RTX\s+4090|"
+        r"RTX\s+5060\s+Ti|RTX\s+5070|RTX\s+5080|RTX\s+5090|"
+        r"(RTX\s+)?A[2456][05]00|A10|A40|A100(\s+(PCIE|SXM4|SXM5|NVL))?|"
+        r"H100(\s+(PCIE|SXM5|NVL))?|H200|"
+        r"L4|L40S?|"
+        r"RTX\s+(4000|4500|5000|5500|6000)(\s+Ada(\s+Generation)?)?"
+        r")\b"
+    )
+    vast_min_cuda: float = 12.4
+    vast_max_price_per_hour: float = 3.0
+    vast_max_job_cost: float = 0.25
+    vast_instance_ready_timeout: int = 600
+    # Number of distinct offers we try in sequence per job. Larger pool helps
+    # ride out the offer→ask race (HTTP 400 no_such_ask) and ready-timeout
+    # churn without instantly failing the job.
+    vast_offer_attempts: int = 12
+    # Rolling 30-day hard ceiling on Vast spend (USD). 0 disables. When the
+    # cap is reached, the worker refuses to provision new instances and
+    # raises WhisperError instead of submitting a new ask.
+    vast_monthly_cap_usd: float = 15.0
+
     # Summary fallback-chain circuit breaker (see
     # scribe.pipeline.summary_providers.CircuitBreaker). Per-provider in-process
     # state: if the last `threshold` outcomes within `window_secs` are all
