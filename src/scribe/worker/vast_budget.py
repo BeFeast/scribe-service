@@ -5,6 +5,7 @@ charges, invoices, payment, or destructive instance endpoints.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import threading
@@ -13,12 +14,22 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
 from scribe.alerts import send_admin_alert
 from scribe.config import settings
+from scribe.db.models import Job, JobStatus, Transcript
 from scribe.obs import metrics
-from scribe.pipeline.whisper_client import VAST_API
+from scribe.pipeline.whisper_client import (
+    MAX_INSTANCE_SECONDS,
+    VAST_API,
+    WhisperError,
+)
 
 log = logging.getLogger("scribe.vast_budget")
+
+_MONTH_WINDOW_DAYS = 30
 
 
 @dataclass(frozen=True)
@@ -39,6 +50,59 @@ class BudgetCheck:
     threshold_usd_per_hour: float
     is_anomaly: bool
     instances: tuple[InstanceBurn, ...]
+
+
+def monthly_vast_spend_usd(session: Session, *, now: dt.datetime | None = None) -> float:
+    """Sum `transcripts.vast_cost` over the last 30 days."""
+    cutoff = (now or dt.datetime.now(dt.UTC)) - dt.timedelta(days=_MONTH_WINDOW_DAYS)
+    total = session.scalar(
+        select(func.coalesce(func.sum(Transcript.vast_cost), 0.0))
+        .where(Transcript.created_at >= cutoff, Transcript.vast_cost.is_not(None))
+    )
+    return float(total or 0.0)
+
+
+def in_flight_vast_reserve_usd(session: Session) -> float:
+    """Conservative upper bound on Vast cost still owed by jobs currently in
+    flight. Each transcribing job is reserved at the max per-job cost cap
+    bounded by the wall-clock instance ceiling."""
+    in_flight = session.scalar(
+        select(func.count())
+        .select_from(Job)
+        .where(Job.status == JobStatus.transcribing)
+    ) or 0
+    per_job_cap = min(
+        float(settings.vast_max_job_cost),
+        float(settings.vast_max_price_per_hour) * MAX_INSTANCE_SECONDS / 3600.0,
+    )
+    return float(in_flight) * per_job_cap
+
+
+def enforce_monthly_cap(session: Session, *, now: dt.datetime | None = None) -> None:
+    """Raise WhisperError if the rolling 30-day Vast spend (including a
+    conservative in-flight reservation) is at or above the configured cap."""
+    cap = float(settings.vast_monthly_cap_usd)
+    if cap <= 0:
+        return
+    spent = monthly_vast_spend_usd(session, now=now)
+    reserved = in_flight_vast_reserve_usd(session)
+    if spent + reserved < cap:
+        return
+    message = (
+        f"Vast monthly cap reached: ${spent:.4f} spent + ${reserved:.4f} reserved "
+        f">= cap ${cap:.4f} (rolling {_MONTH_WINDOW_DAYS}d). "
+        f"Tune SCRIBE_VAST_MONTHLY_CAP_USD to raise."
+    )
+    log.warning("vast monthly cap reached", extra={
+        "spent_usd": round(spent, 4),
+        "reserved_usd": round(reserved, 4),
+        "cap_usd": cap,
+    })
+    try:
+        send_admin_alert(f"Scribe Vast monthly cap reached\n{message}")
+    except Exception:
+        log.exception("vast monthly cap admin alert failed")
+    raise WhisperError(message)
 
 
 def fetch_instances(api_key: str, *, timeout: int = 45) -> list[dict[str, Any]]:
