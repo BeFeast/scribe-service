@@ -126,7 +126,9 @@ def test_dry_run_prompt_does_not_persist(db_client, db_session, monkeypatch):
         assert transcript_md == "Transcript body"
         assert title == "Prompt Dry Run"
         assert prompt_version == "v2"
-        assert lock_timeout == routes_module._RESUMMARIZE_LOCK_TIMEOUT_S
+        # Route no longer passes lock_timeout: summarizer.summarize() has no such
+        # parameter (the bounded codex-lock-wait never existed in the module).
+        assert lock_timeout is None
         return summarizer_module.SummaryResult(summary_md="Dry-run summary", tags=["new"])
 
     log_events = []
@@ -172,7 +174,8 @@ def test_dry_run_prompt_can_use_unsaved_body(db_client, db_session, monkeypatch)
         assert title == "Prompt Dry Run"
         assert prompt_version == "v3"
         assert prompt_body == "Draft prompt text"
-        assert lock_timeout == routes_module._RESUMMARIZE_LOCK_TIMEOUT_S
+        # Route no longer passes lock_timeout (see above).
+        assert lock_timeout is None
         return summarizer_module.SummaryResult(summary_md="Draft dry-run", tags=["draft"])
 
     monkeypatch.setattr(summarizer_module, "summarize", fake_summarize)
