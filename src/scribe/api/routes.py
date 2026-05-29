@@ -49,6 +49,8 @@ from scribe.api.schemas import (
     ExtensionTokenView,
     FailedJobView,
     JobCreate,
+    JobHistoryResponse,
+    JobHistoryRow,
     JobStageView,
     JobView,
     LibraryResponse,
@@ -1132,6 +1134,69 @@ def api_jobs_recent_failures(
             )
             for job in jobs
         ]
+    )
+
+
+_JOB_HISTORY_STATUSES = frozenset(status.value for status in JobStatus)
+
+
+@router.get("/api/jobs", response_model=JobHistoryResponse, response_model_exclude_none=True)
+def api_jobs_history(
+    response: Response,
+    session: Session = Depends(get_session),
+    actor: Actor = Depends(require_actor),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    status: str | None = Query(None, description="Optional JobStatus value to filter the history."),
+) -> JobHistoryResponse:
+    """Return every job for the actor, newest first, with pagination + total count."""
+    _no_store(response)
+    base = _actor_filter(select(Job), Job, actor)
+    if status is not None:
+        if status not in _JOB_HISTORY_STATUSES:
+            allowed = ", ".join(sorted(_JOB_HISTORY_STATUSES))
+            raise HTTPException(status_code=422, detail=f"status must be one of: {allowed}")
+        base = base.where(Job.status == JobStatus(status))
+
+    total = session.scalar(select(func.count()).select_from(base.subquery())) or 0
+    jobs = session.scalars(base.order_by(Job.id.desc()).limit(limit).offset(offset)).all()
+    if not jobs:
+        return JobHistoryResponse(jobs=[], total=int(total), limit=limit, offset=offset)
+
+    video_ids = {job.video_id for job in jobs}
+    transcripts = session.scalars(
+        _actor_filter(
+            select(Transcript).where(Transcript.video_id.in_(video_ids)),
+            Transcript,
+            actor,
+        ).order_by(Transcript.id.desc())
+    ).all()
+    title_by_video: dict[str, str] = {}
+    transcript_id_by_job: dict[int, int] = {}
+    for transcript in transcripts:
+        title_by_video.setdefault(transcript.video_id, transcript.title)
+        transcript_id_by_job[transcript.job_id] = transcript.id
+
+    return JobHistoryResponse(
+        jobs=[
+            JobHistoryRow(
+                id=job.id,
+                video_id=job.video_id,
+                url=job.url,
+                **_source_fields(job.url),
+                title=job.title or title_by_video.get(job.video_id),
+                status=job.status.value,
+                source=job.source,
+                error=job.error,
+                created_at=job.created_at,
+                updated_at=job.updated_at,
+                transcript_id=transcript_id_by_job.get(job.id),
+            )
+            for job in jobs
+        ],
+        total=int(total),
+        limit=limit,
+        offset=offset,
     )
 
 

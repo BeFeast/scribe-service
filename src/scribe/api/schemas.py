@@ -221,6 +221,28 @@ class RecentFailuresResponse(BaseModel):
     jobs: list[FailedJobView]
 
 
+class JobHistoryRow(BaseModel):
+    id: int
+    video_id: str
+    url: str
+    source_url: str | None = None
+    source_label: str | None = None
+    title: str | None = None
+    status: str
+    source: str | None = None
+    error: str | None = None
+    created_at: dt.datetime
+    updated_at: dt.datetime
+    transcript_id: int | None = None
+
+
+class JobHistoryResponse(BaseModel):
+    jobs: list[JobHistoryRow]
+    total: int
+    limit: int
+    offset: int
+
+
 class BackupSnapshot(BaseModel):
     last_success_iso: str | None = None
     age_seconds: int | None = None

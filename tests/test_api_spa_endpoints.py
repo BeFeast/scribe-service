@@ -119,7 +119,7 @@ def test_production_home_serves_spa_and_classic_list_is_explicit(client, db_sess
 
 
 def test_production_spa_deep_links_serve_shell(client):
-    for route in ("/queue", "/ops", "/settings"):
+    for route in ("/queue", "/history", "/ops", "/settings"):
         resp = client.get(route)
         assert resp.status_code == 200
         assert "<title>Scribe SPA</title>" in resp.text
@@ -602,6 +602,105 @@ def test_api_jobs_recent_failures(client, db_session):
     assert row["id"] == job.id
     assert row["error"] == "whisper failed"
     assert row["stages"]["transcribing"]["state"] == "failed"
+
+
+def test_api_jobs_history_empty(client):
+    resp = client.get("/api/jobs")
+    assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "no-store"
+    assert resp.json() == {"jobs": [], "total": 0, "limit": 50, "offset": 0}
+
+
+def test_api_jobs_history_paginates_newest_first_with_total(client, db_session):
+    jobs = [
+        Job(url=f"https://youtu.be/histjob{i}", video_id=f"histjob{i}", status=JobStatus.done)
+        for i in range(3)
+    ]
+    db_session.add_all(jobs)
+    db_session.commit()
+
+    page_one = client.get("/api/jobs", params={"limit": 2, "offset": 0}).json()
+    assert page_one["total"] == 3
+    assert page_one["limit"] == 2
+    assert page_one["offset"] == 0
+    assert [row["id"] for row in page_one["jobs"]] == [jobs[2].id, jobs[1].id]
+
+    page_two = client.get("/api/jobs", params={"limit": 2, "offset": 2}).json()
+    assert page_two["total"] == 3
+    assert [row["id"] for row in page_two["jobs"]] == [jobs[0].id]
+
+
+def test_api_jobs_history_filters_by_status(client, db_session):
+    done_job = Job(url="https://youtu.be/histdone1", video_id="histdone1", status=JobStatus.done)
+    failed_job = Job(
+        url="https://youtu.be/histfail1",
+        video_id="histfail1",
+        status=JobStatus.failed,
+        error="boom",
+    )
+    queued_job = Job(url="https://youtu.be/histqueue", video_id="histqueue", status=JobStatus.queued)
+    db_session.add_all([done_job, failed_job, queued_job])
+    db_session.commit()
+
+    body = client.get("/api/jobs", params={"status": "failed"}).json()
+    assert body["total"] == 1
+    assert body["jobs"][0]["id"] == failed_job.id
+    assert body["jobs"][0]["status"] == "failed"
+    assert body["jobs"][0]["error"] == "boom"
+
+    body_queued = client.get("/api/jobs", params={"status": "queued"}).json()
+    assert body_queued["total"] == 1
+    assert body_queued["jobs"][0]["status"] == "queued"
+
+
+def test_api_jobs_history_rejects_unknown_status(client):
+    resp = client.get("/api/jobs", params={"status": "bogus"})
+    assert resp.status_code == 422
+
+
+def test_api_jobs_history_links_transcript_id_for_done_jobs(client, db_session):
+    _, transcript = _seed_transcript(
+        db_session,
+        video_id="histlink111",
+        title="History Linked",
+        summary_md="done",
+    )
+
+    body = client.get("/api/jobs", params={"status": "done"}).json()
+    assert body["total"] == 1
+    row = body["jobs"][0]
+    assert row["video_id"] == "histlink111"
+    assert row["transcript_id"] == transcript.id
+    assert row["title"] == "History Linked"
+
+
+def test_api_jobs_history_is_owner_scoped(client, db_session):
+    mine = Job(
+        url="https://youtu.be/histownerme",
+        video_id="histownerme",
+        status=JobStatus.done,
+        owner_subject="owner-current",
+        owner_email="current@example.test",
+    )
+    theirs = Job(
+        url="https://youtu.be/histownerthem",
+        video_id="histownerthem",
+        status=JobStatus.done,
+        owner_subject="owner-other",
+        owner_email="other@example.test",
+    )
+    db_session.add_all([mine, theirs])
+    db_session.commit()
+
+    resp = client.get(
+        "/api/jobs",
+        headers={"Authorization": "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJvd25lci1jdXJyZW50In0."},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["jobs"][0]["video_id"] == "histownerme"
 
 
 def test_api_job_log_stream_returns_buffered_worker_lines_and_closes(client, db_session):

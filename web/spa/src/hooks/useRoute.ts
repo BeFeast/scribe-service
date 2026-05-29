@@ -5,6 +5,7 @@ export type RoutePage =
 	| "transcript"
 	| "queue"
 	| "job"
+	| "history"
 	| "ops"
 	| "settings";
 
@@ -21,6 +22,7 @@ const ROUTE_LABELS: Record<RoutePage, string> = {
 	transcript: "Transcript",
 	queue: "Queue",
 	job: "Job",
+	history: "History",
 	ops: "Ops",
 	settings: "Settings",
 };
@@ -55,6 +57,7 @@ function routeFromHash(hash: string): Route {
 		case "transcript":
 			return { page, params: { id: parseId(id), tag } };
 		case "queue":
+		case "history":
 		case "ops":
 		case "settings":
 			return { page, params: { tag } };

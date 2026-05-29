@@ -4,6 +4,7 @@ import { AuthGate } from "./components/Loaders";
 import { useScribeRuntime } from "./design-app/api.jsx";
 import { CommandPalette } from "./design-app/command-palette.jsx";
 import { setRuntimeData } from "./design-app/data.js";
+import { HistoryPage } from "./design-app/history.jsx";
 import { JobDetail, QueuePage } from "./design-app/job-pages.jsx";
 import { LibraryPage } from "./design-app/library.jsx";
 import { OpsPage } from "./design-app/ops.jsx";
@@ -138,6 +139,9 @@ function ScribeApp() {
 					}}
 				/>
 			);
+			break;
+		case "history":
+			page = <HistoryPage navigate={navigateDesign} auth={auth} />;
 			break;
 		case "ops":
 			page = (
