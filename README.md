@@ -164,6 +164,18 @@ Store the returned `stx_...` token in the extension and send it as
 `Authorization: Bearer stx_...` on `POST /jobs`. The raw public transcript and
 summary links under `/transcripts/{id}` remain public.
 
+## Secret delivery (Infisical Agent sidecar)
+
+`scribe` reads its boot-time secrets (`SCRIBE_TRUSTED_CIDRS`,
+`SCRIBE_MACHINE_BEARER_TOKEN`, etc.) from env vars rendered into a
+shared volume by an Infisical Agent sidecar. The container entrypoint
+sources `/secrets/scribe.env` before launching uvicorn, and refuses to
+start if those required secrets are missing — this prevents the boot-
+time race that previously left scribe serving with the loopback-only
+`trusted_cidrs` default and 401-ing every LAN client. See
+[`docs/runtime/infisical-agent.md`](docs/runtime/infisical-agent.md)
+for the compose snippet and the fail-mode matrix.
+
 ## Vast.ai worker image
 
 See `docker/vast/`. Build + push from any host with Docker and a GitHub

@@ -1,0 +1,42 @@
+# Infisical Agent sidecar config for scribe (#261).
+#
+# Runs alongside the scribe container, authenticates with the machine
+# identity, renders SCRIBE_* secrets to a shared local volume as an
+# env-file, and refreshes on the configured polling interval. Agent
+# keeps a last-known-good copy on disk so scribe restarts succeed even
+# while Infisical is unreachable.
+#
+# Operator wiring (deploy-time, not committed):
+#   * mount the agent into the scribe stack on the `db-dev-net` network
+#     so it reaches Infisical via container-DNS (http://infisical-app:8080)
+#   * mount the machine-identity client-id/client-secret as read-only
+#     files at the paths referenced below
+#   * mount this file at /etc/infisical/agent.yaml
+#   * mount the template at /etc/infisical/templates/scribe.env.tpl
+#   * share a local-driver named volume between the agent and scribe so
+#     scribe's entrypoint can source /secrets/scribe.env
+#
+# The destination env-file is written with 0600 permissions; do not bind
+# the volume from a path that exposes it to other tenants on the host.
+
+infisical:
+  address: "http://infisical-app:8080"
+  exit-after-auth: false
+
+auth:
+  type: "universal-auth"
+  config:
+    client-id: "/etc/infisical/identity/client-id"
+    client-secret: "/etc/infisical/identity/client-secret"
+    remove_client_secret_on_read: false
+
+sinks:
+  - type: "file"
+    config:
+      path: "/etc/infisical/auth/token"
+
+templates:
+  - source-path: "/etc/infisical/templates/scribe.env.tpl"
+    destination-path: "/secrets/scribe.env"
+    config:
+      polling-interval: "60s"

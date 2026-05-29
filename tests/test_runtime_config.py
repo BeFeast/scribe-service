@@ -144,6 +144,35 @@ def test_infisical_validation_errors_are_redacted(monkeypatch: pytest.MonkeyPatc
     assert "[redacted]" in str(exc_info.value)
 
 
+def test_build_settings_does_not_clobber_env_with_empty_infisical_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for #261: when Infisical returns an empty/blank value for a
+    SCRIBE_* secret, `build_settings()` must keep the env value (or the
+    pydantic default) rather than overwrite it with an empty string. The old
+    behaviour silently nulled out `SCRIBE_MACHINE_BEARER_TOKEN` /
+    `SCRIBE_TRUSTED_CIDRS` and locked every LAN client out with `401`."""
+
+    monkeypatch.setenv("SCRIBE_TRUSTED_CIDRS", "10.10.0.0/16")
+    monkeypatch.setenv("SCRIBE_MACHINE_BEARER_TOKEN", "env-bearer")
+    monkeypatch.setattr(
+        config_module,
+        "load_infisical_settings",
+        lambda _allowed_keys: {
+            "trusted_cidrs": "",
+            "machine_bearer_token": "",
+            "public_base_url": "https://infisical.example.test",
+        },
+    )
+
+    settings = build_settings()
+
+    assert settings.trusted_cidrs == "10.10.0.0/16"
+    assert settings.machine_bearer_token == "env-bearer"
+    # Non-empty Infisical values still take precedence over env defaults.
+    assert settings.public_base_url == "https://infisical.example.test"
+
+
 def test_infisical_freellmapi_api_key_maps_to_settings_field() -> None:
     """Regression for #250: the comment in config.py promises that the
     Infisical loader populates `freellmapi_api_key` from the
