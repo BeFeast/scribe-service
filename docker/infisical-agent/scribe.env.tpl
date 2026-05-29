@@ -1,33 +1,21 @@
 {{/*
   Infisical Agent template for scribe (#261).
 
-  Renders the SCRIBE_* secrets stored at services/prod/scribe-service as a
-  POSIX-sourceable env-file. The scribe container entrypoint sources the
-  rendered output at /secrets/scribe.env before launching uvicorn, so
-  pydantic-settings reads these as real env vars.
+  Renders the simple-valued SCRIBE_* secrets that must survive an Infisical
+  outage at boot: the entrypoint fail-loud guard needs SCRIBE_TRUSTED_CIDRS +
+  SCRIBE_MACHINE_BEARER_TOKEN, and summaries need the freellmapi keys (without
+  them the chain falls through to a rate-limited codex and fails). All five
+  values are space/newline-free so the env-file is safely POSIX-sourceable.
 
-  Each secret is rendered as KEY=VALUE on its own line. Empty values are
-  emitted as KEY= (which the shell exports as an empty string); the
-  fail-loud guard in docker/entrypoint.sh blocks boot if
-  SCRIBE_TRUSTED_CIDRS or SCRIBE_MACHINE_BEARER_TOKEN are empty.
+  Clerk/JWKS secrets (which may contain spaces/newlines and would break a
+  naive `source`) keep loading via the in-process Infisical fetch; their
+  absence degrades the public Clerk path but never locks out the trusted LAN.
 
-  Template syntax follows Infisical Agent docs: `secret <env> <path> <key>`
-  returns a struct with .SecretValue. The Agent re-renders this file on
-  the polling-interval configured in agent.yaml; on transient Infisical
-  outages it keeps the previous render in place (last-known-good cache).
+  Function form for this infisical/cli version:
+    secret <projectId> <env-slug> <path> -> []SingleEnvironmentVariable{.Key,.Value}
 */}}
-SCRIBE_DATABASE_URL={{ (secret "prod" "/scribe-service" "SCRIBE_DATABASE_URL").SecretValue }}
-SCRIBE_TRUSTED_CIDRS={{ (secret "prod" "/scribe-service" "SCRIBE_TRUSTED_CIDRS").SecretValue }}
-SCRIBE_MACHINE_BEARER_TOKEN={{ (secret "prod" "/scribe-service" "SCRIBE_MACHINE_BEARER_TOKEN").SecretValue }}
-SCRIBE_VAST_API_KEY={{ (secret "prod" "/scribe-service" "SCRIBE_VAST_API_KEY").SecretValue }}
-SCRIBE_SHORTLINK_API_URL={{ (secret "prod" "/scribe-service" "SCRIBE_SHORTLINK_API_URL").SecretValue }}
-SCRIBE_SHORTLINK_API_KEY={{ (secret "prod" "/scribe-service" "SCRIBE_SHORTLINK_API_KEY").SecretValue }}
-SCRIBE_PUBLIC_BASE_URL={{ (secret "prod" "/scribe-service" "SCRIBE_PUBLIC_BASE_URL").SecretValue }}
-SCRIBE_AUTH_CLERK_ISSUER={{ (secret "prod" "/scribe-service" "SCRIBE_AUTH_CLERK_ISSUER").SecretValue }}
-SCRIBE_AUTH_CLERK_JWKS_URL={{ (secret "prod" "/scribe-service" "SCRIBE_AUTH_CLERK_JWKS_URL").SecretValue }}
-SCRIBE_CLERK_SECRET_KEY={{ (secret "prod" "/scribe-service" "SCRIBE_CLERK_SECRET_KEY").SecretValue }}
-SCRIBE_CLERK_PUBLISHABLE_KEY={{ (secret "prod" "/scribe-service" "SCRIBE_CLERK_PUBLISHABLE_KEY").SecretValue }}
-SCRIBE_BOOTSTRAP_ADMIN_EMAIL={{ (secret "prod" "/scribe-service" "SCRIBE_BOOTSTRAP_ADMIN_EMAIL").SecretValue }}
-SCRIBE_FREELLMAPI_API_KEY={{ (secret "prod" "/scribe-service" "FREELLMAPI_API_KEY").SecretValue }}
-SCRIBE_ADMIN_TELEGRAM_BOT_TOKEN={{ (secret "prod" "/scribe-service" "SCRIBE_ADMIN_TELEGRAM_BOT_TOKEN").SecretValue }}
-SCRIBE_ADMIN_TELEGRAM_CHAT_ID={{ (secret "prod" "/scribe-service" "SCRIBE_ADMIN_TELEGRAM_CHAT_ID").SecretValue }}
+{{- range secret "5b5038c7-46d5-496f-bfa6-6184cb41e143" "prod" "/scribe-service" }}
+{{- if or (eq .Key "SCRIBE_TRUSTED_CIDRS") (eq .Key "SCRIBE_MACHINE_BEARER_TOKEN") (eq .Key "SCRIBE_FREELLMAPI_API_KEY") (eq .Key "SCRIBE_FREELLMAPI_MODEL") (eq .Key "SCRIBE_SUMMARY_PROVIDERS") }}
+{{ .Key }}={{ .Value }}
+{{- end }}
+{{- end }}
