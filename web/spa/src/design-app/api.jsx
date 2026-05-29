@@ -222,7 +222,7 @@ function totalFromLibrary(library) {
 	return Number.isFinite(total) ? total : (library?.rows ?? []).length;
 }
 
-async function streamJobLog(auth, id, signal, onLine) {
+export async function streamJobLog(auth, id, signal, onLine) {
 	const response = await auth.protectedFetch("/api/jobs/" + id + "/log/stream", { cache: "no-store", signal });
 	if (response.status === 401 || response.status === 403) auth.maybeAutoSignIn();
 	if (!response.ok) throw new HttpError(response.status, await responseMessage(response));
