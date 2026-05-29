@@ -1,7 +1,7 @@
 // biome-ignore-all lint: Claude Design source port; integration-only edits live in api/data/main.
 import React from "react";
 import { IconClock, IconLibrary, IconMoon, IconOps, IconQueue, IconRSS, IconSearch, IconSettings, IconSun } from "./icons.jsx";
-import { ACTIVE_JOBS, LIBRARY_TOTAL, RECENT_FAILURES, STATS, TRANSCRIPTS, fmtUsd, tagCounts } from "./data.js";
+import { ACTIVE_JOBS, LIBRARY_TOTAL, RECENT_FAILURES, STATS, TRANSCRIPTS, countFailuresInLastDay, fmtUsd, tagCounts } from "./data.js";
 // Shell: top bar + sidebar nav. Calls navigate(page, params?) from props.
 
 export function TopBar({ onOpenCmdk, t, setTweak }) {
@@ -44,7 +44,7 @@ export function Sidebar({ page, navigate }) {
   const tags = tagCounts().slice(0, 8);
   const transcriptCount = Math.max(LIBRARY_TOTAL, TRANSCRIPTS.length);
   const queueCount = ACTIVE_JOBS.length;
-  const failuresToday = RECENT_FAILURES.filter(f => f.failed_at.startsWith("2026-05-16")).length;
+  const failuresToday = countFailuresInLastDay(RECENT_FAILURES);
   return (
     <aside className="sidebar">
       <div className="nav-section">Browse</div>

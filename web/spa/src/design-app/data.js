@@ -126,6 +126,19 @@ export function fmtRelative(iso) {
 	return `${Math.round(seconds / 86400)}d ago`;
 }
 
+export const DAY_MS = 86_400_000;
+
+export function countFailuresInLastDay(failures, now = Date.now()) {
+	if (!Array.isArray(failures)) return 0;
+	const cutoff = now - DAY_MS;
+	let count = 0;
+	for (const f of failures) {
+		const t = new Date(f?.failed_at).getTime();
+		if (Number.isFinite(t) && t >= cutoff) count += 1;
+	}
+	return count;
+}
+
 export function fmtDate(iso) {
 	if (!iso) return "\u2014";
 	const date = new Date(iso);
