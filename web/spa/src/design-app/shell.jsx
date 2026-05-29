@@ -1,6 +1,6 @@
 // biome-ignore-all lint: Claude Design source port; integration-only edits live in api/data/main.
 import React from "react";
-import { IconLibrary, IconMoon, IconOps, IconQueue, IconRSS, IconSearch, IconSettings, IconSun } from "./icons.jsx";
+import { IconClock, IconLibrary, IconMoon, IconOps, IconQueue, IconRSS, IconSearch, IconSettings, IconSun } from "./icons.jsx";
 import { ACTIVE_JOBS, LIBRARY_TOTAL, RECENT_FAILURES, STATS, TRANSCRIPTS, fmtUsd, tagCounts } from "./data.js";
 // Shell: top bar + sidebar nav. Calls navigate(page, params?) from props.
 
@@ -59,6 +59,10 @@ export function Sidebar({ page, navigate }) {
         {queueCount > 0 && <span className="count" style={{color:"var(--accent)"}}>
           <span className="live-dot" style={{marginRight: 5}}/> {queueCount}
         </span>}
+      </a>
+      <a className={"nav-item " + (page === "history" ? "active" : "")}
+         onClick={() => navigate("history")}>
+        <IconClock size={15}/> <span>History</span>
       </a>
       <a className={"nav-item " + (page === "ops" ? "active" : "")}
          onClick={() => navigate("ops")}>

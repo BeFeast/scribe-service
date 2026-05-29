@@ -60,6 +60,7 @@ export function CommandPalette({ open, onClose, navigate }) {
       [
         { key: "go-lib", title: "Go to library", glyph: "L", onPick: () => { navigate("library"); onClose(); }, hint: "G L" },
         { key: "go-queue", title: "Go to queue", glyph: "Q", onPick: () => { navigate("queue"); onClose(); }, hint: "G Q" },
+        { key: "go-history", title: "Go to history", glyph: "H", onPick: () => { navigate("history"); onClose(); }, hint: "G H" },
         { key: "go-ops", title: "Go to ops dashboard", glyph: "O", onPick: () => { navigate("ops"); onClose(); }, hint: "G O" },
         { key: "go-settings", title: "Go to settings", glyph: "S", onPick: () => { navigate("settings"); onClose(); }, hint: "G S" },
       ].forEach(c => list.push({ type: "cmd", ...c }));

@@ -1,7 +1,7 @@
 """Web-UI: SPA shell plus legacy transcript browsing.
 
 GET /                       -> React SPA shell
-GET /queue, /ops, /settings -> React SPA shell deep links
+GET /queue, /history, /ops, /settings -> React SPA shell deep links
 GET /classic                -> legacy transcript list (optional ?q=, ?tag=)
 GET /feed.xml               -> RSS 2.0 of the latest transcripts
 
@@ -91,6 +91,7 @@ def _build_filter(stmt, *, q: str | None, tag: str | None):
 
 @router.get("/", response_class=HTMLResponse)
 @router.get("/queue", response_class=HTMLResponse)
+@router.get("/history", response_class=HTMLResponse)
 @router.get("/ops", response_class=HTMLResponse)
 @router.get("/settings", response_class=HTMLResponse)
 @router.get("/__spa__/", response_class=HTMLResponse)
