@@ -353,8 +353,19 @@ class Settings(BaseSettings):
 
 
 def build_settings() -> Settings:
-    """Build process settings with Infisical taking precedence over env."""
-    overlay = load_infisical_settings(Settings.model_fields)
+    """Build process settings with Infisical taking precedence over env.
+
+    Empty Infisical values are dropped from the overlay so a missing/blank
+    secret cannot clobber a valid env var (see #261). In the resilient
+    sidecar setup the Agent renders secrets into an env-file that the
+    container entrypoint sources before pydantic runs, making the in-process
+    fetch redundant; this guard makes the redundancy safe.
+    """
+    overlay = {
+        key: value
+        for key, value in load_infisical_settings(Settings.model_fields).items()
+        if value != ""
+    }
     try:
         return Settings(**overlay)
     except ValidationError as exc:
