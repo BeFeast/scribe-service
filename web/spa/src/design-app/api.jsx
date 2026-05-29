@@ -194,6 +194,10 @@ export function useScribeRuntime(auth, route) {
 			await refreshCore(new AbortController().signal);
 			return job;
 		},
+		deleteJob: async (id, signal) => {
+			await deleteJob(auth, id, signal);
+			await refreshCore(new AbortController().signal);
+		},
 		applyConfig: (config) => {
 			setCore((previous) => ({ ...previous, config: adaptConfig(config) }));
 		},
@@ -205,6 +209,12 @@ export async function fetchJson(auth, url, signal, init = {}) {
 	if (response.status === 401 || response.status === 403) auth.maybeAutoSignIn();
 	if (!response.ok) throw new HttpError(response.status, await responseMessage(response));
 	return response.json();
+}
+
+export async function deleteJob(auth, id, signal) {
+	const response = await auth.protectedFetch("/admin/jobs/" + id, { method: "DELETE", cache: "no-store", signal });
+	if (response.status === 401 || response.status === 403) auth.maybeAutoSignIn();
+	if (!response.ok) throw new HttpError(response.status, await responseMessage(response));
 }
 
 function totalFromLibrary(library) {
@@ -235,7 +245,7 @@ async function streamJobLog(auth, id, signal, onLine) {
 	}
 }
 
-class HttpError extends Error {
+export class HttpError extends Error {
 	constructor(status, message) {
 		super(message);
 		this.status = status;

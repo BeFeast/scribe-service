@@ -22,7 +22,7 @@ const STAGE_SUBLABEL = {
   done: "Shortlinks · webhook · DB write",
 };
 
-export function QueuePage({ navigate, loading, error, onRefresh, onRetryJob }) {
+export function QueuePage({ navigate, loading, error, onRefresh, onRetryJob, onDeleteJob }) {
   return (
     <div className="pane">
       <div className="pane-header">
@@ -54,7 +54,7 @@ export function QueuePage({ navigate, loading, error, onRefresh, onRetryJob }) {
               all failures →
             </a>
           </div>
-          {RECENT_FAILURES.slice(0, 2).map(f => <FailureRow key={f.id} f={f} navigate={navigate} onRetryJob={onRetryJob}/>)}
+          {RECENT_FAILURES.slice(0, 2).map(f => <FailureRow key={f.id} f={f} navigate={navigate} onRetryJob={onRetryJob} onDeleteJob={onDeleteJob}/>)}
         </>
       )}
     </div>
@@ -335,18 +335,20 @@ function buildLog(job) {
   return lines;
 }
 
-export function FailureRow({ f, navigate, onRetryJob }) {
-  const [state, setState] = React.useState({ pending: false, error: null });
-  const retry = async () => {
-    if (!onRetryJob) return;
-    setState({ pending: true, error: null });
+export function FailureRow({ f, navigate, onRetryJob, onDeleteJob }) {
+  const [state, setState] = React.useState({ pending: null, error: null });
+  const run = async (kind, action) => {
+    if (!action) return;
+    setState({ pending: kind, error: null });
     try {
-      await onRetryJob(f.id);
-      setState({ pending: false, error: null });
+      await action(f.id);
+      setState({ pending: null, error: null });
     } catch (error) {
-      setState({ pending: false, error: error instanceof Error ? error.message : String(error) });
+      setState({ pending: null, error: error instanceof Error ? error.message : String(error) });
     }
   };
+  const retry = () => run("retry", onRetryJob);
+  const dismiss = () => run("delete", onDeleteJob);
   return (
     <div className="failure-row">
       <div>
@@ -356,7 +358,18 @@ export function FailureRow({ f, navigate, onRetryJob }) {
         {state.error && <div className="err-meta" style={{color: "var(--err)"}}>{state.error}</div>}
       </div>
       <div className="row" style={{gap: 6}}>
-        <button className="btn" onClick={retry} disabled={state.pending || !onRetryJob}><IconRefresh size={12}/> Retry</button>
+        <button className="btn" onClick={retry} disabled={state.pending !== null || !onRetryJob}><IconRefresh size={12}/> Retry</button>
+        {onDeleteJob && (
+          <button
+            className="btn"
+            onClick={dismiss}
+            disabled={state.pending !== null}
+            aria-label={`Dismiss failed job ${f.id}`}
+            style={{color: "var(--err)", borderColor: "color-mix(in oklab, var(--err) 32%, var(--border))"}}
+          >
+            <IconX size={12}/> Clear
+          </button>
+        )}
         <button className="btn ghost" onClick={() => navigate?.("job", { id: f.id })}><IconExternal size={12}/></button>
       </div>
     </div>

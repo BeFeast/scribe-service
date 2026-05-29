@@ -5,7 +5,7 @@ import { RECENT_FAILURES, SPEND_SERIES, STATS, fmtRelative, fmtUsd } from "./dat
 import { FailureRow } from "./job-pages.jsx";
 // Ops dashboard — spend, queue, backups, recent failures, sparkline.
 
-export function OpsPage({ navigate, loading, error, onRefresh, onRetryJob }) {
+export function OpsPage({ navigate, loading, error, onRefresh, onRetryJob, onDeleteJob }) {
   const spendPct = STATS.daily_spend_cap_usd > 0 ? Math.min(1, STATS.vast_spend_24h / STATS.daily_spend_cap_usd) : 0;
   const spendCls = spendPct > 0.85 ? "err" : spendPct > 0.6 ? "warn" : "";
   const system = Array.isArray(STATS.system) ? STATS.system : [];
@@ -98,7 +98,7 @@ export function OpsPage({ navigate, loading, error, onRefresh, onRetryJob }) {
         </span>
       </div>
       {RECENT_FAILURES.length > 0
-        ? RECENT_FAILURES.map(f => <FailureRow key={f.id} f={f} navigate={navigate} onRetryJob={onRetryJob}/>)
+        ? RECENT_FAILURES.map(f => <FailureRow key={f.id} f={f} navigate={navigate} onRetryJob={onRetryJob} onDeleteJob={onDeleteJob}/>)
         : <div className="empty"><div className="empty-title">No recent failures</div><div>Failed jobs from the last 7 days will appear here.</div></div>}
 
       <div className="section-label" style={{marginTop: 36}}>
