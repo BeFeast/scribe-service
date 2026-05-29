@@ -1413,15 +1413,9 @@ async def dry_run_prompt(
             summarizer.summarize,
             t.transcript_md,
             title=t.title,
-            lock_timeout=_RESUMMARIZE_LOCK_TIMEOUT_S,
             prompt_version=body.version,
             prompt_body=body.prompt_body,
         )
-    except summarizer.LockTimeoutError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=f"summarizer busy (codex job in flight): {exc}",
-        ) from exc
     except summarizer.SummarizeError as exc:
         raise HTTPException(status_code=502, detail=f"summarizer failed: {exc}") from exc
     return PromptDryRunView(
@@ -1557,15 +1551,7 @@ async def resummarize(
             summarizer.summarize,
             transcript_md,
             title=title,
-            lock_timeout=_RESUMMARIZE_LOCK_TIMEOUT_S,
         )
-    except summarizer.LockTimeoutError as exc:
-        if html_client:
-            return _flash_redirect(transcript_id, f"Summarizer busy: {exc}", level="error")
-        raise HTTPException(
-            status_code=503,
-            detail=f"summarizer busy (codex job in flight): {exc}",
-        ) from exc
     except summarizer.SummarizeError as exc:
         if html_client:
             return _flash_redirect(transcript_id, f"Summarizer failed: {exc}", level="error")
