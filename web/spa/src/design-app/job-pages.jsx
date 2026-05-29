@@ -14,13 +14,6 @@ const STAGE_LABEL = {
   summarizing: "Summarize",
   done: "Publish",
 };
-const STAGE_SUBLABEL = {
-  queued: "Waiting for a worker slot",
-  downloading: "yt-dlp · residential IP",
-  transcribing: "faster-whisper · Vast.ai GPU",
-  summarizing: "codex CLI · prompt template v3",
-  done: "Shortlinks · webhook · DB write",
-};
 
 export function QueuePage({ navigate, loading, error, onRefresh, onRetryJob, onDeleteJob }) {
   return (
@@ -134,11 +127,6 @@ export function PipelineDiagram({ job, compact }) {
               {st.state === "failed" && <span className="status-glyph" style={{color: "var(--err)"}}>✗</span>}
               <span>{STAGE_LABEL[s]}</span>
             </div>
-            {!compact && (
-              <div className="mono muted" style={{fontSize: 11.5, marginTop: 2}}>
-                {STAGE_SUBLABEL[s]}
-              </div>
-            )}
             {st.note && <div className="stage-note">{st.note}</div>}
             {st.duration_s != null && st.state === "done" && (
               <div className="stage-note" style={{color: "var(--ok)"}}>
@@ -228,7 +216,7 @@ export function JobDetail({ id, navigate, log = CURRENT_JOB_LOG, onRefresh, onCa
           <span className="live-dot"/> tailing
         </span>
       </div>
-      <LogTail job={job} log={log}/>
+      <LogTail log={log}/>
 
       <div className="section-label">
         <span>Job actions</span>
@@ -258,8 +246,13 @@ export function JobDetail({ id, navigate, log = CURRENT_JOB_LOG, onRefresh, onCa
   );
 }
 
-function LogTail({ job, log }) {
-  const lines = log?.lines?.length ? log.lines.map(adaptLogLine) : buildLog(job);
+export function selectLogLines(log) {
+  const raw = Array.isArray(log?.lines) ? log.lines : [];
+  return raw.map(adaptLogLine);
+}
+
+function LogTail({ log }) {
+  const lines = selectLogLines(log);
   return (
     <div style={{
       fontFamily: "var(--font-mono)",
@@ -296,43 +289,6 @@ function adaptLogLine(line) {
 }
 function currentT() {
   return new Date().toISOString().slice(11,19);
-}
-function buildLog(job) {
-  const lines = [];
-  let t = new Date(job.started_at).getTime();
-  let step = 0;
-  const push = (tag, msg, color) => {
-    lines.push({ t: new Date(t).toISOString().slice(11,19), tag, msg, color });
-    step += 1;
-    t += 800 + step * 450;
-  };
-  push("[queue]", `enqueued · position 1 of 1 · source=${job.source}`);
-  if (job.stages.downloading.state !== "pending") {
-    push("[worker]", `claim job ${job.id} · worker=scribe-worker-1`);
-    push("[dl]",     `yt-dlp · client=android-vr · ${job.video_id} → /tmp/scribe-${job.id}.m4a`, "var(--info)");
-    if (job.stages.downloading.state === "done") {
-      push("[dl]",     `downloaded 78.2 MB in ${fmtElapsed(job.stages.downloading.duration_s || 72)} · 1.1 MB/s`, "var(--ok)");
-      push("[ffmpeg]", `→ 16kHz mono WAV · 24 min audio · 28 MB`);
-    }
-  }
-  if (job.stages.transcribing.state !== "pending") {
-    push("[vast]",   `provisioning instance · template=whisper-l3-turbo · RTX 4090 · est. \$0.34/h`);
-    push("[vast]",   `instance i-8e9b2 ready in 18s · ssh tunnel up`, "var(--info)");
-    push("[whisper]",`faster-whisper large-v3-turbo · float16 · vad_filter=on`);
-    if (job.stages.transcribing.state === "active") {
-      push("[whisper]", `progress 4:21 / 16:42 · 1.6× realtime · spend so far \$0.0084`, "var(--accent)");
-    }
-    if (job.stages.transcribing.state === "done") {
-      push("[whisper]", `done · 16:42 audio in ${fmtElapsed(job.stages.transcribing.duration_s || 318)} · \$0.0141`, "var(--ok)");
-    }
-  }
-  if (job.stages.summarizing.state !== "pending") {
-    push("[codex]", `acquired codex lock · prompt v3 · model=gpt-5 · temp=0.2`);
-    if (job.stages.summarizing.state === "active") {
-      push("[codex]", `streaming · 240 tok/s · 62% done`, "var(--accent)");
-    }
-  }
-  return lines;
 }
 
 export function FailureRow({ f, navigate, onRetryJob, onDeleteJob }) {
