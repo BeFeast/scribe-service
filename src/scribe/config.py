@@ -13,7 +13,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from scribe.runtime_config import RuntimeConfigError, load_infisical_settings, redact_values
 
-_DEFAULT_SUMMARY_PROVIDERS: tuple[str, ...] = ("codex", "claude", "freellmapi")
+_DEFAULT_SUMMARY_PROVIDERS: tuple[str, ...] = ("codex", "freellmapi")
 
 ConfigKind = Literal[
     "bool",
@@ -195,10 +195,12 @@ class Settings(BaseSettings):
     claude_effort: str = "xhigh"
     claude_timeout_secs: int = 600
 
-    # FreeLLMAPI proxy fallback. The API key is sourced at runtime from
-    # Infisical (path /ai/freellmapi, secret FREELLMAPI_UNIFIED_API_KEY) and
-    # injected into SCRIBE_FREELLMAPI_API_KEY by the container entrypoint —
-    # never paste it into source or fixtures. `freellmapi_model` is a
+    # FreeLLMAPI proxy fallback. The API key is sourced at runtime by the
+    # Infisical loader (`scribe.runtime_config`): it reads project `services`,
+    # env `prod`, path `/scribe-service`, and maps secret `FREELLMAPI_API_KEY`
+    # onto this field via the field-name normalisation in `_settings_key`.
+    # Plain env (`SCRIBE_FREELLMAPI_API_KEY`) also works as a fallback. Never
+    # paste the key into source or fixtures. `freellmapi_model` is a
     # placeholder; the provider probes GET ${base_url}/models once and falls
     # back to the configured value if discovery is unavailable.
     freellmapi_base_url: str = "http://10.10.0.13:13032/v1"

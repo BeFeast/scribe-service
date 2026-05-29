@@ -142,3 +142,38 @@ def test_infisical_validation_errors_are_redacted(monkeypatch: pytest.MonkeyPatc
 
     assert secret_value not in str(exc_info.value)
     assert "[redacted]" in str(exc_info.value)
+
+
+def test_infisical_freellmapi_api_key_maps_to_settings_field() -> None:
+    """Regression for #250: the comment in config.py promises that the
+    Infisical loader populates `freellmapi_api_key` from the
+    `FREELLMAPI_API_KEY` secret at `services/prod/scribe-service`. Lock that
+    mapping in so a future loader refactor cannot silently break the fallback
+    chain again."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/auth/universal-auth/login":
+            return httpx.Response(200, json={"accessToken": "fixture-access-token"})
+        if request.url.path == "/api/v1/projects/slug/services":
+            return httpx.Response(200, json={"id": "project-id"})
+        if request.url.path == "/api/v4/secrets":
+            return httpx.Response(
+                200,
+                json={
+                    "secrets": [
+                        {"secretKey": "FREELLMAPI_API_KEY", "secretValue": "free-secret"},
+                    ]
+                },
+            )
+        raise AssertionError(f"unexpected request path {request.url.path}")
+
+    client = httpx.Client(
+        base_url="https://infisical.example.test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    overlay = load_infisical_settings(Settings.model_fields, config=_config(), client=client)
+
+    assert overlay == {"freellmapi_api_key": "free-secret"}
+    settings = Settings(**overlay)
+    assert settings.freellmapi_api_key == "free-secret"
