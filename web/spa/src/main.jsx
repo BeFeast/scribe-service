@@ -119,6 +119,7 @@ function ScribeApp() {
 						navigateDesign("job", { id: job.id });
 						return job;
 					}}
+					onDeleteJob={runtime.deleteJob}
 				/>
 			);
 			break;
@@ -150,6 +151,7 @@ function ScribeApp() {
 						navigateDesign("job", { id: job.id });
 						return job;
 					}}
+					onDeleteJob={runtime.deleteJob}
 				/>
 			);
 			break;
