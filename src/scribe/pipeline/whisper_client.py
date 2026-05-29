@@ -29,13 +29,8 @@ from scribe.config import settings
 
 VAST_API = "https://console.vast.ai/api/v0"
 VAST_IMAGE = "ghcr.io/befeast/scribe-service-vast:cuda12.4-whisper"
-GPU_REGEX = r"\b(RTX\s+4090|(RTX\s+)?A[2456][05]00|A10|A40|L4|L40S?|RTX\s+(4000|4500|5000|5500|6000)(\s+Ada(\s+Generation)?)?)\b"
-MIN_CUDA = 12.4
-MAX_PRICE_PER_HOUR = 1.0
 MAX_JOB_COST = 0.25
 MAX_INSTANCE_SECONDS = 1800
-OFFER_ATTEMPTS = 6
-INSTANCE_READY_TIMEOUT = 360
 
 REMOTE_TRANSCRIBE_SCRIPT = '#!/usr/bin/env -S uv run\n# /// script\n# requires-python = ">=3.10"\n# dependencies = [\n#   "faster-whisper>=1.1.1",\n# ]\n# ///\n\nimport argparse\nimport json\nimport re\nfrom datetime import datetime, timezone\nfrom pathlib import Path\n\nfrom faster_whisper import WhisperModel\n\n\ndef slugify(value: str) -> str:\n    slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")\n    return slug or "transcript"\n\n\ndef main() -> int:\n    parser = argparse.ArgumentParser()\n    parser.add_argument("--audio-file", required=True)\n    parser.add_argument("--title", required=True)\n    parser.add_argument("--source-url", required=True)\n    parser.add_argument("--model-size", default="large-v3-turbo")\n    parser.add_argument("--compute-type", default="float16")\n    parser.add_argument("--language", default="auto")\n    parser.add_argument("--beam-size", type=int, default=5)\n    parser.add_argument("--output-json", required=True)\n    parser.add_argument("--output-markdown", required=True)\n    args = parser.parse_args()\n\n    language = None if args.language == "auto" else args.language\n    model = WhisperModel(args.model_size, device="cuda", compute_type=args.compute_type)\n    segments, info = model.transcribe(args.audio_file, language=language, beam_size=args.beam_size, vad_filter=True)\n    collected = list(segments)\n    transcript_text = " ".join(segment.text.strip() for segment in collected if segment.text.strip()).strip()\n    duration = max((segment.end for segment in collected), default=None)\n    detected_language = getattr(info, "language", None) or "unknown"\n    language_probability = getattr(info, "language_probability", None)\n    generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")\n    backend = f"faster-whisper ({args.model_size}, {args.compute_type}, cuda)"\n    probability_text = "unknown" if language_probability is None else f"{language_probability:.3f}"\n    duration_text = "unknown" if duration is None else f"{duration:.2f}s"\n\n    markdown = (\n        f"# {args.title}\\n\\n"\n        "## Metadata\\n"\n        f"- Source URL: {args.source_url}\\n"\n        "- Source audio: Vast remote yt-dlp/ffmpeg pipeline\\n"\n        f"- Transcription model: {backend}\\n"\n        f"- Detected language: {detected_language}\\n"\n        f"- Language probability: {probability_text}\\n"\n        f"- Duration: {duration_text}\\n"\n        f"- Generated at: {generated_at}\\n\\n"\n        "## Transcript\\n\\n"\n        f"{transcript_text}\\n"\n    )\n    Path(args.output_markdown).write_text(markdown, encoding="utf-8")\n    Path(args.output_json).write_text(\n        json.dumps(\n            {\n                "title": args.title,\n                "detected_language": detected_language,\n                "language_probability": language_probability,\n                "duration_seconds": duration,\n                "backend": backend,\n                "transcript_characters": len(transcript_text),\n            },\n            ensure_ascii=False,\n        ),\n        encoding="utf-8",\n    )\n    print(f"TITLE:{args.title}")\n    print(f"DETECTED_LANGUAGE:{detected_language}")\n    print(f"TRANSCRIBE_BACKEND:{backend}")\n    print(f"TRANSCRIPT_CHARACTERS:{len(transcript_text)}")\n    return 0\n\n\nif __name__ == "__main__":\n    raise SystemExit(main())\n'
 
@@ -176,18 +171,19 @@ def _select_offers(api_key: str, *, max_price: float) -> list[dict]:
         "gpu_ram": {"gte": 16000}, "num_gpus": {"eq": 1},
     }
     offers = _vast(api_key, "POST", "/bundles/", query, timeout=60).get("offers", [])
-    pattern = re.compile(GPU_REGEX, re.IGNORECASE)
+    min_cuda = settings.vast_min_cuda
+    pattern = re.compile(settings.vast_gpu_regex, re.IGNORECASE)
     candidates = []
     for offer in offers:
         price = float(offer.get("dph_total") or 999)
         cuda = float(offer.get("cuda_max_good") or 0)
         reliability = float(offer.get("reliability") or offer.get("reliability2") or 0)
-        if (price <= max_price and cuda >= MIN_CUDA and reliability >= 0.90
+        if (price <= max_price and cuda >= min_cuda and reliability >= 0.90
                 and pattern.search(str(offer.get("gpu_name") or ""))):
             candidates.append(offer)
     if not candidates:
         raise WhisperError(
-            f"no Vast offer matched (max_price={max_price}, cuda_max_good>={MIN_CUDA}, gpu_regex, reliability>=0.90)"
+            f"no Vast offer matched (max_price={max_price}, cuda_max_good>={min_cuda}, gpu_regex, reliability>=0.90)"
         )
     return sorted(
         candidates,
@@ -196,6 +192,16 @@ def _select_offers(api_key: str, *, max_price: float) -> list[dict]:
 
 
 # --- instance lifecycle -------------------------------------------------
+def _is_offer_race(exc: BaseException) -> bool:
+    """True when the failure is a PUT /asks/{id}/ race (HTTP 400 no_such_ask)
+    rather than a real provisioning problem. Callers use this to advance to
+    the next candidate without consuming the ready-timeout budget."""
+    text = str(exc)
+    if "PUT /asks/" not in text:
+        return False
+    return "HTTP 400" in text and "no_such_ask" in text
+
+
 def _create_instance(api_key: str, offer: dict, public_key: str) -> int:
     label = f"{socket.gethostname()}-scribe-whisper-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     onstart = (
@@ -339,7 +345,7 @@ def _transcribe_impl(
     context.raise_if_cancelled()
     key_path, public_key = _ensure_local_ssh_key()
     _ensure_vast_ssh_key(api_key, public_key)
-    offers = _select_offers(api_key, max_price=MAX_PRICE_PER_HOUR)
+    offers = _select_offers(api_key, max_price=settings.vast_max_price_per_hour)
     context.raise_if_cancelled()
 
     started = time.monotonic()
@@ -348,7 +354,8 @@ def _transcribe_impl(
     price = 0.0
     deadline = started + MAX_INSTANCE_SECONDS
     last_err: Exception | None = None
-    for offer in offers[:OFFER_ATTEMPTS]:
+    ready_timeout = settings.vast_instance_ready_timeout_secs
+    for offer in offers[: settings.vast_offer_attempts]:
         price = float(offer.get("dph_total") or 0)
         deadline = _budget_deadline(started, price, MAX_JOB_COST, MAX_INSTANCE_SECONDS)
         try:
@@ -357,13 +364,23 @@ def _transcribe_impl(
             on_instance_created(instance_id)
             context.set_instance(instance_id)
             context.raise_if_cancelled()
-            startup_deadline = min(deadline, time.monotonic() + INSTANCE_READY_TIMEOUT)
+            startup_deadline = min(deadline, time.monotonic() + ready_timeout)
             host, port = _wait_for_ssh(api_key, instance_id, key_path, started, startup_deadline, price, MAX_JOB_COST)
             _wait_remote_ready(host, port, key_path, started, startup_deadline, price, MAX_JOB_COST)
             break
         except (WhisperError, TimeoutError, TranscribeTimeoutError) as exc:
             last_err = exc
-            print(f"Warning: Vast offer {offer.get('id')} unusable: {exc}", file=sys.stderr)
+            # Offer→ask race: PUT /asks/{id}/ returned HTTP 400 no_such_ask
+            # because another renter took the offer between _select_offers and
+            # _create_instance. No instance exists; advance to the next
+            # candidate without burning the ready-timeout budget.
+            if _is_offer_race(exc):
+                print(
+                    f"Warning: Vast offer {offer.get('id')} lost to renter race ({exc})",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"Warning: Vast offer {offer.get('id')} unusable: {exc}", file=sys.stderr)
             if instance_id is not None:
                 context.destroy_instance()
                 instance_id = None

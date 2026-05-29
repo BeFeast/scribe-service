@@ -160,6 +160,24 @@ class Settings(BaseSettings):
     vast_budget_alert_multiplier: float = 5.0
     vast_budget_check_interval_seconds: int = 3600
 
+    # Vast.ai whisper offer selection — Infisical/env-overridable so the
+    # operator can widen/narrow the pool without rebuilding the image. Default
+    # regex covers RTX 3090/4080/4090/5060 Ti/5070/5080/5090, A100/H100/H200,
+    # the Ampere A-series (A2000–A6500), L4/L40(S), and Ada workstation cards
+    # (RTX 4000–6000 Ada). #254: cold-host bring-up needs >360s for CUDA pull,
+    # and a thin candidate pool exhausts quickly on offer→ask race.
+    vast_gpu_regex: str = (
+        r"\b(RTX\s+(3090|4080|4090|5060\s+Ti|5070|5080|5090)"
+        r"|(RTX\s+)?A[2456][05]00"
+        r"|A10|A40|A100|H100|H200"
+        r"|L4|L40S?"
+        r"|RTX\s+(4000|4500|5000|5500|6000)(\s+Ada(\s+Generation)?)?)\b"
+    )
+    vast_min_cuda: float = 12.4
+    vast_max_price_per_hour: float = 1.0
+    vast_instance_ready_timeout_secs: int = 600
+    vast_offer_attempts: int = 12
+
     # Summary fallback-chain circuit breaker (see
     # scribe.pipeline.summary_providers.CircuitBreaker). Per-provider in-process
     # state: if the last `threshold` outcomes within `window_secs` are all
