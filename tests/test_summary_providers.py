@@ -375,6 +375,22 @@ def test_build_provider_chain_rejects_unknown_provider(
     assert "bogus" in str(exc.value)
 
 
+def test_default_summary_providers_excludes_claude(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for #250: the `claude` CLI is not installed in the runtime
+    image, so leaving it in the default chain guarantees a
+    `claude_missing` failure between codex and freellmapi. Operators who
+    want claude can opt in via SCRIBE_SUMMARY_PROVIDERS; the default must
+    only list providers that ship working in the container."""
+    from scribe.config import Settings
+
+    monkeypatch.delenv("SCRIBE_SUMMARY_PROVIDERS", raising=False)
+    defaults = Settings().summary_providers
+    assert defaults == ["codex", "freellmapi"]
+    assert "claude" not in defaults
+
+
 # ---------- summarize() integration with mocked providers --------------------
 
 
