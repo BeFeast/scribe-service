@@ -1,7 +1,7 @@
 // biome-ignore-all lint: Claude Design source port; integration-only edits live in api/data/main.
 import React from "react";
 import { IconExternal, IconRefresh } from "./icons.jsx";
-import { RECENT_FAILURES, SPEND_SERIES, STATS, fmtRelative, fmtUsd } from "./data.js";
+import { RECENT_FAILURES, SPEND_SERIES, STATS, countFailuresInLastDay, fmtRelative, fmtUsd } from "./data.js";
 import { FailureRow } from "./job-pages.jsx";
 // Ops dashboard — spend, queue, backups, recent failures, sparkline.
 
@@ -94,7 +94,7 @@ export function OpsPage({ navigate, loading, error, onRefresh, onRetryJob, onDel
       <div className="section-label" style={{marginTop: 36}}>
         <span>Recent failures · 7d</span>
         <span className="mono muted" style={{fontSize: 11}}>
-          {RECENT_FAILURES.length} failed · last 24h: <span style={{color: "var(--err)"}} className="tnum">{RECENT_FAILURES.filter(f => f.failed_at.startsWith("2026-05-16")).length}</span>
+          {RECENT_FAILURES.length} failed · last 24h: <span style={{color: "var(--err)"}} className="tnum">{countFailuresInLastDay(RECENT_FAILURES)}</span>
         </span>
       </div>
       {RECENT_FAILURES.length > 0
