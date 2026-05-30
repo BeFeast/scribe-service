@@ -769,9 +769,11 @@ def create_job(
     session: Session = Depends(get_session),
     actor: Actor = Depends(require_actor),
 ) -> JobView:
-    """Submit a video URL. Deduplicates by video_id against **done** transcripts
-    and in-flight jobs. Partial transcripts (whisper succeeded but summary
-    failed) do NOT dedup — the new job's worker will resume them."""
+    """Submit a video URL. Deduplicates by video_id against **done** transcripts,
+    in-flight jobs, and **partial** transcripts (whisper succeeded but summary
+    failed). Partial-dedup links the existing transcript and enqueues a
+    summary-only retry — the worker resume path reuses the existing whisper
+    output, so no new Vast spend and no duplicate Transcript row."""
     video_id = initial_video_key(body.url)
 
     owner = current_owner(request)
@@ -801,22 +803,45 @@ def create_job(
                        **_source_fields(active.url),
                        status=active.status.value, deduplicated=True)
 
-    # Resume-path bypass: a partial transcript exists for this video_id
-    # (whisper done, summary pending). The worker will skip download+whisper,
-    # so the cap doesn't apply — and *blocking* this submission would make
-    # the job permanently unrecoverable until enough spend rolls off.
-    partial_exists = session.scalar(
+    # Partial dedup + resume: a prior run produced the transcript but summary
+    # failed (e.g. summary-provider outage). Queue a fresh Job whose worker will
+    # detect the partial via _find_partial_transcript, skip download+whisper,
+    # and only re-run the summary step. This costs no Vast/GPU, never produces
+    # a duplicate Transcript row, and lets us report the existing partial back
+    # to the caller so they can navigate to it immediately.
+    partial = session.scalar(
         _actor_filter(
-            select(Transcript.id).where(Transcript.video_id == video_id, Transcript.summary_md.is_(None)),
+            select(Transcript).where(Transcript.video_id == video_id, Transcript.summary_md.is_(None)),
             Transcript,
             actor,
+        ).order_by(Transcript.id.desc())
+    )
+    if partial is not None:
+        retry = Job(
+            url=body.url, video_id=video_id, status=JobStatus.queued,
+            source=body.source,
+            callback_url=str(body.callback_url) if body.callback_url else None,
+            owner_subject=owner.subject if owner else None,
+            owner_email=owner.email if owner else None,
+            owner_display_name=owner.display_name if owner else None,
+            owner_id=actor.owner_id,
         )
-        .limit(1)
-    ) is not None
+        session.add(retry)
+        session.flush()
+        record_job_stage_start(session, retry, JobStatus.queued)
+        session.commit()
+        metrics.job_status_transitions.labels(status=JobStatus.queued.value).inc()
+        return JobView(
+            job_id=retry.id, url=body.url, video_id=video_id,
+            **_source_fields(body.url),
+            status=retry.status.value, deduplicated=True,
+            transcript=_brief(partial),
+            callback_url=retry.callback_url,
+        )
 
     # Only fresh, non-resume submissions trigger the rolling spend cap.
     cap = settings.daily_spend_cap_usd
-    if cap > 0 and not partial_exists:
+    if cap > 0:
         # Serialise the check+insert so two concurrent POSTs can't both pass.
         # Transaction-scoped advisory lock — cheap; auto-released at commit.
         session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _CAP_LOCK_KEY})
