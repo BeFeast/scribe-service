@@ -2165,3 +2165,69 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
     .mobile-page { animation: none; }
   }
 }
+
+/* ─── Capture sheet recipes (Wave 2f, Issue #281) ──────────────────────────
+   Byte-for-byte port of `openCapture()` styles from `Scribe iOS.html`
+   (mobile design source, SHA-256
+   421c930d9f2d5c1549dc632760f796992630a27eaa6fa38f28ff25584bc3ebb9, ~441-464).
+*/
+@media (max-width: 768px) {
+  .url-field {
+    display: flex; align-items: center; gap: 9px;
+    background: var(--bg-soft); border: 1px solid var(--border-soft);
+    border-radius: 13px; padding: 13px 14px; margin-bottom: 14px;
+  }
+  .url-field svg { color: var(--muted); flex-shrink: 0; }
+  .url-field input {
+    flex: 1; border: 0; background: transparent; outline: 0;
+    font-size: 16px; color: var(--fg); font-family: var(--font-mono);
+    min-width: 0;
+  }
+  .url-field input::placeholder {
+    color: var(--muted);
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  .detected {
+    display: flex; gap: 12px; padding: 13px;
+    background: var(--bg-card); border: 0.5px solid var(--border-soft);
+    border-radius: 14px; margin-bottom: 16px; align-items: center;
+  }
+  .detected .thumb {
+    width: 76px; height: 46px; border-radius: 9px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--accent-soft), var(--bg-soft));
+    display: grid; place-items: center; color: var(--accent);
+  }
+  .detected .d-title {
+    font-size: 13.5px; font-weight: 600; line-height: 1.3;
+    display: -webkit-box; -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical; overflow: hidden;
+    word-break: break-all;
+  }
+  .detected .d-meta {
+    font: 500 11px/1 var(--font-mono);
+    color: var(--muted); margin-top: 5px;
+  }
+  .cap-error {
+    padding: 11px 13px; margin-bottom: 12px;
+    background: color-mix(in srgb, var(--err) 12%, var(--bg));
+    border: 0.5px solid color-mix(in srgb, var(--err) 40%, transparent);
+    color: var(--err);
+    border-radius: 12px;
+    font-size: 13px; font-weight: 500;
+  }
+  .bigbtn {
+    width: 100%; appearance: none; border: 0; cursor: pointer;
+    margin-top: 8px;
+    background: var(--accent); color: var(--accent-fg);
+    font-size: 16px; font-weight: 650;
+    padding: 15px; border-radius: 14px;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .bigbtn:active { background: var(--accent-press); }
+  .bigbtn.sec { background: var(--bg-soft); color: var(--fg); }
+  .bigbtn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .cap-sample {
+    color: var(--muted) !important;
+    font-family: var(--font-mono); font-size: 12px;
+  }
+}
