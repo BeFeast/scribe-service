@@ -5,7 +5,16 @@
 			"dist",
 			"node_modules",
 			"src/design-source",
-			"src/design-app/*.jsx",
+			"src/design-app/api.jsx",
+			"src/design-app/command-palette.jsx",
+			"src/design-app/history.jsx",
+			"src/design-app/icons.jsx",
+			"src/design-app/job-pages.jsx",
+			"src/design-app/library.jsx",
+			"src/design-app/ops.jsx",
+			"src/design-app/settings.jsx",
+			"src/design-app/shell.jsx",
+			"src/design-app/transcript-detail.jsx",
 			"src/styles.css"
 		]
 	},
