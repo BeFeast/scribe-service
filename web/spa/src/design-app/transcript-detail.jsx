@@ -521,7 +521,8 @@ function unwrapYamlString(value) {
 }
 
 function PropertiesPanel({ props, navigate }) {
-  const [open, setOpen] = React.useState(true);
+  // Closed by default — operators usually skim summary first; expand for metadata.
+  const [open, setOpen] = React.useState(false);
   const [copied, setCopied] = React.useState(null);
 
   function copyValue(prop) {
