@@ -7,6 +7,7 @@ import { setRuntimeData } from "./design-app/data.js";
 import { HistoryPage } from "./design-app/history.jsx";
 import { JobDetail, QueuePage } from "./design-app/job-pages.jsx";
 import { LibraryPage } from "./design-app/library.jsx";
+import { MobileLibrary } from "./design-app/mobile/MobileLibrary.jsx";
 import { MobileOps } from "./design-app/mobile/MobileOps.jsx";
 import { MobileShell } from "./design-app/mobile/MobileShell.jsx";
 import { pageChrome, tabBadges } from "./design-app/mobile/mobilePageConfig.js";
@@ -204,7 +205,16 @@ function ScribeApp() {
 			);
 			break;
 		default:
-			page = (
+			page = isMobile ? (
+				<MobileLibrary
+					navigate={navigateDesign}
+					routeTag={route.params.tag}
+					loading={runtime.loading}
+					error={runtime.error}
+					auth={auth}
+					onRefresh={runtime.refreshCore}
+				/>
+			) : (
 				<LibraryPage
 					navigate={navigateDesign}
 					t={t}
