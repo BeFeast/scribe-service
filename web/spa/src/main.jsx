@@ -7,11 +7,14 @@ import { setRuntimeData } from "./design-app/data.js";
 import { HistoryPage } from "./design-app/history.jsx";
 import { JobDetail, QueuePage } from "./design-app/job-pages.jsx";
 import { LibraryPage } from "./design-app/library.jsx";
+import { MobileShell } from "./design-app/mobile/MobileShell.jsx";
+import { pageChrome, tabBadges } from "./design-app/mobile/mobilePageConfig.js";
 import { OpsPage } from "./design-app/ops.jsx";
 import { SettingsPage } from "./design-app/settings.jsx";
 import { Sidebar, TopBar } from "./design-app/shell.jsx";
 import { TranscriptDetail } from "./design-app/transcript-detail.jsx";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
+import { useIsMobile } from "./hooks/useIsMobile";
 import { useRoute } from "./hooks/useRoute";
 import { DEFAULT_TWEAKS, useTweaks } from "./hooks/useTweaks";
 import "./styles.css";
@@ -42,6 +45,15 @@ function ScribeApp() {
 	const runtime = useScribeRuntime(auth, route);
 	const t = React.useMemo(() => ({ ...DEFAULT_TWEAKS, ...tweaks }), [tweaks]);
 	const gatePhase = deriveGatePhase(auth, !runtime.loading);
+	const isMobile = useIsMobile();
+	const openCapture = React.useCallback(() => {
+		// Wave 1 placeholder — Wave 2f wires this to the real CaptureSheet
+		// (paste-URL → POST /jobs via the shared submitJob helper). For
+		// now, route the user to the existing command-palette which is
+		// the live submit surface, so the Capture orb is never a dead
+		// click in production.
+		setCmdkOpen(true);
+	}, []);
 
 	setRuntimeData({
 		transcripts: runtime.transcripts,
@@ -192,8 +204,11 @@ function ScribeApp() {
 			);
 	}
 
+	const chrome = isMobile ? pageChrome(route, runtime) : null;
+	const badges = isMobile ? tabBadges(runtime) : null;
+
 	return (
-		<div className="app">
+		<div className={isMobile ? "app app-mobile" : "app"}>
 			<AuthGate
 				phase={gatePhase}
 				error={auth.bootstrapError}
@@ -202,11 +217,32 @@ function ScribeApp() {
 				onRetry={auth.retryBootstrap}
 				onContinueOffline={auth.continueOffline}
 			/>
-			<TopBar onOpenCmdk={() => setCmdkOpen(true)} t={t} setTweak={setTweak} />
-			<Sidebar page={route.page} navigate={navigateDesign} />
-			<main className="main" data-screen-label={route.page}>
-				{page}
-			</main>
+			{isMobile ? (
+				<MobileShell
+					route={route}
+					navigate={navigateDesign}
+					onCapture={openCapture}
+					badges={badges}
+					title={chrome.title}
+					large={chrome.large}
+					sub={chrome.sub}
+					canBack={chrome.canBack}
+				>
+					{page}
+				</MobileShell>
+			) : (
+				<>
+					<TopBar
+						onOpenCmdk={() => setCmdkOpen(true)}
+						t={t}
+						setTweak={setTweak}
+					/>
+					<Sidebar page={route.page} navigate={navigateDesign} />
+					<main className="main" data-screen-label={route.page}>
+						{page}
+					</main>
+				</>
+			)}
 			<CommandPalette
 				open={cmdkOpen}
 				onClose={() => setCmdkOpen(false)}
