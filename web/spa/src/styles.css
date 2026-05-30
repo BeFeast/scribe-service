@@ -2334,5 +2334,157 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
     height: 6px;
     border-radius: 999px;
     background: currentColor;
+/* ─── Mobile Library page (Wave 2a, Issue #276) ─────────────────────────
+   Ported from Scribe iOS.html (~213-310).  iOS Field hex values are
+   replaced with the production semantic tokens established in Wave 0
+   (--bg-card / --bg-soft / --bg-elev / --fg / --fg-soft / --muted /
+    --accent / --accent-soft / --border-soft / --hairline / --warn /
+    --shadow / --font-mono).  All recipes live behind the @media
+   (max-width: 768px) gate so the desktop Library is unaffected. */
+@media (max-width: 768px) {
+  .mobile-library-list { padding: 0 16px 12px; }
+
+  .feed { display: block; }
+
+  .tcard {
+    background: var(--bg-card);
+    border: 0.5px solid var(--border-soft);
+    border-radius: 18px;
+    padding: 15px 16px;
+    margin-bottom: 11px;
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.12s ease;
+  }
+  .tcard:active { transform: scale(0.985); }
+  .tcard .meta-top {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 7px;
+    font: 500 11.5px/1 var(--font-mono);
+    color: var(--muted);
+    font-feature-settings: "tnum";
+    flex-wrap: wrap;
+  }
+  .tcard .meta-top .sep { opacity: 0.4; }
+  .tcard .t-title {
+    font-size: 17px;
+    font-weight: 650;
+    letter-spacing: -0.015em;
+    line-height: 1.25;
+    margin: 0 0 6px;
+    color: var(--fg);
+  }
+  .tcard .t-ex {
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--fg-soft);
+    margin: 0 0 11px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .tcard .t-foot {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .tag {
+    font: 500 11px/1 var(--font-mono);
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: var(--bg-soft);
+    border: 0.5px solid var(--border-soft);
+    color: var(--fg-soft);
+  }
+  .tag.accent {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: transparent;
+  }
+
+  .chev { color: var(--muted); opacity: 0.6; display: inline-flex; }
+
+  /* search field */
+  .searchbar { padding: 2px 16px 10px; }
+  .searchfield {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-soft);
+    border-radius: 12px;
+    padding: 9px 12px;
+    color: var(--muted);
+    border: 0.5px solid transparent;
+  }
+  .searchfield input {
+    flex: 1;
+    border: 0;
+    background: transparent;
+    outline: 0;
+    color: var(--fg);
+    font-size: 16px;
+    font-family: inherit;
+  }
+  .searchfield input::placeholder { color: var(--muted); }
+  .searchfield.focus {
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+    background: var(--bg-card);
+  }
+
+  /* segmented control */
+  .seg {
+    display: flex;
+    background: var(--bg-soft);
+    border-radius: 10px;
+    padding: 2px;
+    margin: 0 16px 12px;
+    gap: 2px;
+  }
+  .seg button {
+    flex: 1;
+    appearance: none;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg-soft);
+    padding: 7px 8px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 34px;
+  }
+  .seg button.active {
+    background: var(--bg-elev);
+    color: var(--fg);
+    box-shadow: 0 1px 3px rgba(28, 32, 24, 0.12);
+  }
+  #app[data-theme="dark"] .seg button.active {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  }
+
+  /* empty state */
+  .empty {
+    padding: 36px 24px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .empty .e-title {
+    font-size: 16px;
+    font-weight: 650;
+    color: var(--fg);
+    margin-bottom: 4px;
   }
 }
