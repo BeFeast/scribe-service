@@ -2807,4 +2807,323 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
     color: var(--fg);
   }
   .bigbtn:disabled { opacity: 0.45; cursor: not-allowed; }
+/* ─── Mobile settings (Wave 2e, Issue #280) ─────────────────────────────
+   Port of `.me-card`, `.glist`, `.grow`, `.toggle`, `.urow`, `.role`,
+   `.sec-label` from `Scribe iOS.html` (~lines 280-420). Scoped under
+   `.app-mobile` so the iOS overrides do NOT touch the existing desktop
+   `.toggle` / `.grow` / `.sec-label` recipes. iOS Field hex values are
+   replaced with semantic tokens (`var(--bg-card)`, `var(--border-soft)`,
+   `var(--accent)`, `var(--muted)`, `var(--err)`). */
+@media (max-width: 768px) {
+  .app-mobile .sec-label {
+    font: 600 12px/1 var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--muted);
+    padding: 18px 22px 8px;
+  }
+
+  .app-mobile .me-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 4px 16px 0;
+    padding: 16px;
+    background: var(--bg-card);
+    border: 0.5px solid var(--border-soft);
+    border-radius: 18px;
+  }
+  .app-mobile .me-card .avatar {
+    width: 52px; height: 52px; border-radius: 50%;
+    background: var(--accent); color: var(--accent-fg);
+    display: grid; place-items: center;
+    font-size: 21px; font-weight: 700;
+    flex-shrink: 0;
+  }
+  .app-mobile .me-card .me-main { min-width: 0; flex: 1; }
+  .app-mobile .me-card .me-name {
+    font-size: 18px; font-weight: 680; letter-spacing: -0.01em;
+  }
+  .app-mobile .me-card .me-mail {
+    font: 500 12.5px/1.3 var(--font-mono);
+    color: var(--muted);
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .app-mobile .glist {
+    margin: 0 16px 22px;
+    background: var(--bg-card);
+    border: 0.5px solid var(--border-soft);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+  .app-mobile .glist .grow {
+    appearance: none;
+    width: 100%;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    padding: 12px 15px;
+    min-height: 50px;
+    border: 0;
+    border-top: 0.5px solid var(--border-soft);
+    background: transparent;
+    color: var(--fg);
+    cursor: default;
+    flex: initial;
+  }
+  .app-mobile .glist .grow:first-child { border-top: 0; }
+  .app-mobile .glist button.grow { cursor: pointer; }
+  .app-mobile .glist button.grow:active { background: var(--bg-soft); }
+  .app-mobile .glist .grow.grow-stack {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    padding-bottom: 14px;
+  }
+  .app-mobile .glist .grow.grow-stack .g-label { flex: 1 1 auto; }
+  .app-mobile .glist .grow.grow-stack .ms-seg {
+    flex: 1 0 100%;
+    margin-top: 10px;
+    margin-left: 42px;
+  }
+  .app-mobile .glist .grow .g-ic {
+    width: 29px; height: 29px;
+    border-radius: 8px;
+    display: grid; place-items: center;
+    color: #fff;
+    flex-shrink: 0;
+  }
+  .app-mobile .glist .grow .g-label {
+    flex: 1;
+    font-size: 15.5px;
+    font-weight: 450;
+  }
+  .app-mobile .glist .grow .g-label small {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 400;
+    margin-top: 2px;
+    line-height: 1.35;
+  }
+  .app-mobile .glist .grow .g-val {
+    font: 500 14px/1 var(--font-mono);
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .app-mobile .glist .grow .g-val .g-val-text { font-feature-settings: "tnum"; }
+
+  /* iOS-style toggle (51×31). Scoped so the existing desktop .toggle
+     (36×20, defined elsewhere in this file) is untouched. */
+  .app-mobile .glist .toggle {
+    width: 51px;
+    height: 31px;
+    border-radius: 999px;
+    background: var(--border);
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    flex-shrink: 0;
+    border: 0;
+    padding: 0;
+    appearance: none;
+  }
+  .app-mobile .glist .toggle::after {
+    content: "";
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 27px; height: 27px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    transition: transform 0.2s ease;
+  }
+  .app-mobile .glist .toggle.on { background: var(--accent); }
+  .app-mobile .glist .toggle.on::after { transform: translateX(20px); }
+
+  /* Inline segmented picker for the variant / density / library-layout
+     pickers in the Appearance section. Distinct from the existing .seg
+     desktop recipe so it does not need to share padding/typography. */
+  .app-mobile .ms-seg {
+    display: inline-flex;
+    align-self: stretch;
+    background: var(--bg-soft);
+    border-radius: 10px;
+    padding: 3px;
+    gap: 2px;
+    flex-wrap: wrap;
+  }
+  .app-mobile .ms-seg-btn {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font: 500 12px/1 var(--font-sans);
+    padding: 7px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 30px;
+  }
+  .app-mobile .ms-seg-btn.active {
+    background: var(--bg-card);
+    color: var(--fg);
+    box-shadow: 0 1px 3px rgba(28, 32, 24, 0.12);
+  }
+  #app[data-theme="dark"] .app-mobile .ms-seg-btn.active {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  }
+
+  /* User row inside Access sub-view. */
+  .app-mobile .urow {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 15px;
+    border-top: 0.5px solid var(--border-soft);
+  }
+  .app-mobile .urow:first-child { border-top: 0; }
+  .app-mobile .urow .u-av {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: var(--bg-soft);
+    border: 0.5px solid var(--border-soft);
+    display: grid; place-items: center;
+    font-size: 14px; font-weight: 650;
+    color: var(--fg-soft);
+    flex-shrink: 0;
+  }
+  .app-mobile .urow.me .u-av {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: var(--accent);
+  }
+  .app-mobile .urow .u-main { flex: 1; min-width: 0; }
+  .app-mobile .urow .u-name {
+    font-size: 14.5px;
+    font-weight: 560;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .app-mobile .urow .u-name .u-you {
+    color: var(--muted);
+    font-weight: 400;
+  }
+  .app-mobile .urow .u-mail {
+    font: 500 11.5px/1 var(--font-mono);
+    color: var(--muted);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .app-mobile .urow.urow-empty {
+    padding: 16px 15px;
+    color: var(--muted);
+  }
+  .app-mobile .role {
+    font: 600 10px/1 var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 3px 8px;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+  .app-mobile .role.admin {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .app-mobile .role.user {
+    background: var(--bg-soft);
+    color: var(--fg-soft);
+  }
+
+  /* Big buttons (Sign out, Invite member) + inline notices. */
+  .app-mobile .ms-bigbtn-wrap {
+    padding: 0 16px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .app-mobile .ms-bigbtn {
+    appearance: none;
+    width: 100%;
+    border: 0.5px solid var(--border-soft);
+    background: var(--bg-card);
+    color: var(--fg);
+    border-radius: 14px;
+    padding: 14px 16px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 50px;
+  }
+  .app-mobile .ms-bigbtn:active { background: var(--bg-soft); }
+  .app-mobile .ms-bigbtn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .app-mobile .ms-bigbtn-danger { color: var(--err); }
+  .app-mobile .ms-inline-error {
+    color: var(--err);
+    font-size: 13px;
+    line-height: 1.4;
+    padding: 4px 4px 0;
+  }
+  .app-mobile .ms-inline-notice {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.4;
+    padding: 4px 4px 0;
+  }
+
+  /* Access sub-view header (the in-page back affordance — separate from
+     the global mobile navbar, since Access is a local sub-view, not a
+     route). */
+  .app-mobile .ms-subhead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 12px 6px;
+    gap: 8px;
+  }
+  .app-mobile .ms-back {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--accent);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 16px;
+    font-weight: 500;
+    min-height: 40px;
+    padding: 6px 8px;
+    border-radius: 10px;
+  }
+  .app-mobile .ms-back:active { opacity: 0.5; }
+  .app-mobile .ms-subtitle {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+  }
+  .app-mobile .ms-back-spacer {
+    width: 64px;
+    display: inline-block;
+  }
 }
