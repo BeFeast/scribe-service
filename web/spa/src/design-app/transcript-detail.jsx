@@ -895,12 +895,100 @@ function stripSummaryFrontmatter(src) {
 	return splitFrontmatter(src).body;
 }
 
-// Wave 2a commit N — placeholder. Replaced in commit N+1 with real
-// `navigator.share` / `navigator.clipboard.writeText(summary_md)` /
-// RSS copy. No-op here so the literal-port commit stays free of fake
-// share toasts (banned by issue #277).
-function handleMobileShareAction(_action, _t) {
-	// intentionally empty in commit N
+// Real-share wiring — Wave 2a / Issue #277 commit N+1.
+//
+// Replaces the literal-port stubs with `navigator.share` (where
+// supported), `navigator.clipboard.writeText` for "Copy summary as
+// Markdown", and a clipboard write of the per-transcript RSS feed URL
+// for "Add to RSS feed". Every action confirms via the in-sheet
+// `.toast` recipe (`action.showToast(msg)`); no fake share toasts and
+// no `window.alert/confirm/prompt`.
+//
+// `action.kind` matches the constants emitted by ShareSheet.jsx:
+//   - "share-app"           5-tile grid → navigator.share() w/ copy fallback
+//   - "copy-markdown"       Copy summary as Markdown row
+//   - "rss"                 Add to RSS feed row
+//   - "copy-summary-link"   shortlink (gated; hidden until API ships)
+//   - "copy-transcript-link" shortlink (gated; hidden until API ships)
+async function handleMobileShareAction(action, t) {
+	const urls = shareUrlsFor(t);
+	const sharePayload = {
+		title: t.title || `Transcript #${t.id}`,
+		text: t.title || `Transcript #${t.id}`,
+		url: urls.canonical,
+	};
+	if (action.kind === "share-app") {
+		await invokeNativeShare(sharePayload, urls.canonical, action.showToast);
+		return;
+	}
+	if (action.kind === "copy-markdown") {
+		const summary = typeof t.summary_md === "string" ? t.summary_md : "";
+		await copyToClipboardWithToast(
+			summary,
+			action.showToast,
+			summary
+				? "Copied summary as Markdown"
+				: "No summary available to copy",
+			!summary,
+		);
+		return;
+	}
+	if (action.kind === "rss") {
+		await copyToClipboardWithToast(
+			urls.rss,
+			action.showToast,
+			"RSS feed link copied",
+		);
+		return;
+	}
+	if (
+		action.kind === "copy-summary-link" ||
+		action.kind === "copy-transcript-link"
+	) {
+		await copyToClipboardWithToast(
+			action.url,
+			action.showToast,
+			"Link copied to clipboard",
+		);
+	}
+}
+
+async function invokeNativeShare(payload, fallbackUrl, showToast) {
+	if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+		try {
+			await navigator.share(payload);
+			return;
+		} catch (error) {
+			// AbortError = user dismissed the OS sheet — say nothing.
+			if (error && error.name === "AbortError") return;
+		}
+	}
+	await copyToClipboardWithToast(
+		fallbackUrl,
+		showToast,
+		"Link copied to clipboard",
+	);
+}
+
+async function copyToClipboardWithToast(text, showToast, successMsg, isError) {
+	if (isError) {
+		showToast(successMsg);
+		return;
+	}
+	if (
+		typeof navigator === "undefined" ||
+		!navigator.clipboard ||
+		typeof navigator.clipboard.writeText !== "function"
+	) {
+		showToast("Clipboard unavailable");
+		return;
+	}
+	try {
+		await navigator.clipboard.writeText(text);
+		showToast(successMsg);
+	} catch (_error) {
+		showToast("Clipboard blocked");
+	}
 }
 
 function DetailState({ title, body, navigate }) {

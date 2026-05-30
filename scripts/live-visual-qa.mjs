@@ -266,7 +266,7 @@ async function captureRoute(cdp, route, viewport) {
 					},
 					transcript: {
 						hasTitle: Boolean(document.querySelector(".detail-h1")?.textContent?.trim()),
-						hasBody: Boolean(document.querySelector(".transcript-body")?.textContent?.trim()),
+						hasBody: Boolean(document.querySelector(".transcript-body, .prose")?.textContent?.trim()),
 						unavailable: /Transcript unavailable|404|not found/i.test(document.body.textContent || ""),
 					},
 				};
