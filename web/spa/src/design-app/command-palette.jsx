@@ -3,7 +3,8 @@ import React from "react";
 import { useAuth } from "../hooks/useAuth";
 import { IconArrow, IconCheck, IconClock, IconPlus, IconSearch, IconWave } from "./icons.jsx";
 import { ACTIVE_JOBS, STATS, TRANSCRIPTS, fmtDuration, fmtRelative, fmtUsd } from "./data.js";
-import { isJobView, parseVideoUrl } from "./command-utils.js";
+import { parseVideoUrl } from "./command-utils.js";
+import { submitJob } from "./api-jobs.js";
 // Command palette — ⌘K. Detects YouTube URLs and offers a one-key submit.
 // Falls through to a fuzzy-ish title search + a fixed list of commands.
 
@@ -79,13 +80,7 @@ export function CommandPalette({ open, onClose, navigate }) {
     if (!videoUrl || submitted) return;
     setSubmitted({ state: "submitting", video_id: ytId });
     try {
-      const response = await auth.protectedFetch("/jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: videoUrl.url, source: "manual" }),
-      });
-      const body = await response.json().catch(() => null);
-      if (!response.ok || !isJobView(body)) throw new Error("HTTP " + response.status);
+      const body = await submitJob(auth, videoUrl.url);
       setSubmitted({ id: body.job_id, video_id: body.video_id, status: body.status });
     } catch (error) {
       setSubmitted({ state: "error", video_id: ytId, message: error instanceof Error ? error.message : String(error) });

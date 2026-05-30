@@ -247,6 +247,7 @@ def test_core_route_wiring_uses_real_backend_actions_where_present() -> None:
     command = read("design-app/command-palette.jsx")
     settings = read("design-app/settings.jsx")
     api = read("design-app/api.jsx")
+    api_jobs = read("design-app/api-jobs.js")
 
     assert 'auth.protectedFetch("/transcripts/" + t.id + "/resummarize"' in transcript
     assert 'auth.protectedFetch("/admin/transcripts/" + t.id' in transcript
@@ -256,10 +257,15 @@ def test_core_route_wiring_uses_real_backend_actions_where_present() -> None:
     assert 'const path = "/transcripts/" + t.id + "/" + kind + ".md"' in transcript
     assert '<a onClick={() => navigate("library")}' in transcript
     assert '<button className="btn danger" onClick={() => void deleteTranscript()}' in transcript
-    assert 'auth.protectedFetch("/jobs"' in command
-    assert 'body: JSON.stringify({ url: videoUrl.url, source: "manual" })' in command
+    # Wave 2f / #281: the desktop command palette no longer owns the inline
+    # POST /jobs call. The real call lives in the shared submitJob helper at
+    # design-app/api-jobs.js; CmdK and the mobile CaptureSheet both call it.
+    assert 'auth.protectedFetch("/jobs"' in api_jobs
+    assert 'body: JSON.stringify({ url: parsed.url, source: "manual" })' in api_jobs
+    assert "submitJob(auth, " in command
+    assert 'from "./api-jobs.js"' in command
     assert "parseVideoUrl" in command
-    assert "isJobView" in command
+    assert "isJobView" in api_jobs
     assert 'fetchJson(auth, "/api/config"' in settings
     assert 'fetchJson(auth, "/api/prompts"' in settings
     assert 'fetchJson(auth, "/api/auth/extension-token"' in settings

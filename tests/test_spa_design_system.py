@@ -255,3 +255,70 @@ def test_source_css_gzip_size_budget() -> None:
     css = STYLES.read_bytes()
 
     assert len(gzip.compress(css)) <= 30_000
+
+
+def test_mobile_capture_sheet_ships_real_submit_no_fabricated_metadata() -> None:
+    """Wave 2f / Issue #281 — mobile CaptureSheet structure guards."""
+
+    def strip_comments(source: str) -> str:
+        # Strip // line comments and /* ... */ block comments so the guards
+        # never trip on the source mapping / "what NOT to ship" prose.
+        without_block = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+        return re.sub(r"//[^\n]*", "", without_block)
+
+    capture_raw = (
+        SPA_SRC / "design-app" / "mobile" / "CaptureSheet.jsx"
+    ).read_text(encoding="utf-8")
+    capture = strip_comments(capture_raw)
+    api_jobs = (SPA_SRC / "design-app" / "api-jobs.js").read_text(encoding="utf-8")
+    palette = (SPA_SRC / "design-app" / "command-palette.jsx").read_text(
+        encoding="utf-8"
+    )
+    main_jsx = MAIN.read_text(encoding="utf-8")
+
+    # CaptureSheet renders the design-source recipe classes (url-field,
+    # detected, opt-row alternatives, bigbtn) and never invents metadata.
+    assert 'className="url-field"' in capture
+    assert 'className="detected"' in capture
+    assert 'className="bigbtn"' in capture
+    assert 'className="s-cancel"' in capture
+    assert 'className="s-done"' in capture
+    assert 'className="grabber"' in capture
+
+    # No fabricated channel/title/duration/cost from the design prototype.
+    for forbidden in ("Linus Torvalds", "Rich Hickey", "Bryan Cantrill", "est. $0.04"):
+        assert forbidden not in capture, (
+            f"CaptureSheet must not ship fabricated metadata: {forbidden}"
+        )
+
+    # No window.alert/confirm/prompt anywhere in the capture flow.
+    for primitive in ("window.alert", "window.confirm", "window.prompt"):
+        assert primitive not in capture
+        assert primitive not in api_jobs
+        assert primitive not in main_jsx
+
+    # Shared submitJob helper is the single submit path: it must POST /jobs
+    # with body {url, source: "manual"} via auth.protectedFetch.
+    assert 'auth.protectedFetch("/jobs"' in api_jobs
+    assert '"manual"' in api_jobs
+    assert "source: \"manual\"" in api_jobs
+
+    # Both CmdK and the mobile shell consume the shared helper.
+    assert 'from "./api-jobs.js"' in palette
+    assert "submitJob(auth, " in palette
+    assert 'from "./design-app/api-jobs.js"' in main_jsx
+    assert "submitJob(auth, " in main_jsx
+
+    # CaptureSheet calls the host-provided onSubmit with the parsed URL —
+    # no inline fetch from the component.
+    assert "auth.protectedFetch" not in capture
+    assert "onSubmit?.(parsed.url)" in capture
+
+    # Optional toggles (Summarize / Notify / Prompt) are NOT rendered in v1
+    # — POST /jobs does not yet support those flags.
+    assert 'data-act="sum"' not in capture
+    assert 'data-act="notify"' not in capture
+
+    # Main wires success → navigate to #/jobs/:id + .toast "Added to queue".
+    assert 'navigate({ page: "job"' in main_jsx
+    assert '"Added to queue"' in main_jsx

@@ -1,13 +1,16 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { AuthGate } from "./components/Loaders";
+import { submitJob } from "./design-app/api-jobs.js";
 import { useScribeRuntime } from "./design-app/api.jsx";
 import { CommandPalette } from "./design-app/command-palette.jsx";
 import { setRuntimeData } from "./design-app/data.js";
 import { HistoryPage } from "./design-app/history.jsx";
 import { JobDetail, QueuePage } from "./design-app/job-pages.jsx";
 import { LibraryPage } from "./design-app/library.jsx";
+import { CaptureSheet } from "./design-app/mobile/CaptureSheet.jsx";
 import { MobileShell } from "./design-app/mobile/MobileShell.jsx";
+import { MobileToast } from "./design-app/mobile/Toast.jsx";
 import { pageChrome, tabBadges } from "./design-app/mobile/mobilePageConfig.js";
 import { OpsPage } from "./design-app/ops.jsx";
 import { SettingsPage } from "./design-app/settings.jsx";
@@ -42,18 +45,20 @@ function ScribeApp() {
 	const { route, navigate } = useRoute();
 	const { tweaks, replaceTweaks } = useTweaks();
 	const [cmdkOpen, setCmdkOpen] = React.useState(false);
+	const [captureOpen, setCaptureOpen] = React.useState(false);
+	const [toast, setToast] = React.useState(null);
 	const runtime = useScribeRuntime(auth, route);
 	const t = React.useMemo(() => ({ ...DEFAULT_TWEAKS, ...tweaks }), [tweaks]);
 	const gatePhase = deriveGatePhase(auth, !runtime.loading);
 	const isMobile = useIsMobile();
 	const openCapture = React.useCallback(() => {
-		// Wave 1 placeholder — Wave 2f wires this to the real CaptureSheet
-		// (paste-URL → POST /jobs via the shared submitJob helper). For
-		// now, route the user to the existing command-palette which is
-		// the live submit surface, so the Capture orb is never a dead
-		// click in production.
-		setCmdkOpen(true);
+		// Wave 2f / Issue #281: open the mobile CaptureSheet (paste-URL →
+		// real POST /jobs via shared submitJob helper). The desktop
+		// command-palette continues to handle ⌘K on wide viewports; on
+		// mobile, the center "+" tab opens the sheet.
+		setCaptureOpen(true);
 	}, []);
+	const closeCapture = React.useCallback(() => setCaptureOpen(false), []);
 
 	setRuntimeData({
 		transcripts: runtime.transcripts,
@@ -92,6 +97,17 @@ function ScribeApp() {
 			navigate({ page, params });
 		},
 		[navigate],
+	);
+
+	const handleCaptureSubmit = React.useCallback(
+		async (url) => {
+			const body = await submitJob(auth, url);
+			setCaptureOpen(false);
+			navigate({ page: "job", params: { id: body.job_id } });
+			setToast({ message: "Added to queue", key: Date.now() });
+			return body;
+		},
+		[auth, navigate],
 	);
 
 	React.useEffect(() => {
@@ -248,6 +264,20 @@ function ScribeApp() {
 				onClose={() => setCmdkOpen(false)}
 				navigate={navigateDesign}
 			/>
+			{isMobile ? (
+				<>
+					<CaptureSheet
+						open={captureOpen}
+						onClose={closeCapture}
+						onSubmit={handleCaptureSubmit}
+					/>
+					<MobileToast
+						key={toast?.key}
+						message={toast?.message ?? null}
+						onHide={() => setToast(null)}
+					/>
+				</>
+			) : null}
 		</div>
 	);
 }
