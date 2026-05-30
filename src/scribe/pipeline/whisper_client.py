@@ -32,6 +32,10 @@ VAST_IMAGE = "ghcr.io/befeast/scribe-service-vast:cuda12.4-whisper"
 # Hard upper bound on a single instance's wall-clock budget; the per-job cost
 # guard (settings.vast_max_job_cost) usually trips well before this.
 MAX_INSTANCE_SECONDS = 1800
+# Vast instance status fields (actual_status / cur_state / intended_status)
+# that mean the container will not become ready — fail fast instead of
+# polling for the full ready_timeout window.
+_VAST_FAILED_STATES = frozenset({"exited", "failed", "crashed", "offline", "error", "stopped"})
 
 REMOTE_TRANSCRIBE_SCRIPT = '#!/usr/bin/env -S uv run\n# /// script\n# requires-python = ">=3.10"\n# dependencies = [\n#   "faster-whisper>=1.1.1",\n# ]\n# ///\n\nimport argparse\nimport json\nimport re\nfrom datetime import datetime, timezone\nfrom pathlib import Path\n\nfrom faster_whisper import WhisperModel\n\n\ndef slugify(value: str) -> str:\n    slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")\n    return slug or "transcript"\n\n\ndef main() -> int:\n    parser = argparse.ArgumentParser()\n    parser.add_argument("--audio-file", required=True)\n    parser.add_argument("--title", required=True)\n    parser.add_argument("--source-url", required=True)\n    parser.add_argument("--model-size", default="large-v3-turbo")\n    parser.add_argument("--compute-type", default="float16")\n    parser.add_argument("--language", default="auto")\n    parser.add_argument("--beam-size", type=int, default=5)\n    parser.add_argument("--output-json", required=True)\n    parser.add_argument("--output-markdown", required=True)\n    args = parser.parse_args()\n\n    language = None if args.language == "auto" else args.language\n    model = WhisperModel(args.model_size, device="cuda", compute_type=args.compute_type)\n    segments, info = model.transcribe(args.audio_file, language=language, beam_size=args.beam_size, vad_filter=True)\n    collected = list(segments)\n    transcript_text = " ".join(segment.text.strip() for segment in collected if segment.text.strip()).strip()\n    duration = max((segment.end for segment in collected), default=None)\n    detected_language = getattr(info, "language", None) or "unknown"\n    language_probability = getattr(info, "language_probability", None)\n    generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")\n    backend = f"faster-whisper ({args.model_size}, {args.compute_type}, cuda)"\n    probability_text = "unknown" if language_probability is None else f"{language_probability:.3f}"\n    duration_text = "unknown" if duration is None else f"{duration:.2f}s"\n\n    markdown = (\n        f"# {args.title}\\n\\n"\n        "## Metadata\\n"\n        f"- Source URL: {args.source_url}\\n"\n        "- Source audio: Vast remote yt-dlp/ffmpeg pipeline\\n"\n        f"- Transcription model: {backend}\\n"\n        f"- Detected language: {detected_language}\\n"\n        f"- Language probability: {probability_text}\\n"\n        f"- Duration: {duration_text}\\n"\n        f"- Generated at: {generated_at}\\n\\n"\n        "## Transcript\\n\\n"\n        f"{transcript_text}\\n"\n    )\n    Path(args.output_markdown).write_text(markdown, encoding="utf-8")\n    Path(args.output_json).write_text(\n        json.dumps(\n            {\n                "title": args.title,\n                "detected_language": detected_language,\n                "language_probability": language_probability,\n                "duration_seconds": duration,\n                "backend": backend,\n                "transcript_characters": len(transcript_text),\n            },\n            ensure_ascii=False,\n        ),\n        encoding="utf-8",\n    )\n    print(f"TITLE:{args.title}")\n    print(f"DETECTED_LANGUAGE:{detected_language}")\n    print(f"TRANSCRIBE_BACKEND:{backend}")\n    print(f"TRANSCRIPT_CHARACTERS:{len(transcript_text)}")\n    return 0\n\n\nif __name__ == "__main__":\n    raise SystemExit(main())\n'
 
@@ -42,6 +46,14 @@ class WhisperError(RuntimeError):
 
 class TranscribeTimeoutError(WhisperError):
     pass
+
+
+class VastInstanceFailedError(WhisperError):
+    """Vast container reached a terminal-failure state during startup."""
+
+
+class VastReadyTimeoutError(WhisperError):
+    """Vast container did not become ready within the per-attempt budget."""
 
 
 @dataclass
@@ -169,9 +181,11 @@ def _select_offers(
     max_price: float,
     gpu_regex: str,
     min_cuda: float,
+    excluded_hosts: set[int] | None = None,
 ) -> list[dict]:
     import re
 
+    excluded = excluded_hosts or set()
     query = {
         "limit": 400, "type": "on-demand",
         "rentable": {"eq": True}, "rented": {"eq": False}, "verified": {"eq": True},
@@ -184,6 +198,13 @@ def _select_offers(
         price = float(offer.get("dph_total") or 999)
         cuda = float(offer.get("cuda_max_good") or 0)
         reliability = float(offer.get("reliability") or offer.get("reliability2") or 0)
+        host_id_raw = offer.get("host_id")
+        try:
+            host_id = int(host_id_raw) if host_id_raw is not None else None
+        except (TypeError, ValueError):
+            host_id = None
+        if host_id is not None and host_id in excluded:
+            continue
         if (price <= max_price and cuda >= min_cuda and reliability >= 0.90
                 and pattern.search(str(offer.get("gpu_name") or ""))):
             candidates.append(offer)
@@ -312,19 +333,71 @@ def _budget_deadline(started: float, price: float, max_cost: float, max_seconds:
     return started + min(max_seconds, by_cost)
 
 
-def _ensure_budget(started: float, deadline: float, price: float, max_cost: float) -> None:
+def _ensure_budget(
+    started: float,
+    deadline: float,
+    price: float,
+    max_cost: float,
+    *,
+    ready_timeout: float | None = None,
+    label: str = "",
+) -> None:
+    """Raise when the per-attempt deadline is exceeded.
+
+    The deadline is the min of cost-budget and ready-timeout (set in the
+    main loop). When `ready_timeout` is provided we can tell which of the
+    two actually fired by comparing elapsed against ready_timeout — that
+    keeps logs accurate for triage instead of always saying 'budget guard'.
+    """
     if time.monotonic() <= deadline:
         return
     elapsed = time.monotonic() - started
+    suffix = f" ({label})" if label else ""
+    if ready_timeout is not None and elapsed >= ready_timeout:
+        raise VastReadyTimeoutError(
+            f"Vast ready_timeout exceeded after {elapsed:.0f}s (cap {ready_timeout:.0f}s){suffix}"
+        )
     raise WhisperError(
-        f"Vast budget guard tripped after {elapsed:.0f}s (~${price * elapsed / 3600:.4f}, cap ${max_cost})"
+        f"Vast budget guard tripped after {elapsed:.0f}s (~${price * elapsed / 3600:.4f}, cap ${max_cost}){suffix}"
     )
 
 
-def _wait_for_ssh(api_key, instance_id, key_path, started, deadline, price, max_cost) -> tuple[str, int]:
+def _vast_failure_state(info: dict) -> str | None:
+    """Return a non-empty state name if the container is in a terminal-failure
+    state (per `_VAST_FAILED_STATES`). Caller fast-fails the offer."""
+    actual = str(info.get("actual_status") or "").lower()
+    cur = str(info.get("cur_state") or "").lower()
+    intended = str(info.get("intended_status") or "").lower()
+    for value in (actual, cur, intended):
+        if value and value in _VAST_FAILED_STATES:
+            return value
+    return None
+
+
+def _format_failure_detail(info: dict, failure_state: str) -> str:
+    actual = str(info.get("actual_status") or "").lower()
+    cur = str(info.get("cur_state") or "").lower()
+    msg = str(info.get("status_msg") or "").strip()
+    parts = [f"failure_state={failure_state}", f"actual_status={actual or '?'}", f"cur_state={cur or '?'}"]
+    if msg:
+        # Keep status_msg short — Vast sometimes returns multi-line container logs.
+        snippet = msg.replace("\n", " ").strip()[:240]
+        parts.append(f"status_msg={snippet!r}")
+    return ", ".join(parts)
+
+
+def _wait_for_ssh(
+    api_key, instance_id, key_path, started, deadline, price, max_cost,
+    *, ready_timeout: float, label: str = "",
+) -> tuple[str, int]:
     while True:
-        _ensure_budget(started, deadline, price, max_cost)
+        _ensure_budget(started, deadline, price, max_cost, ready_timeout=ready_timeout, label=label)
         info = _get_instance(api_key, instance_id)
+        failure = _vast_failure_state(info)
+        if failure is not None:
+            raise VastInstanceFailedError(
+                f"Vast container failed to start: {_format_failure_detail(info, failure)}"
+            )
         states = {str(info.get("actual_status") or "").lower(), str(info.get("cur_state") or "").lower()}
         if "running" in states:
             for host, port, kind in _ssh_endpoints(info):
@@ -334,10 +407,19 @@ def _wait_for_ssh(api_key, instance_id, key_path, started, deadline, price, max_
         time.sleep(10)
 
 
-def _wait_remote_ready(host, port, key_path, started, deadline, price, max_cost) -> None:
+def _wait_remote_ready(
+    api_key, instance_id, host, port, key_path, started, deadline, price, max_cost,
+    *, ready_timeout: float, label: str = "",
+) -> None:
     check = "test -f /root/video-summary-ready && command -v uv >/dev/null && nvidia-smi -L"
     while True:
-        _ensure_budget(started, deadline, price, max_cost)
+        _ensure_budget(started, deadline, price, max_cost, ready_timeout=ready_timeout, label=label)
+        info = _get_instance(api_key, instance_id)
+        failure = _vast_failure_state(info)
+        if failure is not None:
+            raise VastInstanceFailedError(
+                f"Vast container failed mid-startup: {_format_failure_detail(info, failure)}"
+            )
         if _run([*_ssh_base(host, port, key_path), check], check=False, timeout=45).returncode == 0:
             return
         time.sleep(10)
@@ -382,9 +464,25 @@ def _transcribe_impl(
     deadline = started + MAX_INSTANCE_SECONDS
     last_err: Exception | None = None
     attempts = 0
+    # Per-job host blacklist: hosts whose offers failed to start in this run
+    # are skipped on subsequent attempts so we don't pick a sibling offer
+    # from the same broken physical box (e.g. NVIDIA driver mismatch).
+    excluded_hosts: set[int] = set()
     for offer in offers:
         if attempts >= offer_attempts:
             break
+        host_id_raw = offer.get("host_id")
+        try:
+            offer_host_id: int | None = int(host_id_raw) if host_id_raw is not None else None
+        except (TypeError, ValueError):
+            offer_host_id = None
+        if offer_host_id is not None and offer_host_id in excluded_hosts:
+            print(
+                f"Notice: Vast offer {offer.get('id')} skipped (host_id {offer_host_id} blacklisted in this job)",
+                file=sys.stderr,
+            )
+            continue
+        offer_label = f"offer_id={offer.get('id')} host_id={offer_host_id}"
         price = float(offer.get("dph_total") or 0)
         deadline = _budget_deadline(started, price, max_job_cost, MAX_INSTANCE_SECONDS)
         try:
@@ -412,12 +510,23 @@ def _transcribe_impl(
             context.set_instance(instance_id)
             context.raise_if_cancelled()
             startup_deadline = min(deadline, time.monotonic() + ready_timeout)
-            host, port = _wait_for_ssh(api_key, instance_id, key_path, started, startup_deadline, price, max_job_cost)
-            _wait_remote_ready(host, port, key_path, started, startup_deadline, price, max_job_cost)
+            host, port = _wait_for_ssh(
+                api_key, instance_id, key_path, started, startup_deadline, price, max_job_cost,
+                ready_timeout=ready_timeout, label=offer_label,
+            )
+            _wait_remote_ready(
+                api_key, instance_id, host, port, key_path, started, startup_deadline, price, max_job_cost,
+                ready_timeout=ready_timeout, label=offer_label,
+            )
             break
         except (WhisperError, TimeoutError, TranscribeTimeoutError) as exc:
             last_err = exc
-            print(f"Warning: Vast offer {offer.get('id')} unusable: {exc}", file=sys.stderr)
+            print(f"Warning: Vast offer {offer.get('id')} unusable: {exc} ({offer_label})", file=sys.stderr)
+            # Anything that wasn't a vanished-offer / cost-cap is likely host-side
+            # (failed container, ready timeout, ssh never came up). Blacklist the
+            # host so we don't waste another attempt on a sibling offer.
+            if offer_host_id is not None and not isinstance(exc, TranscribeTimeoutError):
+                excluded_hosts.add(offer_host_id)
             if instance_id is not None:
                 context.destroy_instance()
                 instance_id = None
@@ -425,7 +534,10 @@ def _transcribe_impl(
             if isinstance(exc, TranscribeTimeoutError):
                 raise
     if instance_id is None or host is None:
-        raise WhisperError(f"no Vast instance became ready; last error: {last_err}")
+        raise WhisperError(
+            f"no Vast instance became ready; last error: {last_err}; "
+            f"blacklisted host_ids={sorted(excluded_hosts) if excluded_hosts else '[]'}"
+        )
 
     try:
         with tempfile.TemporaryDirectory(prefix="scribe-whisper-") as tmp:
