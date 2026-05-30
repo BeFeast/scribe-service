@@ -38,6 +38,7 @@ from scribe.db.models import Job, JobStatus, Transcript
 from scribe.db.session import SessionLocal
 from scribe.obs import metrics
 from scribe.pipeline import downloader, ffmpeg, summarizer, whisper_client
+from scribe.pipeline.frontmatter_inject import inject_author_frontmatter
 from scribe.worker import vast_budget
 
 log = logging.getLogger("scribe.worker")
@@ -320,7 +321,13 @@ def _summarize_and_finalize(session, job: Job, transcript: Transcript, title: st
     _set_job_status(session, job, JobStatus.summarizing)
     with _time_stage("summary"):
         summary = summarizer.summarize(transcript.transcript_md, title=title)
-    transcript.summary_md = summary.summary_md
+    transcript.summary_md = inject_author_frontmatter(
+        summary.summary_md,
+        author_name=transcript.author_name,
+        author_handle=transcript.author_handle,
+        author_url=transcript.author_url,
+        source_platform=transcript.source_platform,
+    )
     transcript.short_description = summary.short_description
     transcript.tags = summary.tags or None
     session.refresh(job)
@@ -390,6 +397,16 @@ def process_job(session, job: Job) -> None:
                     partial.owner_email = job.owner_email
                     partial.owner_display_name = job.owner_display_name
                     partial.owner_id = job.owner_id
+                    # Backfill author/platform metadata from the fresh yt-dlp probe
+                    # — partials persisted before scr-269 lack these columns.
+                    if partial.author_name is None and dl.author_name:
+                        partial.author_name = dl.author_name
+                    if partial.author_handle is None and dl.author_handle:
+                        partial.author_handle = dl.author_handle
+                    if partial.author_url is None and dl.author_url:
+                        partial.author_url = dl.author_url
+                    if partial.source_platform is None and dl.source_platform:
+                        partial.source_platform = dl.source_platform
                     _summarize_and_finalize(session, job, partial, partial.title, promoted=True)
                     job_log.info("job done (resumed)", extra={"transcript_id": partial.id, "stage": "done"})
                     return
@@ -445,6 +462,10 @@ def process_job(session, job: Job) -> None:
                     duration_seconds=int(duration) if duration else None,
                     lang=tr.detected_language,
                     vast_cost=tr.vast_cost if tr.vast_cost is not None else None,
+                    author_name=dl.author_name,
+                    author_handle=dl.author_handle,
+                    author_url=dl.author_url,
+                    source_platform=dl.source_platform,
                     owner_subject=job.owner_subject,
                     owner_email=job.owner_email,
                     owner_display_name=job.owner_display_name,

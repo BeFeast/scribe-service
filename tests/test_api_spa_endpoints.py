@@ -638,6 +638,50 @@ def test_admin_delete_job_discards_log_buffer(client, db_session):
     assert version_after == 0
 
 
+def test_transcript_full_includes_author_metadata(client, db_session):
+    job, transcript = _seed_transcript(
+        db_session,
+        video_id="authormeta01",
+        title="With Author",
+        summary_md="---\ntags: [a]\nshort_description: \"x\"\nauthor: \"MKBHD\"\n---\n\nbody",
+    )
+    transcript.author_name = "Marques Brownlee"
+    transcript.author_handle = "@mkbhd"
+    transcript.author_url = "https://www.youtube.com/@mkbhd"
+    transcript.source_platform = "youtube"
+    db_session.commit()
+
+    resp = client.get(f"/transcripts/{transcript.id}")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["author_name"] == "Marques Brownlee"
+    assert body["author_handle"] == "@mkbhd"
+    assert body["author_url"] == "https://www.youtube.com/@mkbhd"
+    assert body["source_platform"] == "youtube"
+
+
+def test_library_row_passes_author_metadata_through_brief(client, db_session):
+    """LibraryRow doesn't include author fields, but /transcripts list (TranscriptBrief) does."""
+    job, transcript = _seed_transcript(
+        db_session,
+        video_id="authormeta02",
+        title="Author In List",
+        summary_md="---\ntags: [a]\nshort_description: \"x\"\n---\n\nbody",
+    )
+    transcript.author_name = "Andrej Karpathy"
+    transcript.author_handle = "karpathy"
+    transcript.source_platform = "twitter"
+    db_session.commit()
+
+    resp = client.get("/transcripts")
+    assert resp.status_code == 200
+    rows = resp.json()
+    target = next(r for r in rows if r["id"] == transcript.id)
+    assert target["author_name"] == "Andrej Karpathy"
+    assert target["author_handle"] == "karpathy"
+    assert target["source_platform"] == "twitter"
+
+
 def test_api_jobs_recent_failures(client, db_session):
     job = Job(
         url="https://youtu.be/failurejob1",

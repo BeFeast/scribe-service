@@ -185,6 +185,14 @@ class Transcript(Base):
     # whisper_client.TranscribeResult.vast_cost; NULL when whisper ran
     # outside the metered path (warm pool, mock, etc).
     vast_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Video author / channel metadata captured from yt-dlp info-dict, surfaced
+    # in summary frontmatter and the SPA Properties panel.
+    author_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    author_handle: Mapped[str | None] = mapped_column(Text, nullable=True)
+    author_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Source platform key (youtube, instagram, twitter, tiktok, ...) derived
+    # from yt-dlp extractor_key; lowercased, stable for filtering/icons.
+    source_platform: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner_subject: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     owner_email: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner_display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
