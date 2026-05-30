@@ -573,15 +573,69 @@ def test_admin_delete_job_dismisses_failed_job(client, db_session):
     assert client.get("/api/jobs/recent-failures").json() == {"jobs": []}
 
 
-def test_admin_delete_job_rejects_non_failed_job(client, db_session):
-    job = Job(url="https://youtu.be/keepdone1", video_id="keepdone1", status=JobStatus.done)
+def test_admin_delete_job_dismisses_done_job_and_cascades_transcript(client, db_session):
+    job, transcript = _seed_transcript(
+        db_session,
+        video_id="cleardone001",
+        title="Done To Clear",
+        summary_md="done",
+    )
+    share = TranscriptShareLink(
+        token_hash="hash-cleardone001",
+        token_hint="hint",
+        transcript_id=transcript.id,
+        target_kind="page",
+        created_by="tester",
+    )
+    db_session.add(share)
+    db_session.commit()
+
+    resp = client.delete(f"/admin/jobs/{job.id}")
+    assert resp.status_code == 204, resp.text
+
+    assert db_session.scalar(select(Job).where(Job.id == job.id)) is None
+    assert db_session.scalar(select(Transcript).where(Transcript.id == transcript.id)) is None
+    assert db_session.scalars(select(TranscriptShareLink)).all() == []
+    assert client.get("/api/library").json()["total"] == 0
+
+
+def test_admin_delete_job_rejects_active_job(client, db_session):
+    job = Job(
+        url="https://youtu.be/keepactive1",
+        video_id="keepactive1",
+        status=JobStatus.transcribing,
+    )
     db_session.add(job)
     db_session.commit()
 
     resp = client.delete(f"/admin/jobs/{job.id}")
     assert resp.status_code == 409
-    assert "only failed jobs" in resp.json()["detail"]
+    detail = resp.json()["detail"]
+    assert "transcribing" in detail
+    assert "cancel" in detail.lower()
     assert db_session.get(Job, job.id) is not None
+
+
+def test_admin_delete_job_discards_log_buffer(client, db_session):
+    job = Job(
+        url="https://youtu.be/clearlogs01",
+        video_id="clearlogs01",
+        status=JobStatus.failed,
+        error="boom",
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    job_log_buffer.append({"job_id": job.id, "msg": "hello", "lvl": "INFO"})
+    version, lines = job_log_buffer.snapshot(job.id)
+    assert lines, "buffer must contain the seeded line"
+
+    resp = client.delete(f"/admin/jobs/{job.id}")
+    assert resp.status_code == 204, resp.text
+
+    version_after, lines_after = job_log_buffer.snapshot(job.id)
+    assert lines_after == []
+    assert version_after == 0
 
 
 def test_api_jobs_recent_failures(client, db_session):

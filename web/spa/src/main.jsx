@@ -137,11 +137,18 @@ function ScribeApp() {
 						navigateDesign("job", { id: job.id });
 						return job;
 					}}
+					onDeleteJob={runtime.deleteJob}
 				/>
 			);
 			break;
 		case "history":
-			page = <HistoryPage navigate={navigateDesign} auth={auth} />;
+			page = (
+				<HistoryPage
+					navigate={navigateDesign}
+					auth={auth}
+					onDeleteJob={runtime.deleteJob}
+				/>
+			);
 			break;
 		case "ops":
 			page = (

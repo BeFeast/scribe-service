@@ -1691,22 +1691,31 @@ def admin_delete_job(
     session: Session = Depends(get_session),
     _actor: Actor = Depends(require_admin_actor),
 ) -> Response:
-    """Dismiss a failed job from operator queues.
+    """Dismiss a terminal job (failed or done) from operator queues.
 
-    Done jobs with transcripts should be removed via DELETE /admin/transcripts/{id}
-    so the UI cannot accidentally keep or drop only half of the job/transcript pair.
+    Active jobs (queued/downloading/transcribing/summarizing) must be cancelled
+    first via POST /admin/jobs/{id}/cancel — this endpoint refuses them with 409.
+
+    For done jobs with a transcript, ondelete=CASCADE on jobs.id propagates to
+    transcripts → transcript_share_links and to job_stage_events, so the job and
+    all of its derived rows disappear together. DELETE /admin/transcripts/{id}
+    converges on the same cascade for transcript-detail callers.
     """
     job = session.scalar(select(Job).where(Job.id == job_id).with_for_update())
     if job is None:
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
-    if job.status != JobStatus.failed:
+    if job.status in _ACTIVE:
         raise HTTPException(
             status_code=409,
-            detail=f"job {job_id} is {job.status.value}; only failed jobs can be dismissed.",
+            detail=(
+                f"job {job_id} is {job.status.value}; cancel it first via "
+                "POST /admin/jobs/{id}/cancel before deletion."
+            ),
         )
 
     session.delete(job)
     session.commit()
+    job_log_buffer.discard(job_id)
     return Response(status_code=204)
 
 
