@@ -33,12 +33,61 @@ class DownloadError(RuntimeError):
     pass
 
 
+def _author_from_info(info: dict) -> tuple[str | None, str | None, str | None, str | None]:
+    """Extract (author_name, author_handle, author_url, source_platform) from
+    a yt-dlp `--dump-single-json` info dict. Best-effort, no exceptions —
+    every field is optional and falls back to None.
+
+    yt-dlp normalises across extractors: `uploader` is the human-readable
+    channel name, `uploader_id` is the @-handle / numeric id, `uploader_url`
+    is the canonical profile URL, `channel`/`channel_url` are YouTube-only
+    overrides. We prefer channel over uploader on YouTube, then uploader.
+    """
+    extractor = (info.get("extractor_key") or info.get("extractor") or "").lower()
+    # Map extractor_key (Youtube/Twitter/Instagram/TikTok/...) to a stable platform slug.
+    platform: str | None
+    if not extractor:
+        platform = None
+    elif extractor.startswith("youtube"):
+        platform = "youtube"
+    elif extractor.startswith("twitter") or extractor == "x":
+        platform = "twitter"
+    elif extractor.startswith("instagram"):
+        platform = "instagram"
+    elif extractor.startswith("tiktok"):
+        platform = "tiktok"
+    elif extractor.startswith("vimeo"):
+        platform = "vimeo"
+    else:
+        platform = extractor
+
+    name = info.get("channel") or info.get("uploader") or info.get("creator") or None
+    raw_handle = info.get("uploader_id") or info.get("channel_id") or None
+    handle: str | None = None
+    if raw_handle:
+        h = str(raw_handle).strip()
+        # YouTube custom URLs already start with @; numeric channel ids stay raw.
+        if h:
+            handle = h if h.startswith("@") or platform != "youtube" else f"@{h}" if not h.startswith("UC") else h
+    url = info.get("channel_url") or info.get("uploader_url") or None
+    return (
+        str(name).strip() if name else None,
+        handle,
+        str(url).strip() if url else None,
+        platform,
+    )
+
+
 @dataclass
 class DownloadResult:
     audio_path: Path
     title: str
     video_id: str
     duration_seconds: int | None
+    author_name: str | None = None
+    author_handle: str | None = None
+    author_url: str | None = None
+    source_platform: str | None = None
 
 
 def parse_youtube_video_id(url: str) -> str | None:
@@ -128,9 +177,14 @@ def download_audio(url: str, dest_dir: Path, *, deno_path: str = "deno") -> Down
     if not audio_path.is_file():
         raise DownloadError(f"yt-dlp reported {audio_path} but the file is missing")
 
+    author_name, author_handle, author_url, source_platform = _author_from_info(info)
     return DownloadResult(
         audio_path=audio_path,
         title=title,
         video_id=video_id,
         duration_seconds=duration_seconds,
+        author_name=author_name,
+        author_handle=author_handle,
+        author_url=author_url,
+        source_platform=source_platform,
     )

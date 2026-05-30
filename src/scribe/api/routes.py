@@ -100,6 +100,7 @@ from scribe.obs import ops as ops_helpers
 from scribe.obs.live_logs import job_log_buffer
 from scribe.pipeline import prompts, summarizer
 from scribe.pipeline.downloader import initial_video_key
+from scribe.pipeline.frontmatter_inject import inject_author_frontmatter
 from scribe.source_links import source_link_for_url
 
 _SHARE_HTML_TAGS = {
@@ -229,6 +230,10 @@ def _brief(t: Transcript) -> TranscriptBrief:
         summary_shortlink=t.summary_shortlink, transcript_shortlink=t.transcript_shortlink,
         source_url=source_link.url if source_link else None,
         source_label=source_link.label if source_link else None,
+        author_name=t.author_name,
+        author_handle=t.author_handle,
+        author_url=t.author_url,
+        source_platform=t.source_platform,
         created_at=t.created_at,
     )
 
@@ -254,6 +259,10 @@ def _full(t: Transcript) -> TranscriptFull:
         transcript_shortlink=t.transcript_shortlink,
         source_url=source_link.url if source_link else None,
         source_label=source_link.label if source_link else None,
+        author_name=t.author_name,
+        author_handle=t.author_handle,
+        author_url=t.author_url,
+        source_platform=t.source_platform,
         created_at=t.created_at,
         job_id=t.job_id,
         transcript_md=t.transcript_md,
@@ -1563,7 +1572,13 @@ async def resummarize(
     session.refresh(t)
     was_partial = t.summary_md is None
 
-    t.summary_md = result.summary_md
+    t.summary_md = inject_author_frontmatter(
+        result.summary_md,
+        author_name=t.author_name,
+        author_handle=t.author_handle,
+        author_url=t.author_url,
+        source_platform=t.source_platform,
+    )
     t.short_description = result.short_description
     t.tags = result.tags or None
 

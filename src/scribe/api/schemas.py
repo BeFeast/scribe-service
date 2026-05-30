@@ -68,6 +68,10 @@ class TranscriptBrief(BaseModel):
     transcript_shortlink: str | None = None
     source_url: str | None = None
     source_label: str | None = None
+    author_name: str | None = None
+    author_handle: str | None = None
+    author_url: str | None = None
+    source_platform: str | None = None
     created_at: dt.datetime
 
 
