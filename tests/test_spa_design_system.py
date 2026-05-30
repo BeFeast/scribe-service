@@ -255,3 +255,83 @@ def test_source_css_gzip_size_budget() -> None:
     css = STYLES.read_bytes()
 
     assert len(gzip.compress(css)) <= 30_000
+
+
+MOBILE_SETTINGS_CLASSES = (
+    ".glist",
+    ".grow",
+    ".g-ic",
+    ".g-label",
+    ".g-val",
+    ".me-card",
+    ".me-name",
+    ".me-mail",
+    ".urow",
+    ".u-av",
+    ".u-main",
+    ".u-name",
+    ".u-mail",
+    ".sec-label",
+    ".role.admin",
+    ".role.user",
+    ".bigbtn",
+)
+
+
+def test_mobile_settings_recipes_are_present_under_breakpoint_guard() -> None:
+    """The Wave 2 mobile Settings + Access port (Issue #280) adds a grouped
+    inset list / member-card / user-row recipe that must live inside the
+    `@media (max-width: 768px)` block (so it cannot leak to desktop) and
+    must include every class the iOS source paints with.
+    """
+
+    css = STYLES.read_text(encoding="utf-8")
+    page = (SPA_SRC / "design-app" / "mobile" / "MobileSettingsPage.jsx").read_text(
+        encoding="utf-8"
+    )
+    settings = (SPA_SRC / "design-app" / "settings.jsx").read_text(encoding="utf-8")
+
+    for selector in MOBILE_SETTINGS_CLASSES:
+        assert selector in css, selector
+
+    mobile_block_start = css.index(
+        "/* ─── Mobile Settings + Access (Wave 2, Issue #280)"
+    )
+    mobile_block = css[mobile_block_start:]
+    assert "@media (max-width: 768px)" in mobile_block
+
+    # Tweaks panel must remain absent from production CSS and from anything
+    # imported by the SettingsPage / mobile shell entry points.
+    assert ".tweaks-panel" not in css
+    assert "tweaks-panel" not in page
+    assert "tweaks-panel" not in settings
+
+    # The mobile branch is gated by useIsMobile and the desktop body is
+    # extracted into its own component so the desktop SettingsPage stays
+    # unchanged behaviorally.
+    assert "from \"./mobile/MobileSettingsPage.jsx\"" in settings
+    assert "useIsMobile" in settings
+    assert "function DesktopSettingsPage" in settings
+
+    # Appearance wiring is real and matrix-complete on mobile (variant ×
+    # theme × density × library layout).
+    for wire in (
+        'setTweak("theme"',
+        'setTweak("variant", "field")',
+        'setTweak("variant", "paper")',
+        'setTweak("variant", "terminal")',
+        'setTweak("variant", "console")',
+        'setTweak("density", "compact")',
+        'setTweak("density", "cozy")',
+        'setTweak("density", "comfy")',
+        'setTweak("libraryLayout", "feed")',
+        'setTweak("libraryLayout", "table")',
+        'setTweak("libraryLayout", "cards")',
+    ):
+        assert wire in page, wire
+
+    # The Access sub-view is owned by local state, not a new top-level route.
+    assert "setShowAccess(true)" in page
+    assert "setShowAccess(false)" in page
+    route = (SPA_SRC / "hooks" / "useRoute.ts").read_text(encoding="utf-8")
+    assert '"access"' not in route  # no new top-level route added
