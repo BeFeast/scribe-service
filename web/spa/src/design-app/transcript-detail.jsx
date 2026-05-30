@@ -427,9 +427,9 @@ function PartialNotice({ transcript, onRegen, regenerating }) {
       <div style={{flex: 1, color: "var(--fg)"}}>
         <div style={{fontWeight: 600, marginBottom: 4}}>Partial transcript — summary failed</div>
         <div style={{color: "var(--fg-soft)", fontSize: 13.5, lineHeight: 1.5}}>
-          Whisper transcribed this video successfully but the codex summarizer
-          timed out. The transcript is preserved; rerunning will only re-summarize
-          (no Vast.ai cost).
+          Whisper transcribed this video successfully, but the summarizer
+          failed to produce a summary. The transcript is preserved; rerunning
+          re-summarizes only — no Vast.ai cost.
         </div>
       </div>
       <button className="btn primary" onClick={onRegen} disabled={regenerating}>
