@@ -11,6 +11,7 @@ from urllib.parse import unquote
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
 from scribe.api import routes as routes_module
 from scribe.config import settings
@@ -108,16 +109,31 @@ def test_post_jobs_accepts_x_url_into_queue(client, db_session):
     assert job.video_id == body["video_id"]
 
 
-def test_post_jobs_does_not_dedup_partial(client, db_session):
-    """Partial transcripts must NOT dedup — re-submission triggers the resume
-    path on a fresh Job. Without this, /resummarize would never be called
-    automatically and the user would think their video already had a summary."""
-    _seed_partial_transcript(db_session, video_id="partial1234")
+def test_post_jobs_dedup_partial_links_existing_and_enqueues_retry(client, db_session):
+    """Re-submitting a video with a partial transcript (whisper done, summary
+    failed) must dedup to the existing Transcript and enqueue a summary-only
+    retry: no duplicate Transcript row, and the new Job is queued (the worker's
+    resume path then skips download+whisper). Regression for #265: previously a
+    partial transcript silently re-ran the full whisper transcription on Vast."""
+    old_job, partial = _seed_partial_transcript(db_session, video_id="partial1234")
+    transcripts_before = db_session.scalar(select(func.count()).select_from(Transcript))
+    jobs_before = db_session.scalar(select(func.count()).select_from(Job))
+
     resp = client.post("/jobs", json={"url": "https://youtu.be/partial1234"})
-    assert resp.status_code == 201
+    assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["deduplicated"] is False
+    assert body["deduplicated"] is True
     assert body["status"] == "queued"
+    assert body["transcript"]["id"] == partial.id
+    # New retry Job is queued (the worker resume path will summarize-only) and
+    # is distinct from the failed owning job — but no new Transcript row exists.
+    assert body["job_id"] != old_job.id
+    assert db_session.scalar(select(func.count()).select_from(Transcript)) == transcripts_before
+    assert db_session.scalar(select(func.count()).select_from(Job)) == jobs_before + 1
+    retry = db_session.get(Job, body["job_id"])
+    assert retry is not None
+    assert retry.status == JobStatus.queued
+    assert retry.video_id == partial.video_id
 
 
 def test_post_jobs_clerk_owner_is_stored(client, db_session):
