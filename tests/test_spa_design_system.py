@@ -219,7 +219,9 @@ def test_live_visual_qa_contract_covers_required_runtime_surface() -> None:
     script = LIVE_VISUAL_QA.read_text(encoding="utf-8")
 
     assert '{ name: "desktop", width: 1440, height: 1000, mobile: false }' in script
+    assert '{ name: "mobile-compact", width: 360, height: 800, mobile: true }' in script
     assert '{ name: "mobile", width: 390, height: 900, mobile: true }' in script
+    assert '{ name: "mobile-large", width: 430, height: 932, mobile: true }' in script
     for key in (
         'key: "library"',
         'key: "queue"',

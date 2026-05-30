@@ -12,7 +12,9 @@ const CHROME = process.env.CHROME_BIN ?? "google-chrome";
 const WAIT_MS = Number(process.env.SCRIBE_VISUAL_QA_WAIT_MS ?? "1600");
 const WIDTHS = [
 	{ name: "desktop", width: 1440, height: 1000, mobile: false },
+	{ name: "mobile-compact", width: 360, height: 800, mobile: true },
 	{ name: "mobile", width: 390, height: 900, mobile: true },
+	{ name: "mobile-large", width: 430, height: 932, mobile: true },
 ];
 
 const ROUTES = [
