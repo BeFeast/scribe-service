@@ -1,8 +1,16 @@
 // biome-ignore-all lint: Claude Design source port; integration-only edits live in api/data/main.
 import React from "react";
 import { useAuth } from "../hooks/useAuth";
+import { useIsMobile } from "../hooks/useIsMobile";
 import { IconAlert, IconArrow, IconCheck, IconClock, IconCopy, IconDownload, IconExternal, IconLink, IconRSS, IconRefresh, IconSparkle, IconWave, IconX } from "./icons.jsx";
 import { CURRENT_TRANSCRIPT, CURRENT_TRANSCRIPT_STATE, TRANSCRIPTS, fmtDuration, fmtRelative, fmtUsd, publicBaseUrl } from "./data.js";
+import {
+	IconDocIOS,
+	IconPlayIOS,
+	IconShareIOS,
+	IconWarnIOS,
+} from "./mobile/icons-ios.jsx";
+import { ShareSheet as MobileShareSheet, shareUrlsFor } from "./mobile/ShareSheet.jsx";
 // Transcript detail — title, meta, summary (rendered from MD), transcript body.
 
 const LANG_LABELS = {
@@ -25,6 +33,7 @@ const LANG_LABELS = {
 
 export function TranscriptDetail({ id, navigate, onRefresh }) {
   const auth = useAuth();
+  const isMobile = useIsMobile();
   const t = CURRENT_TRANSCRIPT || TRANSCRIPTS.find((r) => r.id === id);
   const [regenerating, setRegenerating] = React.useState(false);
   const [copied, setCopied] = React.useState(null);
@@ -34,6 +43,30 @@ export function TranscriptDetail({ id, navigate, onRefresh }) {
 
   if (CURRENT_TRANSCRIPT_STATE.loading) return <DetailState title="Loading transcript" body="Fetching /transcripts/{id}."/>;
   if (!t || CURRENT_TRANSCRIPT_STATE.error) return <DetailState title="Transcript unavailable" body={CURRENT_TRANSCRIPT_STATE.error || "No transcript is loaded."} navigate={navigate}/>;
+
+  if (isMobile) {
+    return (
+      <MobileTranscriptDetail
+        t={t}
+        shareOpen={shareOpen}
+        setShareOpen={setShareOpen}
+        onRegen={async () => {
+          setRegenerating(true);
+          setActionError(null);
+          try {
+            const response = await auth.protectedFetch("/transcripts/" + t.id + "/resummarize", { method: "POST" });
+            if (!response.ok) throw new Error("HTTP " + response.status);
+            onRefresh && onRefresh();
+          } catch (error) {
+            setActionError(error instanceof Error ? error.message : String(error));
+          } finally {
+            setRegenerating(false);
+          }
+        }}
+        regenerating={regenerating}
+      />
+    );
+  }
 
   function copy(text, key) {
     try {
@@ -715,6 +748,160 @@ function inline(s) {
   return out;
 }
 
+
+// ─── Mobile transcript detail ────────────────────────────────────────────
+//
+// Literal port of `viewTranscript(id)` from `Scribe iOS.html` (mobile design
+// source, SHA-256
+// 421c930d9f2d5c1549dc632760f796992630a27eaa6fa38f28ff25584bc3ebb9) at
+// ~966-1006. Source mapping:
+//   ~971 const head            → <header className="detail-head"> below
+//   ~983 const segCtl          → <div className="seg" id="t-seg">
+//   ~987 const partialBanner   → <div className="banner">
+//   ~988 summaryHtml           → <div className="prose"> (driven by SummaryBody)
+//   ~989 transcriptHtml        → <div className="transcript-body">
+//   ~990 bodyFor(s)            → React conditional on seg state
+//   ~994 navRight share btn    → inline `.nb-btn.icon` above the detail-head
+//                                (the mobile shell's navbar right-slot is
+//                                shared chrome; keeping the share affordance
+//                                in-page avoids lifting share-open state into
+//                                the shell)
+//   ~999 segEl.onclick         → React onClick on each seg button
+//
+// Real-data wiring: `t` is `adaptTranscript(runtime.currentTranscript)` from
+// `data.js` — same adapter the desktop branch uses. The seg control reads
+// `t.summary_md` and `t.transcript_excerpt` directly. No prototype seed text.
+function MobileTranscriptDetail({ t, shareOpen, setShareOpen, onRegen, regenerating }) {
+	const initialSeg = t.summary_md ? "summary" : "transcript";
+	const [seg, setSeg] = React.useState(initialSeg);
+	// Reset seg when navigating to a different transcript.
+	React.useEffect(() => {
+		setSeg(t.summary_md ? "summary" : "transcript");
+	}, [t.id, t.summary_md]);
+
+	const langLabel = (t.lang || "").toUpperCase() || "—";
+
+	return (
+		<>
+			<div className="m-transcript-actions">
+				<button
+					type="button"
+					className="nb-btn icon"
+					data-act="share"
+					aria-label="Share"
+					onClick={() => setShareOpen(true)}
+				>
+					<IconShareIOS size={20} />
+				</button>
+			</div>
+
+			<div className="detail-head">
+				<h1 className="detail-title detail-h1">{t.title}</h1>
+				<div className="detail-meta">
+					<span>#{t.id}</span>
+					<span className="sep">·</span>
+					<span>{fmtDuration(t.duration_seconds)}</span>
+					<span className="sep">·</span>
+					<span>{langLabel}</span>
+					<span className="sep">·</span>
+					<span>{fmtUsd(t.vast_cost)}</span>
+					<span className="sep">·</span>
+					<span>{fmtRelative(t.created_at)}</span>
+				</div>
+				{t.tags && t.tags.length > 0 ? (
+					<div className="detail-tags">
+						{t.tags.map((tg) => (
+							<span key={tg} className="tag">
+								{tg}
+							</span>
+						))}
+					</div>
+				) : null}
+			</div>
+
+			{t.summary_md ? (
+				<div className="seg" id="t-seg" style={{ marginTop: 6 }}>
+					<button
+						type="button"
+						data-v="summary"
+						className={seg === "summary" ? "active" : undefined}
+						onClick={() => setSeg("summary")}
+					>
+						<IconDocIOS size={16} /> Summary
+					</button>
+					<button
+						type="button"
+						data-v="transcript"
+						className={seg === "transcript" ? "active" : undefined}
+						onClick={() => setSeg("transcript")}
+					>
+						<IconPlayIOS size={15} /> Transcript
+					</button>
+				</div>
+			) : null}
+
+			{t.is_partial ? (
+				<div className="banner">
+					<span className="b-ic">
+						<IconWarnIOS size={18} />
+					</span>
+					<div>
+						<b>Summary unavailable.</b>{" "}
+						The summarizer did not complete. The transcript is saved — you can re-run summarization from Ops.
+						{onRegen ? (
+							<>
+								{" "}
+								<button
+									type="button"
+									className="banner-action"
+									onClick={onRegen}
+									disabled={regenerating}
+								>
+									{regenerating ? "Summarizing…" : "Run summarizer"}
+								</button>
+							</>
+						) : null}
+					</div>
+				</div>
+			) : null}
+
+			<div id="t-content">
+				{seg === "summary" && t.summary_md ? (
+					<div className="prose">
+						<Markdown src={stripSummaryFrontmatter(t.summary_md)} />
+					</div>
+				) : (
+					<div className="transcript-body">
+						{t.transcript_excerpt || ""}
+					</div>
+				)}
+			</div>
+
+			<MobileShareSheet
+				t={t}
+				open={shareOpen}
+				onClose={() => setShareOpen(false)}
+				onAction={(action) => handleMobileShareAction(action, t)}
+			/>
+		</>
+	);
+}
+
+// stripSummaryFrontmatter is a thin wrapper around the existing
+// `splitFrontmatter()` helper so the mobile branch renders only the
+// markdown body (the YAML frontmatter shows up as a closed-by-default
+// Properties panel on desktop; the mobile design has no such panel).
+function stripSummaryFrontmatter(src) {
+	return splitFrontmatter(src).body;
+}
+
+// Wave 2a commit N — placeholder. Replaced in commit N+1 with real
+// `navigator.share` / `navigator.clipboard.writeText(summary_md)` /
+// RSS copy. No-op here so the literal-port commit stays free of fake
+// share toasts (banned by issue #277).
+function handleMobileShareAction(_action, _t) {
+	// intentionally empty in commit N
+}
 
 function DetailState({ title, body, navigate }) {
   return (
