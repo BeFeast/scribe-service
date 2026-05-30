@@ -1922,3 +1922,210 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   border-bottom: 1px solid var(--border-soft);
   align-items: center;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Mobile foundation (Wave 0, Issue #274)
+   Literal port from design-source `Scribe iOS.html` ("Field" identity).
+   Substitutions vs. the prototype:
+     - status-bar / home-indicator pixel offsets → env(safe-area-inset-*)
+     - iOS Field hex literals (e.g. --accent:#5b6549) → existing per-variant
+       semantic tokens via var(--*) so the recipes work across the whole
+       appearance matrix, not only Field.
+   No prototype-only device chrome (.statusbar / .island / .home-indicator /
+   .device) ships from this file — those classes stay absent.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Mobile-only token aliases. Verified absent from production styles.css and
+     from the parity-locked design-source baseline at audit time, so these are
+     additive — no guarded selector block is mutated. */
+  --hairline: var(--border-soft);
+  --accent-press: color-mix(in oklab, var(--accent) 84%, #000);
+  --bg-elev: var(--bg-card);
+  --safe-top:    env(safe-area-inset-top, 0px);
+  --safe-right:  env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left:   env(safe-area-inset-left, 0px);
+}
+
+/* `.app-mobile` override — the load-bearing fix. The base `.app` rule pins
+   `min-width: 980px`, which forces horizontal overflow on phones. At <=768px
+   the shell switches to a single-column flex; topbar/sidebar are hidden by
+   the Wave 1 mobile shell, the content fills the viewport. */
+@media (max-width: 768px) {
+  .app-mobile {
+    display: flex;
+    flex-direction: column;
+    grid-template-columns: none;
+    grid-template-rows: none;
+    grid-template-areas: none;
+    min-width: 0;
+    width: 100%;
+    height: 100dvh;
+    overflow: hidden;
+  }
+  .app-mobile > .topbar,
+  .app-mobile > .sidebar { display: none; }
+}
+
+/* ─── Mobile nav bar (collapsing large title) ───────────────────────────── */
+@media (max-width: 768px) {
+  .mobile-navbar {
+    position: sticky; top: 0; left: 0; right: 0; z-index: 40;
+    height: calc(46px + var(--safe-top));
+    padding-top: var(--safe-top);
+    display: flex; align-items: center; gap: 6px;
+    padding-left: max(8px, var(--safe-left));
+    padding-right: max(8px, var(--safe-right));
+    background: color-mix(in srgb, var(--bg) 72%, transparent);
+    backdrop-filter: saturate(1.5) blur(18px);
+    -webkit-backdrop-filter: saturate(1.5) blur(18px);
+    border-bottom: 0.5px solid transparent;
+    transition: border-color 0.2s ease, background 0.2s ease;
+  }
+  .mobile-navbar.scrolled { border-bottom-color: var(--hairline); }
+  .mobile-navbar .nb-side { display: flex; align-items: center; min-width: 64px; }
+  .mobile-navbar .nb-side.right { justify-content: flex-end; }
+  .mobile-navbar .nb-title {
+    flex: 1; text-align: center;
+    font-size: 17px; font-weight: 600; letter-spacing: -0.01em;
+    opacity: 0; transform: translateY(2px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .mobile-navbar.scrolled .nb-title { opacity: 1; transform: none; }
+  .nb-btn {
+    appearance: none; border: 0; background: transparent; cursor: pointer;
+    color: var(--accent); font-size: 17px; font-weight: 400;
+    display: inline-flex; align-items: center; gap: 2px;
+    padding: 6px 8px; min-height: 44px; border-radius: 10px;
+  }
+  .nb-btn:active { opacity: 0.5; }
+  .nb-btn.icon { width: 40px; justify-content: center; }
+  .nb-back { margin-left: -4px; }
+
+  .large-title-wrap { padding: 2px 20px 6px; }
+  .large-title {
+    font-size: 34px; font-weight: 700; letter-spacing: -0.022em;
+    margin: 0; line-height: 1.1;
+  }
+  .large-sub {
+    margin: 3px 0 0;
+    font: 500 13px/1.4 var(--font-mono);
+    color: var(--muted);
+    font-feature-settings: "tnum";
+  }
+}
+
+/* ─── Mobile scroller ───────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .mobile-scroller {
+    flex: 1; min-height: 0;
+    overflow-y: auto; overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(64px + var(--safe-bottom) + 24px);
+  }
+  .mobile-scroller::-webkit-scrollbar { width: 0; }
+}
+
+/* ─── Mobile tab bar ────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .tabbar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 55;
+    height: calc(64px + var(--safe-bottom));
+    padding: 8px max(8px, var(--safe-right)) calc(8px + var(--safe-bottom)) max(8px, var(--safe-left));
+    display: grid; grid-template-columns: repeat(5, 1fr); align-items: start;
+    background: color-mix(in srgb, var(--bg) 80%, transparent);
+    backdrop-filter: saturate(1.5) blur(22px);
+    -webkit-backdrop-filter: saturate(1.5) blur(22px);
+    border-top: 0.5px solid var(--hairline);
+  }
+  .tab {
+    appearance: none; border: 0; background: transparent; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding-top: 6px; color: var(--muted); min-height: 44px;
+  }
+  .tab .tlabel { font-size: 10px; font-weight: 500; letter-spacing: 0.01em; }
+  .tab.active { color: var(--accent); }
+  .tab svg { display: block; }
+  .tab.capture .cap-orb {
+    width: 46px; height: 34px; margin-top: -1px;
+    border-radius: 13px;
+    background: var(--accent); color: var(--accent-fg);
+    display: grid; place-items: center;
+    box-shadow: 0 4px 10px -2px color-mix(in srgb, var(--accent) 60%, transparent);
+  }
+  .tab.capture:active .cap-orb { background: var(--accent-press); }
+}
+
+/* ─── Bottom sheet primitive ────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .sheet-layer {
+    position: fixed; inset: 0; z-index: 80; display: none;
+  }
+  .sheet-layer.open { display: block; }
+  .sheet-bg {
+    position: absolute; inset: 0;
+    background: rgba(10, 12, 10, 0.4);
+    opacity: 0; transition: opacity 0.3s ease;
+  }
+  .sheet-layer.shown .sheet-bg { opacity: 1; }
+  .sheet {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: var(--bg);
+    border-radius: 24px 24px 0 0;
+    transform: translateY(100%);
+    transition: transform 0.34s cubic-bezier(0.32, 0.72, 0, 1);
+    max-height: 88%;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 -10px 40px rgba(10, 12, 10, 0.25);
+    padding-bottom: var(--safe-bottom);
+  }
+  .sheet-layer.shown .sheet { transform: translateY(0); }
+  .sheet .grabber {
+    width: 38px; height: 5px; border-radius: 3px;
+    background: var(--border);
+    margin: 9px auto 4px; flex-shrink: 0;
+  }
+  .sheet .sheet-hd {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 16px 12px;
+  }
+  .sheet .sheet-hd .s-cancel {
+    color: var(--accent); font-size: 16px;
+    background: none; border: 0; cursor: pointer;
+    padding: 6px; min-height: 40px;
+  }
+  .sheet .sheet-hd .s-title { font-size: 17px; font-weight: 650; }
+  .sheet .sheet-hd .s-done {
+    color: var(--accent); font-weight: 650; font-size: 16px;
+    background: none; border: 0; cursor: pointer;
+    padding: 6px; min-height: 40px;
+  }
+  .sheet .sheet-body {
+    overflow-y: auto;
+    padding: 4px 16px 30px;
+  }
+}
+
+/* ─── Toast ─────────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .toast {
+    position: fixed;
+    left: 50%; bottom: calc(76px + var(--safe-bottom) + 16px);
+    transform: translateX(-50%) translateY(20px);
+    background: color-mix(in srgb, var(--fg) 92%, transparent);
+    color: var(--bg);
+    padding: 11px 18px; border-radius: 14px;
+    font-size: 13.5px; font-weight: 550; z-index: 90;
+    opacity: 0;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    pointer-events: none;
+    display: flex; align-items: center; gap: 9px;
+    box-shadow: var(--shadow);
+    white-space: nowrap;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast .t-ic { color: var(--accent); }
+}
