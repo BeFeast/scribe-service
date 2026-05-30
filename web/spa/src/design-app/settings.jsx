@@ -1,10 +1,12 @@
 // biome-ignore-all lint: Claude Design source port; integration-only edits live in api/data/main.
 import React from "react";
 import { useAuth } from "../hooks/useAuth";
+import { useIsMobile } from "../hooks/useIsMobile";
 import { adaptUsers } from "./adapters.js";
 import { fetchJson, responseMessage } from "./api.jsx";
 import { IconCards, IconCopy, IconDot, IconExternal, IconFeed, IconMoon, IconPlus, IconRefresh, IconSparkle, IconSun, IconTable, IconX } from "./icons.jsx";
 import { STATS, fmtDisplayCurrency, fmtRelative, normalizeDisplayCurrency } from "./data.js";
+import { MobileSettings } from "./mobile/MobileSettingsPage.jsx";
 // Settings page — config values that map to scribe/config.py settings.
 
 const DEFAULT_PROMPT = `You are a careful, ruthless reader. Given a transcript of a YouTube video, produce a Markdown summary with the following sections:
@@ -33,7 +35,22 @@ export function canRenderAccessGroup(currentUser) {
   return currentUser?.role === "admin";
 }
 
-export function SettingsPage({ t, setTweak, users: runtimeUsers = [], currentUser = null, onConfigSaved }) {
+export function SettingsPage(props) {
+  const isMobile = useIsMobile();
+  if (isMobile) {
+    return (
+      <MobileSettings
+        t={props.t}
+        setTweak={props.setTweak}
+        users={props.users ?? []}
+        currentUser={props.currentUser ?? null}
+      />
+    );
+  }
+  return <DesktopSettingsPage {...props} />;
+}
+
+function DesktopSettingsPage({ t, setTweak, users: runtimeUsers = [], currentUser = null, onConfigSaved }) {
   const auth = useAuth();
   const [config, setConfig] = React.useState(null);
   const [configDraft, setConfigDraft] = React.useState(null);
