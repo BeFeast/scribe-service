@@ -3,7 +3,7 @@
 import React from "react";
 import { fetchJson } from "./api.jsx";
 import { fmtRelative } from "./data.js";
-import { IconArrow, IconExternal, IconRefresh } from "./icons.jsx";
+import { IconArrow, IconExternal, IconRefresh, IconX } from "./icons.jsx";
 import { StatusChip } from "./job-pages.jsx";
 
 const PAGE_SIZE = 50;
@@ -17,7 +17,7 @@ const STATUS_OPTIONS = [
   { value: "failed", label: "Failed" },
 ];
 
-export function HistoryPage({ navigate, auth }) {
+export function HistoryPage({ navigate, auth, onDeleteJob }) {
   const [status, setStatus] = React.useState("");
   const [offset, setOffset] = React.useState(0);
   const [body, setBody] = React.useState({ jobs: [], total: 0, limit: PAGE_SIZE, offset: 0 });
@@ -126,7 +126,7 @@ export function HistoryPage({ navigate, auth }) {
           marginBottom: 16,
         }}>
           {body.jobs.map((row) => (
-            <HistoryRow key={row.id} row={row} navigate={navigate}/>
+            <HistoryRow key={row.id} row={row} navigate={navigate} onDeleteJob={onDeleteJob} onDeleted={() => load()}/>
           ))}
         </div>
       )}
@@ -157,12 +157,27 @@ export function HistoryPage({ navigate, auth }) {
   );
 }
 
-function HistoryRow({ row, navigate }) {
+function HistoryRow({ row, navigate, onDeleteJob, onDeleted }) {
   const transcriptId = row.transcript_id;
+  const isTerminal = row.status === "failed" || row.status === "done";
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const dismiss = async () => {
+    if (!onDeleteJob || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onDeleteJob(row.id);
+      onDeleted?.();
+    } catch (err) {
+      setBusy(false);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
   return (
     <div style={{
       display: "grid",
-      gridTemplateColumns: "1fr auto auto auto",
+      gridTemplateColumns: "1fr auto auto auto auto",
       gap: 16,
       alignItems: "center",
       padding: "12px 16px",
@@ -199,6 +214,25 @@ function HistoryRow({ row, navigate }) {
         >
           Transcript <IconExternal size={11}/>
         </a>
+      ) : (
+        <span style={{width: 1}}/>
+      )}
+      {isTerminal && onDeleteJob ? (
+        <button
+          className="btn"
+          onClick={dismiss}
+          disabled={busy}
+          aria-label={`Clear job ${row.id}`}
+          title={error || "Clear"}
+          style={{
+            fontSize: 12,
+            padding: "4px 10px",
+            color: "var(--err)",
+            borderColor: "color-mix(in oklab, var(--err) 32%, var(--border))",
+          }}
+        >
+          <IconX size={11}/> Clear
+        </button>
       ) : (
         <span style={{width: 1}}/>
       )}

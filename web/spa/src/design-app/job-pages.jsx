@@ -146,7 +146,7 @@ export function PipelineDiagram({ job, compact }) {
   );
 }
 
-export function JobDetail({ id, navigate, log = CURRENT_JOB_LOG, onRefresh, onCancelJob, onRetryJob }) {
+export function JobDetail({ id, navigate, log = CURRENT_JOB_LOG, onRefresh, onCancelJob, onRetryJob, onDeleteJob }) {
   const job = CURRENT_JOB || ACTIVE_JOBS.find((j) => j.id === id);
   const [actionState, setActionState] = React.useState({ pending: null, message: null, error: null });
   const actionAbortRef = React.useRef(null);
@@ -176,6 +176,10 @@ export function JobDetail({ id, navigate, log = CURRENT_JOB_LOG, onRefresh, onCa
   });
   const refreshJob = () => runAction("refresh", async (signal) => {
     await onRefresh?.(job.id, signal);
+  });
+  const deleteJob = () => runAction("delete", async (signal) => {
+    await onDeleteJob?.(job.id, signal);
+    if (!signal.aborted) navigate("queue");
   });
   if (CURRENT_JOB_STATE.loading) return <div className="pane"><div className="empty"><div className="empty-title">Loading job</div><div>Fetching /jobs/{id}.</div></div></div>;
   if (!job || CURRENT_JOB_STATE.error) return <div className="pane"><a onClick={() => navigate("queue")} style={{display: "inline-flex", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--muted)", cursor: "pointer", marginBottom: 18}}>← Queue</a><div className="empty"><div className="empty-title">Job unavailable</div><div>{CURRENT_JOB_STATE.error || "No job is loaded."}</div></div></div>;
@@ -226,6 +230,17 @@ export function JobDetail({ id, navigate, log = CURRENT_JOB_LOG, onRefresh, onCa
         <a className="btn" href="/metrics" target="_blank" rel="noreferrer"><IconExternal size={14}/> Open in Prometheus</a>
         <button className="btn" onClick={refreshJob} disabled={actionState.pending === "refresh"}><IconRefresh size={14}/> Poll now</button>
         {job.status === "failed" && <button className="btn" onClick={retryJob} disabled={actionState.pending === "retry"}><IconRefresh size={14}/> Retry job</button>}
+        {(job.status === "failed" || job.status === "done") && onDeleteJob && (
+          <button
+            className="btn"
+            onClick={deleteJob}
+            disabled={actionState.pending === "delete"}
+            aria-label={`Clear job ${job.id}`}
+            style={{color: "var(--err)", borderColor: "color-mix(in oklab, var(--err) 32%, var(--border))"}}
+          >
+            <IconX size={14}/> Clear
+          </button>
+        )}
         {isInFlight(job.status) && <button className="btn" onClick={cancelJob} disabled={actionState.pending === "cancel"} style={{color: "var(--err)", borderColor: "color-mix(in oklab, var(--err) 32%, var(--border))"}}>
           <IconX size={14}/> Cancel job
         </button>}
