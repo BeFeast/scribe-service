@@ -2165,3 +2165,174 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
     .mobile-page { animation: none; }
   }
 }
+
+/* ─── Mobile Ops dashboard (Wave 2d, Issue #279) ───────────────────────── */
+@media (max-width: 768px) {
+  /* Mobile-scoped overrides of .metric-grid + .metric. The desktop
+     ops route uses a 4-column grid with .label/.value/.delta children;
+     the mobile port uses a 2-column grid with .m-label/.m-value/.m-delta
+     children, matching `Scribe iOS.html` viewOps(). */
+  .m-ops .metric-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 11px;
+    padding: 4px 16px 0;
+    margin: 0;
+  }
+  .m-ops .metric {
+    background: var(--bg-card);
+    border: 0.5px solid var(--hairline);
+    border-radius: 16px;
+    padding: 14px 15px;
+    margin: 0;
+    min-height: 0;
+  }
+  .m-ops .metric .m-label {
+    font: 600 10.5px/1 var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+  }
+  .m-ops .metric .m-value {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-top: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .m-ops .metric .m-delta {
+    font: 500 11.5px/1 var(--font-mono);
+    color: var(--muted);
+    margin-top: 5px;
+    font-feature-settings: "tnum";
+  }
+  .m-ops .metric .m-delta.good { color: var(--ok); }
+  .m-ops .metric .m-delta.bad  { color: var(--err); }
+
+  /* .panel — siblings, never nested with .metric (see check-design-nesting.sh). */
+  .m-ops .panel {
+    background: var(--bg-card);
+    border: 0.5px solid var(--hairline);
+    border-radius: 16px;
+    margin: 11px 16px 0;
+    padding: 15px 16px;
+  }
+  .m-ops .panel .p-h {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .m-ops .panel .p-title {
+    font-size: 15px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+  }
+  .m-ops .panel .p-meta {
+    font: 500 11.5px/1 var(--font-mono);
+    color: var(--muted);
+    font-feature-settings: "tnum";
+  }
+
+  /* Spark — mobile-scoped redefinition. The desktop .spark already exists
+     in styles.css; this scopes height + display for the panel layout. */
+  .m-ops .spark {
+    width: 100%;
+    height: 60px;
+    display: block;
+  }
+  .m-ops .spark .area { fill: var(--accent-soft); }
+  .m-ops .spark .line { stroke: var(--accent); stroke-width: 2; fill: none; }
+  .m-ops .spark .dot  { fill: var(--accent); }
+
+  /* KV rows inside .panel. */
+  .m-ops .kv {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 9px 0;
+    border-top: 0.5px solid var(--hairline);
+    font-size: 13.5px;
+  }
+  .m-ops .kv:first-of-type { border-top: 0; }
+  .m-ops .kv .k {
+    color: var(--fg-soft);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .m-ops .kv .v {
+    font: 600 13px/1 var(--font-mono);
+    color: var(--fg);
+    font-feature-settings: "tnum";
+  }
+
+  /* Bar-track inside .kv (Daily cap row). Desktop styles already define
+     the base .bar-track; this restricts width inside the panel. */
+  .m-ops .bar-track {
+    height: 7px;
+    border-radius: 999px;
+    background: var(--hairline);
+    overflow: hidden;
+    margin-top: 4px;
+    flex: 1;
+    max-width: 120px;
+  }
+  .m-ops .bar-track > div {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 999px;
+  }
+
+  /* Failure rows inside the third .panel. */
+  .m-ops .fail-row {
+    padding: 11px 0;
+    border-top: 0.5px solid var(--hairline);
+  }
+  .m-ops .fail-row:first-of-type { border-top: 0; }
+  .m-ops .fail-row .f-title {
+    font-size: 13.5px;
+    font-weight: 600;
+    line-height: 1.35;
+    margin-bottom: 4px;
+  }
+  .m-ops .fail-row .f-msg {
+    font: 500 11.5px/1.45 var(--font-mono);
+    color: var(--err);
+    word-break: break-word;
+  }
+  .m-ops .fail-row .f-meta {
+    font: 500 11px/1 var(--font-mono);
+    color: var(--muted);
+    margin-top: 5px;
+  }
+
+  /* System health chip in the System panel header. */
+  .m-ops .m-health {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font: 600 11px/1 var(--font-mono);
+    text-transform: lowercase;
+  }
+  .m-ops .m-health.ok {
+    background: color-mix(in srgb, var(--ok) 18%, transparent);
+    color: var(--ok);
+  }
+  .m-ops .m-health.warn {
+    background: color-mix(in srgb, var(--warn) 18%, transparent);
+    color: var(--warn);
+  }
+  .m-ops .m-health.err {
+    background: color-mix(in srgb, var(--err) 18%, transparent);
+    color: var(--err);
+  }
+  .m-ops .m-health-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: currentColor;
+  }
+}
