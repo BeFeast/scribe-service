@@ -2334,6 +2334,9 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
     height: 6px;
     border-radius: 999px;
     background: currentColor;
+  }
+}
+
 /* ─── Mobile Library page (Wave 2a, Issue #276) ─────────────────────────
    Ported from Scribe iOS.html (~213-310).  iOS Field hex values are
    replaced with the production semantic tokens established in Wave 0
@@ -2347,32 +2350,6 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   .feed { display: block; }
 
   .tcard {
-/* ─── Mobile Queue + Job detail (Wave 2c, Issue #278) ──────────────────── */
-/* Literal port of the .jcard / .pstage / .rail / .pbody / .detail-head /
-   .sec-label / .bigbtn iOS recipes (Scribe iOS.html ~lines 310-410, 1018-
-   1110), scoped to the mobile breakpoint so the desktop ports in
-   job-pages.jsx and styles.css remain byte-locked. iOS source already uses
-   var(--*) tokens; values copied verbatim. */
-@media (max-width: 768px) {
-  /* Queue page action row (replaces the prototype's nav-right "+" affordance
-     since the Wave 1 MobileShell navbar is generic). */
-  .m-queue-actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 14px 4px;
-    color: var(--muted);
-    font: 500 12px/1 var(--font-mono);
-  }
-  .m-queue-workers { font-feature-settings: "tnum"; }
-  .m-queue-list { padding-top: 4px; padding-bottom: 12px; }
-
-  /* Job summary card on Queue (jcard) — port of Scribe iOS.html ~365-380. */
-  .jcard {
-    display: block;
-    width: calc(100% - 28px);
-    text-align: left;
-    appearance: none;
     background: var(--bg-card);
     border: 0.5px solid var(--border-soft);
     border-radius: 18px;
@@ -2409,50 +2386,6 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
     line-height: 1.5;
     color: var(--fg-soft);
     margin: 0 0 11px;
-/* ─── Capture sheet body recipes (Wave 2f, Issue #281) ────────────────── */
-/* Verbatim port of `Scribe iOS.html` lines ~440-470: .url-field,
-   .url-field input(::placeholder), .detected (+ .thumb / .d-title /
-   .d-meta), .opt-row (+ .o-label small), .bigbtn (+ :active, .sec,
-   :disabled). Hex literals from the iOS source are replaced with
-   token references; class structure and metrics are preserved. */
-@media (max-width: 768px) {
-  .url-field {
-    display: flex; align-items: center; gap: 9px;
-    background: var(--bg-soft);
-    border: 1px solid var(--border-soft);
-    border-radius: 13px;
-    padding: 13px 14px;
-    margin-bottom: 14px;
-  }
-  .url-field svg { color: var(--muted); flex-shrink: 0; }
-  .url-field input {
-    flex: 1; border: 0; background: transparent; outline: 0;
-    font-size: 16px; color: var(--fg);
-    font-family: var(--font-mono);
-  }
-  .url-field input::placeholder {
-    color: var(--muted);
-    font-family: var(--font-sans);
-  }
-
-  .detected {
-    display: flex; gap: 12px;
-    padding: 13px;
-    background: var(--bg-card);
-    border: 0.5px solid var(--border-soft);
-    border-radius: 14px;
-    margin-bottom: 16px;
-    align-items: center;
-  }
-  .detected .thumb {
-    width: 76px; height: 46px;
-    border-radius: 9px; flex-shrink: 0;
-    background: linear-gradient(135deg, var(--accent-soft), var(--bg-soft));
-    display: grid; place-items: center;
-    color: var(--accent);
-  }
-  .detected .d-title {
-    font-size: 13.5px; font-weight: 600; line-height: 1.3;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
@@ -2509,94 +2442,6 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   }
 
   /* segmented control */
-/* ─── Mobile transcript detail (Wave 2b, Issue #277) ───────────────────── */
-@media (max-width: 768px) {
-  .detail-head { padding: 6px 20px 0; }
-  .detail-head-row {
-    display: flex; align-items: flex-start; gap: 8px;
-  }
-  .detail-head-row .detail-title { flex: 1; }
-  .detail-share-btn { margin-top: 2px; flex-shrink: 0; }
-  .detail-title {
-    font-size: 27px; font-weight: 700; letter-spacing: -0.02em;
-    line-height: 1.18; margin: 0 0 10px;
-    text-wrap: balance;
-  }
-  .detail-meta {
-    display: flex; flex-wrap: wrap; align-items: center;
-    gap: 7px;
-    font: 500 12px/1.3 var(--font-mono);
-    color: var(--muted);
-    font-feature-settings: "tnum";
-    margin-bottom: 12px;
-  }
-  .detail-meta .sep { opacity: 0.4; }
-  .detail-tags {
-    display: flex; flex-wrap: wrap; gap: 6px;
-    margin-bottom: 14px;
-  }
-  .prose {
-    padding: 2px 20px 30px;
-    font-size: 16px; line-height: 1.62;
-    color: var(--fg);
-  }
-  .prose h1 {
-    font-size: 19px; font-weight: 700; letter-spacing: -0.01em;
-    margin: 1.5em 0 0.5em;
-  }
-  .prose h2 {
-    font-size: 17px; font-weight: 700; letter-spacing: -0.01em;
-    margin: 1.5em 0 0.5em;
-  }
-  .prose h3 {
-    font-size: 15px; font-weight: 650; letter-spacing: -0.01em;
-    margin: 1.4em 0 0.4em;
-  }
-  .prose p { margin: 0 0 1em; }
-  .prose ul, .prose ol { padding-left: 1.3em; margin: 0.4em 0 1.1em; }
-  .prose li { margin: 0.5em 0; line-height: 1.5; }
-  .prose strong { font-weight: 680; }
-  .prose em { font-style: italic; }
-  .prose code {
-    font-family: var(--font-mono); font-size: 0.9em;
-    background: var(--bg-soft);
-    padding: 1px 5px; border-radius: 5px;
-  }
-  .prose pre {
-    margin: 1em 0; padding: 12px 14px;
-    background: var(--bg-soft);
-    border-radius: 10px;
-    border: 0.5px solid var(--border-soft);
-    overflow-x: auto;
-    font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
-  }
-  .prose pre code {
-    background: transparent; padding: 0; border-radius: 0;
-  }
-  .transcript-body {
-    margin: 2px 20px 30px;
-    padding: 14px 15px;
-    font-family: var(--font-mono); font-size: 13px; line-height: 1.65;
-    color: var(--fg-soft);
-    white-space: pre-wrap; word-break: break-word;
-    background: var(--bg-soft);
-    border-radius: 14px;
-    border: 0.5px solid var(--border-soft);
-  }
-  .partial-banner,
-  .banner {
-    margin: 0 20px 16px;
-    padding: 12px 14px;
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--warn) 12%, var(--bg-card));
-    border: 0.5px solid color-mix(in srgb, var(--warn) 30%, transparent);
-    display: flex; gap: 10px; align-items: flex-start;
-    font-size: 13px; color: var(--fg-soft); line-height: 1.45;
-  }
-  .partial-banner .b-ic,
-  .banner .b-ic { color: var(--warn); flex-shrink: 0; margin-top: 1px; }
-
-  /* Segmented control (Summary / Transcript) — mobile recipe. */
   .seg {
     display: flex;
     background: var(--bg-soft);
@@ -2644,6 +2489,39 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
     font-weight: 650;
     color: var(--fg);
     margin-bottom: 4px;
+  }
+}
+
+/* ─── Mobile Queue + Job detail (Wave 2c, Issue #278) ──────────────────── */
+/* Literal port of the .jcard / .pstage / .rail / .pbody / .detail-head /
+   .sec-label / .bigbtn iOS recipes (Scribe iOS.html ~lines 310-410, 1018-
+   1110), scoped to the mobile breakpoint so the desktop ports in
+   job-pages.jsx and styles.css remain byte-locked. iOS source already uses
+   var(--*) tokens; values copied verbatim. */
+@media (max-width: 768px) {
+  /* Queue page action row (replaces the prototype's nav-right "+" affordance
+     since the Wave 1 MobileShell navbar is generic). */
+  .m-queue-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px 4px;
+    color: var(--muted);
+    font: 500 12px/1 var(--font-mono);
+  }
+  .m-queue-workers { font-feature-settings: "tnum"; }
+  .m-queue-list { padding-top: 4px; padding-bottom: 12px; }
+
+  /* Job summary card on Queue (jcard) — port of Scribe iOS.html ~365-380. */
+  .jcard {
+    display: block;
+    width: calc(100% - 28px);
+    text-align: left;
+    appearance: none;
+    background: var(--bg-card);
+    border: 0.5px solid var(--border-soft);
+    border-radius: 18px;
+    padding: 15px 16px;
     margin: 0 14px 11px;
     cursor: pointer;
     transition: transform 0.12s ease;
@@ -2854,6 +2732,57 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
     background: color-mix(in srgb, var(--err) 92%, transparent);
     color: var(--accent-fg);
   }
+}
+
+/* ─── Capture sheet body recipes (Wave 2f, Issue #281) ────────────────── */
+/* Verbatim port of `Scribe iOS.html` lines ~440-470: .url-field,
+   .url-field input(::placeholder), .detected (+ .thumb / .d-title /
+   .d-meta), .opt-row (+ .o-label small), .bigbtn (+ :active, .sec,
+   :disabled). Hex literals from the iOS source are replaced with
+   token references; class structure and metrics are preserved. */
+@media (max-width: 768px) {
+  .url-field {
+    display: flex; align-items: center; gap: 9px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-soft);
+    border-radius: 13px;
+    padding: 13px 14px;
+    margin-bottom: 14px;
+  }
+  .url-field svg { color: var(--muted); flex-shrink: 0; }
+  .url-field input {
+    flex: 1; border: 0; background: transparent; outline: 0;
+    font-size: 16px; color: var(--fg);
+    font-family: var(--font-mono);
+  }
+  .url-field input::placeholder {
+    color: var(--muted);
+    font-family: var(--font-sans);
+  }
+
+  .detected {
+    display: flex; gap: 12px;
+    padding: 13px;
+    background: var(--bg-card);
+    border: 0.5px solid var(--border-soft);
+    border-radius: 14px;
+    margin-bottom: 16px;
+    align-items: center;
+  }
+  .detected .thumb {
+    width: 76px; height: 46px;
+    border-radius: 9px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--accent-soft), var(--bg-soft));
+    display: grid; place-items: center;
+    color: var(--accent);
+  }
+  .detected .d-title {
+    font-size: 13.5px; font-weight: 600; line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
   .detected .d-meta {
     font: 500 11px/1 var(--font-mono);
     color: var(--muted);
@@ -2895,6 +2824,8 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
     color: var(--fg);
   }
   .bigbtn:disabled { opacity: 0.45; cursor: not-allowed; }
+}
+
 /* ─── Mobile settings (Wave 2e, Issue #280) ─────────────────────────────
    Port of `.me-card`, `.glist`, `.grow`, `.toggle`, `.urow`, `.role`,
    `.sec-label` from `Scribe iOS.html` (~lines 280-420). Scoped under
@@ -3214,6 +3145,106 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
     width: 64px;
     display: inline-block;
   }
+}
+
+/* ─── Mobile transcript detail (Wave 2b, Issue #277) ───────────────────── */
+@media (max-width: 768px) {
+  .detail-head { padding: 6px 20px 0; }
+  .detail-head-row {
+    display: flex; align-items: flex-start; gap: 8px;
+  }
+  .detail-head-row .detail-title { flex: 1; }
+  .detail-share-btn { margin-top: 2px; flex-shrink: 0; }
+  .detail-title {
+    font-size: 27px; font-weight: 700; letter-spacing: -0.02em;
+    line-height: 1.18; margin: 0 0 10px;
+    text-wrap: balance;
+  }
+  .detail-meta {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 7px;
+    font: 500 12px/1.3 var(--font-mono);
+    color: var(--muted);
+    font-feature-settings: "tnum";
+    margin-bottom: 12px;
+  }
+  .detail-meta .sep { opacity: 0.4; }
+  .detail-tags {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    margin-bottom: 14px;
+  }
+  .prose {
+    padding: 2px 20px 30px;
+    font-size: 16px; line-height: 1.62;
+    color: var(--fg);
+  }
+  .prose h1 {
+    font-size: 19px; font-weight: 700; letter-spacing: -0.01em;
+    margin: 1.5em 0 0.5em;
+  }
+  .prose h2 {
+    font-size: 17px; font-weight: 700; letter-spacing: -0.01em;
+    margin: 1.5em 0 0.5em;
+  }
+  .prose h3 {
+    font-size: 15px; font-weight: 650; letter-spacing: -0.01em;
+    margin: 1.4em 0 0.4em;
+  }
+  .prose p { margin: 0 0 1em; }
+  .prose ul, .prose ol { padding-left: 1.3em; margin: 0.4em 0 1.1em; }
+  .prose li { margin: 0.5em 0; line-height: 1.5; }
+  .prose strong { font-weight: 680; }
+  .prose em { font-style: italic; }
+  .prose code {
+    font-family: var(--font-mono); font-size: 0.9em;
+    background: var(--bg-soft);
+    padding: 1px 5px; border-radius: 5px;
+  }
+  .prose pre {
+    margin: 1em 0; padding: 12px 14px;
+    background: var(--bg-soft);
+    border-radius: 10px;
+    border: 0.5px solid var(--border-soft);
+    overflow-x: auto;
+    font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
+  }
+  .prose pre code {
+    background: transparent; padding: 0; border-radius: 0;
+  }
+  .transcript-body {
+    margin: 2px 20px 30px;
+    padding: 14px 15px;
+    font-family: var(--font-mono); font-size: 13px; line-height: 1.65;
+    color: var(--fg-soft);
+    white-space: pre-wrap; word-break: break-word;
+    background: var(--bg-soft);
+    border-radius: 14px;
+    border: 0.5px solid var(--border-soft);
+  }
+  .partial-banner,
+  .banner {
+    margin: 0 20px 16px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--warn) 12%, var(--bg-card));
+    border: 0.5px solid color-mix(in srgb, var(--warn) 30%, transparent);
+    display: flex; gap: 10px; align-items: flex-start;
+    font-size: 13px; color: var(--fg-soft); line-height: 1.45;
+  }
+  .partial-banner .b-ic,
+  .banner .b-ic { color: var(--warn); flex-shrink: 0; margin-top: 1px; }
+
+  /* Segmented control (Summary / Transcript) — mobile recipe. */
+  .seg {
+    display: flex;
+    background: var(--bg-soft);
+    border-radius: 10px;
+    padding: 2px;
+    margin: 0 16px 12px;
+    gap: 2px;
+  }
+  .seg button {
+    flex: 1;
     appearance: none; border: 0; background: transparent; cursor: pointer;
     font-size: 13px; font-weight: 600; color: var(--fg-soft);
     padding: 7px 8px; border-radius: 8px;

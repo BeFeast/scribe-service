@@ -125,7 +125,7 @@ export function TabBar({ active, onTabSelect, onCapture, badges }) {
 
 /* ── MobileNavbar (port of .navbar + .nb-title + .nb-back) ───────────── */
 
-export function MobileNavbar({ title, large, sub, canBack, onBack, scrolled }) {
+export function MobileNavbar({ title, canBack, onBack, scrolled }) {
 	return (
 		<div className={scrolled ? "mobile-navbar scrolled" : "mobile-navbar"}>
 			<div className="nb-side">
@@ -156,12 +156,6 @@ export function MobileNavbar({ title, large, sub, canBack, onBack, scrolled }) {
 			</div>
 			<div className="nb-title">{title}</div>
 			<div className="nb-side right" />
-			{large !== false ? (
-				<div className="large-title-wrap" data-collapse-when-scrolled>
-					<h1 className="large-title">{large ?? title}</h1>
-					{sub ? <p className="large-sub">{sub}</p> : null}
-				</div>
-			) : null}
 		</div>
 	);
 }
@@ -237,8 +231,6 @@ export function MobileShell({
 		<>
 			<MobileNavbar
 				title={title}
-				large={large}
-				sub={sub}
 				canBack={canBack}
 				onBack={onBack}
 				scrolled={scrolled}
@@ -248,6 +240,12 @@ export function MobileShell({
 				className="mobile-scroller"
 				data-transition-key={transitionKey}
 			>
+				{large !== false ? (
+					<div className="large-title-wrap">
+						<h1 className="large-title">{large ?? title}</h1>
+						{sub ? <p className="large-sub">{sub}</p> : null}
+					</div>
+				) : null}
 				<div className="mobile-page" key={transitionKey}>
 					{children}
 				</div>
