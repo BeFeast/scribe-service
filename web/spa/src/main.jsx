@@ -12,6 +12,7 @@ import { MobileJobDetail } from "./design-app/mobile/MobileJobDetail.jsx";
 import { MobileLibrary } from "./design-app/mobile/MobileLibrary.jsx";
 import { MobileOps } from "./design-app/mobile/MobileOps.jsx";
 import { MobileQueue } from "./design-app/mobile/MobileQueue.jsx";
+import { MobileSettings } from "./design-app/mobile/MobileSettings.jsx";
 import { MobileShell } from "./design-app/mobile/MobileShell.jsx";
 import { pageChrome, tabBadges } from "./design-app/mobile/mobilePageConfig.js";
 import { OpsPage } from "./design-app/ops.jsx";
@@ -225,7 +226,16 @@ function ScribeApp() {
 			);
 			break;
 		case "settings":
-			page = (
+			page = isMobile ? (
+				<MobileSettings
+					t={t}
+					setTweak={setTweak}
+					users={runtime.users}
+					currentUser={runtime.currentUser}
+					onConfigSaved={runtime.applyConfig}
+					auth={auth}
+				/>
+			) : (
 				<SettingsPage
 					t={t}
 					setTweak={setTweak}
