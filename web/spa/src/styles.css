@@ -1700,9 +1700,11 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   flex-direction: column;
   align-items: center;
   gap: 28px;
-  padding: 48px 56px;
+  padding: 48px clamp(20px, 8vw, 56px);
   text-align: center;
-  max-width: 440px;
+  width: 100%;
+  max-width: min(440px, calc(100vw - 24px));
+  box-sizing: border-box;
 }
 
 .auth-gate-mark {
@@ -1753,10 +1755,13 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .auth-gate-steps {
   display: flex;
-  gap: 1.75rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.6rem 1.25rem;
   font-family: var(--font-mono);
   font-size: 0.72rem;
   margin-top: 0.25rem;
+  max-width: 100%;
 }
 .auth-gate-step {
   display: inline-flex;
@@ -2907,7 +2912,7 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   .app-mobile .glist .grow.grow-stack .ms-seg {
     flex: 1 0 100%;
     margin-top: 10px;
-    margin-left: 42px;
+    margin-left: 0;
   }
   .app-mobile .glist .grow .g-ic {
     width: 29px; height: 29px;
@@ -2970,7 +2975,8 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
      pickers in the Appearance section. Distinct from the existing .seg
      desktop recipe so it does not need to share padding/typography. */
   .app-mobile .ms-seg {
-    display: inline-flex;
+    display: flex;
+    width: 100%;
     align-self: stretch;
     background: var(--bg-soft);
     border-radius: 10px;
