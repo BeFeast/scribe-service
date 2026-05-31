@@ -2509,6 +2509,94 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   }
 
   /* segmented control */
+/* ─── Mobile transcript detail (Wave 2b, Issue #277) ───────────────────── */
+@media (max-width: 768px) {
+  .detail-head { padding: 6px 20px 0; }
+  .detail-head-row {
+    display: flex; align-items: flex-start; gap: 8px;
+  }
+  .detail-head-row .detail-title { flex: 1; }
+  .detail-share-btn { margin-top: 2px; flex-shrink: 0; }
+  .detail-title {
+    font-size: 27px; font-weight: 700; letter-spacing: -0.02em;
+    line-height: 1.18; margin: 0 0 10px;
+    text-wrap: balance;
+  }
+  .detail-meta {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 7px;
+    font: 500 12px/1.3 var(--font-mono);
+    color: var(--muted);
+    font-feature-settings: "tnum";
+    margin-bottom: 12px;
+  }
+  .detail-meta .sep { opacity: 0.4; }
+  .detail-tags {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    margin-bottom: 14px;
+  }
+  .prose {
+    padding: 2px 20px 30px;
+    font-size: 16px; line-height: 1.62;
+    color: var(--fg);
+  }
+  .prose h1 {
+    font-size: 19px; font-weight: 700; letter-spacing: -0.01em;
+    margin: 1.5em 0 0.5em;
+  }
+  .prose h2 {
+    font-size: 17px; font-weight: 700; letter-spacing: -0.01em;
+    margin: 1.5em 0 0.5em;
+  }
+  .prose h3 {
+    font-size: 15px; font-weight: 650; letter-spacing: -0.01em;
+    margin: 1.4em 0 0.4em;
+  }
+  .prose p { margin: 0 0 1em; }
+  .prose ul, .prose ol { padding-left: 1.3em; margin: 0.4em 0 1.1em; }
+  .prose li { margin: 0.5em 0; line-height: 1.5; }
+  .prose strong { font-weight: 680; }
+  .prose em { font-style: italic; }
+  .prose code {
+    font-family: var(--font-mono); font-size: 0.9em;
+    background: var(--bg-soft);
+    padding: 1px 5px; border-radius: 5px;
+  }
+  .prose pre {
+    margin: 1em 0; padding: 12px 14px;
+    background: var(--bg-soft);
+    border-radius: 10px;
+    border: 0.5px solid var(--border-soft);
+    overflow-x: auto;
+    font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
+  }
+  .prose pre code {
+    background: transparent; padding: 0; border-radius: 0;
+  }
+  .transcript-body {
+    margin: 2px 20px 30px;
+    padding: 14px 15px;
+    font-family: var(--font-mono); font-size: 13px; line-height: 1.65;
+    color: var(--fg-soft);
+    white-space: pre-wrap; word-break: break-word;
+    background: var(--bg-soft);
+    border-radius: 14px;
+    border: 0.5px solid var(--border-soft);
+  }
+  .partial-banner,
+  .banner {
+    margin: 0 20px 16px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--warn) 12%, var(--bg-card));
+    border: 0.5px solid color-mix(in srgb, var(--warn) 30%, transparent);
+    display: flex; gap: 10px; align-items: flex-start;
+    font-size: 13px; color: var(--fg-soft); line-height: 1.45;
+  }
+  .partial-banner .b-ic,
+  .banner .b-ic { color: var(--warn); flex-shrink: 0; margin-top: 1px; }
+
+  /* Segmented control (Summary / Transcript) — mobile recipe. */
   .seg {
     display: flex;
     background: var(--bg-soft);
@@ -3125,5 +3213,75 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   .app-mobile .ms-back-spacer {
     width: 64px;
     display: inline-block;
+  }
+    appearance: none; border: 0; background: transparent; cursor: pointer;
+    font-size: 13px; font-weight: 600; color: var(--fg-soft);
+    padding: 7px 8px; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    gap: 6px; min-height: 34px;
+  }
+  .seg button.active {
+    background: var(--bg-elev, var(--bg-card));
+    color: var(--fg);
+    box-shadow: 0 1px 3px rgba(28, 32, 24, 0.12);
+  }
+  [data-theme="dark"] .seg button.active {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* ─── Mobile share bottom sheet (Wave 2b, Issue #277) ───────────────────── */
+@media (max-width: 768px) {
+  .share-grid {
+    display: flex; gap: 14px;
+    overflow-x: auto;
+    padding: 6px 2px 16px;
+  }
+  .share-app {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 7px;
+    cursor: pointer;
+    min-width: 62px;
+  }
+  .share-app .sa-ic {
+    width: 58px; height: 58px;
+    border-radius: 16px;
+    display: grid; place-items: center;
+    color: var(--accent-fg);
+  }
+  .share-app .sa-name {
+    font-size: 11px;
+    color: var(--fg-soft);
+  }
+  .share-list {
+    background: var(--bg-card);
+    border: 0.5px solid var(--border-soft);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .share-li {
+    display: flex; align-items: center; gap: 13px;
+    padding: 13px 15px;
+    border-top: 0.5px solid var(--border-soft);
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+    appearance: none;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+  }
+  .share-li:first-child { border-top: 0; }
+  .share-li:disabled { opacity: 0.5; cursor: not-allowed; }
+  .share-li:active:not(:disabled) {
+    background: color-mix(in srgb, var(--fg) 4%, transparent);
+  }
+  .share-li .sl-ic { color: var(--accent); display: inline-flex; }
+  .share-li .sl-label { flex: 1; font-size: 15px; }
+  .share-li .sl-val {
+    font: 500 12px/1 var(--font-mono);
+    color: var(--muted);
+    max-width: 40%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
 }

@@ -14,6 +14,7 @@ import { MobileOps } from "./design-app/mobile/MobileOps.jsx";
 import { MobileQueue } from "./design-app/mobile/MobileQueue.jsx";
 import { MobileSettings } from "./design-app/mobile/MobileSettings.jsx";
 import { MobileShell } from "./design-app/mobile/MobileShell.jsx";
+import { MobileTranscriptDetail } from "./design-app/mobile/MobileTranscriptDetail.jsx";
 import { pageChrome, tabBadges } from "./design-app/mobile/mobilePageConfig.js";
 import { OpsPage } from "./design-app/ops.jsx";
 import { SettingsPage } from "./design-app/settings.jsx";
@@ -119,7 +120,13 @@ function ScribeApp() {
 	let page = null;
 	switch (route.page) {
 		case "transcript":
-			page = (
+			page = isMobile ? (
+				<MobileTranscriptDetail
+					id={route.params.id}
+					navigate={navigateDesign}
+					onRefresh={runtime.refreshCore}
+				/>
+			) : (
 				<TranscriptDetail
 					id={route.params.id}
 					navigate={navigateDesign}
