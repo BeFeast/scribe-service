@@ -153,7 +153,7 @@ function SearchBar({ value, onChange }) {
 
 function SegmentFilter({ filters, value, onChange }) {
 	return (
-		<div className="seg">
+		<div className="seg seg-scroll">
 			{filters.map(([key, label]) => (
 				<button
 					key={key}
@@ -265,7 +265,11 @@ export function MobileLibrary({ navigate, routeTag }) {
 		}
 	}, [routeTag, filters]);
 
-	const rows = React.useMemo(() => libRows(q, filter), [q, filter]);
+	// Computed every render (cheap filter over the in-memory list). NOT
+	// memoized on [q, filter]: TRANSCRIPTS is a module binding reassigned by
+	// setRuntimeData when runtime data loads, and a stale memo would keep the
+	// first empty render until a remount (e.g. switching tabs after login).
+	const rows = libRows(q, filter);
 
 	const showToast = React.useCallback((message) => {
 		setToastMessage(message);

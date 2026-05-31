@@ -160,7 +160,7 @@ function MobileSettingsBody({ t, setTweak, users, currentUser, onOpenAccess }) {
 	const [signoutPending, setSignoutPending] = React.useState(false);
 
 	const me = currentUser ?? users.find((u) => u.is_me) ?? null;
-	const meName = me?.display_name ?? me?.name ?? me?.email ?? "Unknown user";
+	const meName = me?.display_name ?? me?.name ?? me?.email ?? "LAN user";
 	const meEmail = me?.email ?? "";
 	const meRole = me?.role ?? "user";
 	const dark = t.theme === "dark";
