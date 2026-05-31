@@ -3322,3 +3322,20 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
 }
+
+/* ─── Mobile library tag-filter: scrollable chips (polish, Issue #276) ───
+   The library filter .seg can hold many chips (All + every tag). Let it
+   scroll horizontally instead of squeezing/clipping the trailing chips.
+   The 2-item Summary/Transcript .seg keeps the default flex:1 segments. */
+@media (max-width: 768px) {
+  .seg.seg-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .seg.seg-scroll::-webkit-scrollbar { display: none; }
+  .seg.seg-scroll button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+}
