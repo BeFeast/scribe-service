@@ -30,6 +30,25 @@ db_dir="$BACKUP_ROOT/db"
 tr_dir="$BACKUP_ROOT/transcripts"
 mkdir -p "$db_dir" "$tr_dir"
 
+# Single-run guard. A duplicated cron source (and, more rarely, an ad-hoc
+# `run-now` overlapping the nightly job) could start two backups in the
+# same second; they share the per-second $stamp and raced on the same
+# .sql.gz.tmp, so one mv failed under `set -e` before the success
+# heartbeat was written — leaving ops permanently "stale". Atomic mkdir
+# lock, with a staleness escape so a crashed run cannot wedge backups.
+lock="$BACKUP_ROOT/.backup.lock"
+if ! mkdir "$lock" 2>/dev/null; then
+  if find "$lock" -maxdepth 0 -mmin +120 >/dev/null 2>&1; then
+    log "stale lock $lock (>120m) — stealing"
+    rmdir "$lock" 2>/dev/null || true
+    mkdir "$lock" 2>/dev/null || { log "could not acquire $lock; exiting"; exit 0; }
+  else
+    log "another scribe-backup run holds $lock; exiting"
+    exit 0
+  fi
+fi
+trap 'rmdir "$lock" 2>/dev/null || true' EXIT
+
 # ---------- 1. pg_dump --------------------------------------------------------
 # Write to a hidden .tmp first and atomically rename on success. On any failure
 # the .tmp is cleaned up, so retention never sees a partial / unrestorable file
@@ -58,7 +77,11 @@ page_limit=200
 offset=0
 rows=()
 while :; do
-  page="$(curl -sf "$SCRIBE_BASE_URL/transcripts?limit=$page_limit&offset=$offset")"
+  page="$(curl -sf "$SCRIBE_BASE_URL/transcripts?limit=$page_limit&offset=$offset" || true)"
+  if [[ -z "$page" ]]; then
+    log "warn: transcript list fetch failed (HTTP error / auth?). DB dump is complete; skipping .md export."
+    break
+  fi
   count=$(printf '%s' "$page" | jq 'length')
   if [[ "$count" -eq 0 ]]; then
     break
@@ -101,9 +124,9 @@ log "exported $exported transcripts"
 # `summary.md` doesn't either, so dir-mtime would falsely report long-lived
 # transcripts as stale. Newest-inner-file mtime is the right signal.
 log "pruning entries older than $RETENTION_DAYS day(s)"
-find "$db_dir" -type f -name '*.sql.gz' -mtime "+$RETENTION_DAYS" -print -delete
+find "$db_dir" -type f -name '*.sql.gz' -mtime "+$RETENTION_DAYS" -print -delete || log "warn: db prune had errors (continuing)"
 while IFS= read -r -d '' d; do
-  newest=$(find "$d" -type f -printf '%T@\n' 2>/dev/null | sort -nr | head -1)
+  newest=$(find "$d" -type f -printf '%T@\n' 2>/dev/null | sort -nr | head -1 || true)  # head closes the pipe early; tolerate SIGPIPE (141) under set -o pipefail
   if [[ -n "$newest" ]]; then
     age_days=$(awk -v n="$newest" 'BEGIN { print int((systime() - n) / 86400) }')
     if (( age_days > RETENTION_DAYS )); then
