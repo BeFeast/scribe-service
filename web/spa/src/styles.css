@@ -2347,6 +2347,32 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   .feed { display: block; }
 
   .tcard {
+/* ─── Mobile Queue + Job detail (Wave 2c, Issue #278) ──────────────────── */
+/* Literal port of the .jcard / .pstage / .rail / .pbody / .detail-head /
+   .sec-label / .bigbtn iOS recipes (Scribe iOS.html ~lines 310-410, 1018-
+   1110), scoped to the mobile breakpoint so the desktop ports in
+   job-pages.jsx and styles.css remain byte-locked. iOS source already uses
+   var(--*) tokens; values copied verbatim. */
+@media (max-width: 768px) {
+  /* Queue page action row (replaces the prototype's nav-right "+" affordance
+     since the Wave 1 MobileShell navbar is generic). */
+  .m-queue-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px 4px;
+    color: var(--muted);
+    font: 500 12px/1 var(--font-mono);
+  }
+  .m-queue-workers { font-feature-settings: "tnum"; }
+  .m-queue-list { padding-top: 4px; padding-bottom: 12px; }
+
+  /* Job summary card on Queue (jcard) — port of Scribe iOS.html ~365-380. */
+  .jcard {
+    display: block;
+    width: calc(100% - 28px);
+    text-align: left;
+    appearance: none;
     background: var(--bg-card);
     border: 0.5px solid var(--border-soft);
     border-radius: 18px;
@@ -2486,5 +2512,214 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
     font-weight: 650;
     color: var(--fg);
     margin-bottom: 4px;
+    margin: 0 14px 11px;
+    cursor: pointer;
+    transition: transform 0.12s ease;
+    color: inherit;
+    font: inherit;
+  }
+  .jcard:active { transform: scale(0.985); }
+  .jcard .j-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .jcard .j-title {
+    font-size: 15.5px;
+    font-weight: 640;
+    letter-spacing: -0.01em;
+    line-height: 1.3;
+    margin: 8px 0 2px;
+  }
+  .jcard .j-src {
+    font: 500 11.5px/1 var(--font-mono);
+    color: var(--muted);
+    word-break: break-word;
+  }
+  .jcard .j-bar {
+    height: 5px;
+    border-radius: 999px;
+    background: var(--border-soft);
+    overflow: hidden;
+    margin-top: 11px;
+  }
+  .jcard .j-bar > div {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 999px;
+  }
+  .jcard .j-stagetxt {
+    font: 500 11.5px/1.4 var(--font-mono);
+    color: var(--muted);
+    margin-top: 7px;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  /* Job detail head — port of Scribe iOS.html ~1086-1093. */
+  .detail-head {
+    padding: 6px 20px 10px;
+  }
+  .detail-head .detail-title {
+    font-family: var(--font-display);
+    font-size: 23px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    margin: 0 0 6px;
+  }
+  .detail-head .detail-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font: 500 12px/1.5 var(--font-mono);
+    color: var(--muted);
+    margin: 0;
+  }
+  .detail-head .detail-meta .sep { opacity: 0.4; }
+  .detail-head .detail-meta .m-detail-url {
+    word-break: break-all;
+  }
+  .sec-label {
+    padding: 14px 20px 8px;
+    font: 600 11px/1 var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+  }
+
+  /* Pipeline rails — port of Scribe iOS.html ~316-340. */
+  .pipe {
+    padding: 6px 20px 24px;
+  }
+  .pstage {
+    display: grid;
+    grid-template-columns: 30px 1fr;
+    gap: 14px;
+  }
+  .pstage .rail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .pstage .rail .node {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: grid;
+    place-items: center;
+    border: 2px solid var(--border);
+    background: var(--bg-card);
+    color: var(--muted);
+    z-index: 1;
+  }
+  .pstage .rail .line {
+    flex: 1;
+    width: 2px;
+    background: var(--border);
+    margin: 2px 0;
+    min-height: 18px;
+  }
+  .pstage.done .rail .node {
+    border-color: var(--ok);
+    background: var(--ok);
+    color: var(--accent-fg);
+  }
+  .pstage.done .rail .line { background: var(--ok); }
+  .pstage.active .rail .node {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .pstage .pbody {
+    padding-bottom: 18px;
+    min-width: 0;
+  }
+  .pstage .pname {
+    font-size: 16px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .pstage.pending .pname { color: var(--muted); }
+  .pstage.active .pname { color: var(--accent); }
+  .pstage.done .pname { color: var(--fg); }
+  .pstage .pnote {
+    font: 500 12px/1.5 var(--font-mono);
+    color: var(--muted);
+    margin-top: 5px;
+    font-feature-settings: "tnum";
+    word-break: break-word;
+  }
+  .pstage .pbar {
+    height: 5px;
+    border-radius: 999px;
+    background: var(--border-soft);
+    overflow: hidden;
+    margin-top: 9px;
+  }
+  .pstage .pbar > div {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 999px;
+    transition: width 0.5s ease;
+  }
+  /* iOS prototype renders pending stage as a 7px filled half-opacity dot. */
+  .pstage .m-rail-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.5;
+    display: inline-block;
+  }
+  /* Inline "live" chip beside the active stage label (small padding). */
+  .pstage .pname .m-stage-live {
+    padding: 2px 8px;
+  }
+
+  /* Cancel-job big button — port of the iOS .bigbtn.sec recipe used at
+     the bottom of viewJob (Scribe iOS.html ~line 1100). The full .bigbtn
+     base recipe is mobile-only; ported here so the desktop CSS surface
+     stays byte-locked. */
+  .m-cancel-wrap {
+    padding: 0 20px 30px;
+  }
+  .bigbtn {
+    appearance: none;
+    width: 100%;
+    border-radius: 14px;
+    padding: 14px 18px;
+    font: 600 16px/1 var(--font-sans);
+    border: 0.5px solid transparent;
+    cursor: pointer;
+    min-height: 50px;
+    transition: background 0.15s ease, opacity 0.15s ease;
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+  .bigbtn:active { opacity: 0.85; }
+  .bigbtn.sec {
+    background: var(--bg-card);
+    color: var(--err);
+    border-color: var(--border-soft);
+  }
+  .bigbtn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  /* Inline error variant for the toast recipe (Wave 0 .toast handles
+     the success path). */
+  .toast.m-toast-err .t-ic,
+  .toast.m-toast-err {
+    background: color-mix(in srgb, var(--err) 92%, transparent);
+    color: var(--accent-fg);
   }
 }
