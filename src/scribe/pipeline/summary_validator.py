@@ -128,12 +128,22 @@ def validate_and_canonicalize(markdown: str) -> SummaryResult:
 
 
 def _strip_outer_code_fence(md: str) -> str:
+    """Strip an LLM-added outer code fence.
+
+    Handles a fully wrapped document (```lang ... ```) and the common
+    degenerate case where the model opens a fence before the YAML
+    frontmatter but never closes it on the final line. Canonical output
+    always starts with `---`, so a leading fence line is always an
+    artifact and is dropped unconditionally; a trailing fence line is
+    dropped when present.
+    """
     if not md.startswith("```"):
         return md
     lines = md.splitlines()
-    if len(lines) >= 2 and lines[-1].strip().startswith("```"):
-        return "\n".join(lines[1:-1]).strip()
-    return md
+    lines = lines[1:]  # drop the opening fence line (```/```markdown/...)
+    if lines and lines[-1].strip().startswith("```"):
+        lines = lines[:-1]  # drop the matching closing fence when present
+    return "\n".join(lines).strip()
 
 
 def _extract_frontmatter(md: str) -> tuple[str | None, str]:
