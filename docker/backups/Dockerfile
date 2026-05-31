@@ -31,8 +31,8 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY crontab /etc/cron.d/scribe-backup
 
 RUN chmod +x /usr/local/bin/scribe-backup /usr/local/bin/entrypoint.sh \
-    && chmod 600 /etc/cron.d/scribe-backup \
-    && crontab /etc/cron.d/scribe-backup
+    && crontab /etc/cron.d/scribe-backup \
+    && rm /etc/cron.d/scribe-backup
 
 # The postgres:18-alpine base sets USER postgres for its own entrypoint —
 # we don't want that; cron + write to /backups need root inside this image.

@@ -24,7 +24,7 @@ sq() { printf "'%s'" "$(printf %s "$1" | sed "s/'/'\\\\''/g")"; }
 mkdir -p "${BACKUP_ROOT:-/backups}"
 
 echo "[entrypoint] scribe-backup ready, cron schedule:"
-cat /etc/cron.d/scribe-backup
+crontab -l
 
 # RUN-NOW mode: one-shot for ad-hoc invocation (`docker compose run --rm
 # scribe-backups run-now`). Skips cron entirely.
