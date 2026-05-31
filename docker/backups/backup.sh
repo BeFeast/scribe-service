@@ -77,7 +77,11 @@ page_limit=200
 offset=0
 rows=()
 while :; do
-  page="$(curl -sf "$SCRIBE_BASE_URL/transcripts?limit=$page_limit&offset=$offset")"
+  page="$(curl -sf "$SCRIBE_BASE_URL/transcripts?limit=$page_limit&offset=$offset" || true)"
+  if [[ -z "$page" ]]; then
+    log "warn: transcript list fetch failed (HTTP error / auth?). DB dump is complete; skipping .md export."
+    break
+  fi
   count=$(printf '%s' "$page" | jq 'length')
   if [[ "$count" -eq 0 ]]; then
     break
@@ -120,7 +124,7 @@ log "exported $exported transcripts"
 # `summary.md` doesn't either, so dir-mtime would falsely report long-lived
 # transcripts as stale. Newest-inner-file mtime is the right signal.
 log "pruning entries older than $RETENTION_DAYS day(s)"
-find "$db_dir" -type f -name '*.sql.gz' -mtime "+$RETENTION_DAYS" -print -delete
+find "$db_dir" -type f -name '*.sql.gz' -mtime "+$RETENTION_DAYS" -print -delete || log "warn: db prune had errors (continuing)"
 while IFS= read -r -d '' d; do
   newest=$(find "$d" -type f -printf '%T@\n' 2>/dev/null | sort -nr | head -1)
   if [[ -n "$newest" ]]; then
