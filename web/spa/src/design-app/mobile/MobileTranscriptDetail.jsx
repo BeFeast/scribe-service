@@ -191,8 +191,22 @@ function TranscriptBody({ src }) {
 // (#, ##, ###), paragraphs, bold (**...**), italic (*...*), inline code
 // (`...`) and unordered lists. Sufficient for production summary_md
 // content shape; falls back gracefully for unsupported syntax.
+// Strip a leading YAML frontmatter block (--- ... ---) from summary_md
+// before rendering. summary_md ships with frontmatter; the desktop
+// SummaryBody strips it too. Without this the raw block leaks into the
+// mobile Summary tab.
+function stripSummaryFrontmatter(text) {
+	if (!text.startsWith("---")) return text;
+	const end = text.indexOf("\n---", 3);
+	if (end === -1) return text;
+	return text.slice(end + 4).replace(/^\n+/, "");
+}
+
 function ProseBody({ src }) {
-	const blocks = React.useMemo(() => parseProse(src || ""), [src]);
+	const blocks = React.useMemo(
+		() => parseProse(stripSummaryFrontmatter(src || "")),
+		[src],
+	);
 	return (
 		<div className="prose">
 			{blocks.map((block, idx) => (
