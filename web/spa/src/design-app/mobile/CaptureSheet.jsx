@@ -33,7 +33,7 @@
 //     the live job view, the sheet closes, and a `.toast` reads "Added to
 //     queue".
 //   - On error: an inline error row renders in the sheet body. No
-//     window.alert/confirm/prompt (see check-forbidden-primitives.sh).
+//     browser-native dialog primitives; see check-forbidden-primitives.sh.
 //
 // The sheet uses the `.sheet-layer / .sheet / .sheet-bg / .grabber /
 // .sheet-hd / .sheet-body` recipe shipped in Wave 0 (verified against
