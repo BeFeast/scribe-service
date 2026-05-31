@@ -7,6 +7,7 @@ import { setRuntimeData } from "./design-app/data.js";
 import { HistoryPage } from "./design-app/history.jsx";
 import { JobDetail, QueuePage } from "./design-app/job-pages.jsx";
 import { LibraryPage } from "./design-app/library.jsx";
+import { CaptureSheet } from "./design-app/mobile/CaptureSheet.jsx";
 import { MobileJobDetail } from "./design-app/mobile/MobileJobDetail.jsx";
 import { MobileLibrary } from "./design-app/mobile/MobileLibrary.jsx";
 import { MobileOps } from "./design-app/mobile/MobileOps.jsx";
@@ -46,17 +47,18 @@ function ScribeApp() {
 	const { route, navigate } = useRoute();
 	const { tweaks, replaceTweaks } = useTweaks();
 	const [cmdkOpen, setCmdkOpen] = React.useState(false);
+	const [captureOpen, setCaptureOpen] = React.useState(false);
 	const runtime = useScribeRuntime(auth, route);
 	const t = React.useMemo(() => ({ ...DEFAULT_TWEAKS, ...tweaks }), [tweaks]);
 	const gatePhase = deriveGatePhase(auth, !runtime.loading);
 	const isMobile = useIsMobile();
 	const openCapture = React.useCallback(() => {
-		// Wave 1 placeholder — Wave 2f wires this to the real CaptureSheet
-		// (paste-URL → POST /jobs via the shared submitJob helper). For
-		// now, route the user to the existing command-palette which is
-		// the live submit surface, so the Capture orb is never a dead
-		// click in production.
-		setCmdkOpen(true);
+		// Wave 2f / Issue #281 — open the real mobile CaptureSheet.
+		// The sheet itself drives `auth.protectedFetch("/jobs", POST)`
+		// via the shared `submitJob` helper, so every submit hits the
+		// real API. The desktop command-palette stays available via
+		// Cmd/Ctrl+K for the keyboard flow.
+		setCaptureOpen(true);
 	}, []);
 
 	setRuntimeData({
@@ -300,6 +302,12 @@ function ScribeApp() {
 				open={cmdkOpen}
 				onClose={() => setCmdkOpen(false)}
 				navigate={navigateDesign}
+			/>
+			<CaptureSheet
+				open={captureOpen}
+				onClose={() => setCaptureOpen(false)}
+				auth={auth}
+				navigateDesign={navigateDesign}
 			/>
 		</div>
 	);
