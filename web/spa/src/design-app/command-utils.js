@@ -48,3 +48,52 @@ export function isCommandPaletteShortcut(event) {
 		(event.metaKey || event.ctrlKey) && (key === "k" || event.code === "KeyK")
 	);
 }
+
+const RECENT_SUBMISSIONS_KEY = "scribe.cmdk.recentSubmissions";
+const MAX_RECENT_SUBMISSIONS = 5;
+
+function isRecentSubmission(value) {
+	return Boolean(
+		value &&
+			typeof value === "object" &&
+			typeof value.id === "number" &&
+			typeof value.video_id === "string",
+	);
+}
+
+// Recent ⌘K submissions are persisted client-side so the palette can offer a
+// one-key jump back to a just-queued job across reloads. Real ids only — the
+// prototype shipped hardcoded mock rows here.
+export function readRecentSubmissions() {
+	try {
+		const raw = localStorage.getItem(RECENT_SUBMISSIONS_KEY);
+		if (!raw) return [];
+		const parsed = JSON.parse(raw);
+		if (!Array.isArray(parsed)) return [];
+		return parsed.filter(isRecentSubmission).slice(0, MAX_RECENT_SUBMISSIONS);
+	} catch {
+		return [];
+	}
+}
+
+export function pushRecentSubmission(entry) {
+	if (!isRecentSubmission(entry)) return readRecentSubmissions();
+	const next = [
+		{
+			id: entry.id,
+			video_id: entry.video_id,
+			title: entry.title ?? null,
+			status: entry.status ?? null,
+			ts: typeof entry.ts === "number" ? entry.ts : Date.now(),
+		},
+		// Dedup by video_id so re-submitting the same video refreshes to the
+		// current job id instead of leaving a stale row pointing at an old one.
+		...readRecentSubmissions().filter((r) => r.video_id !== entry.video_id),
+	].slice(0, MAX_RECENT_SUBMISSIONS);
+	try {
+		localStorage.setItem(RECENT_SUBMISSIONS_KEY, JSON.stringify(next));
+	} catch {
+		// Recents are a convenience cache; submission success must not depend on storage.
+	}
+	return next;
+}

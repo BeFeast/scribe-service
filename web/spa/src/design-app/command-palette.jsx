@@ -3,7 +3,7 @@ import React from "react";
 import { useAuth } from "../hooks/useAuth";
 import { IconArrow, IconCheck, IconClock, IconPlus, IconSearch, IconWave } from "./icons.jsx";
 import { ACTIVE_JOBS, STATS, TRANSCRIPTS, fmtDuration, fmtRelative, fmtUsd } from "./data.js";
-import { isJobView, parseVideoUrl } from "./command-utils.js";
+import { isJobView, parseVideoUrl, pushRecentSubmission, readRecentSubmissions } from "./command-utils.js";
 // Command palette — ⌘K. Detects YouTube URLs and offers a one-key submit.
 // Falls through to a fuzzy-ish title search + a fixed list of commands.
 
@@ -12,12 +12,14 @@ export function CommandPalette({ open, onClose, navigate }) {
   const [q, setQ] = React.useState("");
   const [sel, setSel] = React.useState(0);
   const [submitted, setSubmitted] = React.useState(null);
+  const [recents, setRecents] = React.useState([]);
   const inputRef = React.useRef(null);
 
   React.useEffect(() => {
     if (open) {
       setTimeout(() => inputRef.current && inputRef.current.focus(), 30);
       setQ(""); setSel(0); setSubmitted(null);
+      setRecents(readRecentSubmissions());
     }
   }, [open]);
 
@@ -65,15 +67,19 @@ export function CommandPalette({ open, onClose, navigate }) {
         { key: "go-settings", title: "Go to settings", glyph: "S", onPick: () => { navigate("settings"); onClose(); }, hint: "G S" },
       ].forEach(c => list.push({ type: "cmd", ...c }));
 
-      list.push({ section: "Recent submissions" });
-      [
-        { key: "r1", title: "Linus Torvalds on Git — Google Tech Talk", hint: "submitted 4m ago · telegram · transcribing 26%", onPick: () => { navigate("job", { id: submitted.id }); onClose(); }, type: "recent" },
-        { key: "r2", title: "Rich Hickey — Simple Made Easy", hint: "submitted ~3h ago · #142 · done", onPick: () => { navigate("transcript", { id: 142 }); onClose(); }, type: "recent" },
-        { key: "r3", title: "Bryan Cantrill — I Have Come to Bury the Andon Cord", hint: "submitted ~5h ago · #141 · done", onPick: () => { navigate("transcript", { id: 141 }); onClose(); }, type: "recent" },
-      ].forEach(c => list.push(c));
+      if (recents.length) {
+        list.push({ section: "Recent submissions" });
+        recents.forEach(r => list.push({
+          type: "recent",
+          key: "r" + r.id,
+          title: r.title || r.video_id,
+          hint: `job ${r.id}` + (r.status ? ` · ${r.status}` : ""),
+          onPick: () => { navigate("job", { id: r.id }); onClose(); },
+        }));
+      }
     }
     return list;
-  }, [q, ytId, submitted, navigate, onClose, TRANSCRIPTS, ACTIVE_JOBS, STATS]);
+  }, [q, ytId, recents, navigate, onClose, TRANSCRIPTS, ACTIVE_JOBS, STATS]);
 
   async function submitUrl() {
     if (!videoUrl || submitted) return;
@@ -87,6 +93,7 @@ export function CommandPalette({ open, onClose, navigate }) {
       const body = await response.json().catch(() => null);
       if (!response.ok || !isJobView(body)) throw new Error("HTTP " + response.status);
       setSubmitted({ id: body.job_id, video_id: body.video_id, status: body.status });
+      setRecents(pushRecentSubmission({ id: body.job_id, video_id: body.video_id, status: body.status }));
     } catch (error) {
       setSubmitted({ state: "error", video_id: ytId, message: error instanceof Error ? error.message : String(error) });
     }
@@ -156,7 +163,8 @@ export function CommandPalette({ open, onClose, navigate }) {
                 video_id {submitted.video_id} · {submitted.state === "submitting" ? "submitting…" : submitted.state === "error" ? submitted.message : "webhook will fire on done|failed"}
               </div>
             </div>
-            <button className="btn primary" onClick={() => { navigate("job", { id: 218 }); onClose(); }}>
+            <button className="btn primary" disabled={!submitted.id}
+                    onClick={() => { if (submitted.id) { navigate("job", { id: submitted.id }); onClose(); } }}>
               Watch pipeline <IconArrow size={12}/>
             </button>
           </div>
