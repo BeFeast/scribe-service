@@ -126,7 +126,7 @@ log "exported $exported transcripts"
 log "pruning entries older than $RETENTION_DAYS day(s)"
 find "$db_dir" -type f -name '*.sql.gz' -mtime "+$RETENTION_DAYS" -print -delete || log "warn: db prune had errors (continuing)"
 while IFS= read -r -d '' d; do
-  newest=$(find "$d" -type f -printf '%T@\n' 2>/dev/null | sort -nr | head -1)
+  newest=$(find "$d" -type f -printf '%T@\n' 2>/dev/null | sort -nr | head -1 || true)  # head closes the pipe early; tolerate SIGPIPE (141) under set -o pipefail
   if [[ -n "$newest" ]]; then
     age_days=$(awk -v n="$newest" 'BEGIN { print int((systime() - n) / 86400) }')
     if (( age_days > RETENTION_DAYS )); then
