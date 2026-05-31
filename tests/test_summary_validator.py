@@ -254,3 +254,25 @@ def test_chain_propagates_non_provider_error() -> None:
 
     with pytest.raises(RuntimeError, match="auth failure"):
         summarize_with_chain([_BoomProvider()], prompt="<ignored>")
+
+
+def test_strips_unclosed_leading_fence_before_frontmatter():
+    """Provider opens a ``` fence before the frontmatter but never closes
+    it on the final line. The leading fence must still be stripped so the
+    frontmatter is not doubled downstream (issue #304)."""
+    fence = "```"
+    md = (
+        f"{fence}\n"
+        "---\n"
+        "type: summary\n"
+        "tags: [alpha, beta]\n"
+        'short_description: "A concise summary."\n'
+        "---\n\n"
+        "## Section\n\nBody line one."
+    )
+    result = validate_and_canonicalize(md)
+    assert "```" not in result.summary_md
+    assert result.tags == ["alpha", "beta"]
+    # exactly one frontmatter block (one opening + one closing fence)
+    assert result.summary_md.count("---") == 2
+    assert result.summary_md.startswith("---\ntype: summary")
