@@ -214,6 +214,13 @@ export function JobDetail({ id, navigate, log = CURRENT_JOB_LOG, onRefresh, onCa
 
       <PipelineDiagram job={job}/>
 
+      {job.status === "failed" && job.error && (
+        <>
+          <div className="section-label"><span>Failure</span></div>
+          <pre className="job-error">{job.error}</pre>
+        </>
+      )}
+
       <div className="section-label">
         <span>Pipeline log</span>
         <span className="mono muted" style={{fontSize: 11}}>
