@@ -5,6 +5,47 @@ import datetime as dt
 
 from pydantic import AnyHttpUrl, AwareDatetime, BaseModel
 
+# Per-job YouTube cookies blob ceiling. A real Netscape cookies.txt for
+# youtube.com sits around 8–20 KB; 256 KB is a generous cap that still
+# blocks accidental log-file uploads. Kept here (not in settings) because
+# this is an API-contract constant, not an operator knob.
+YOUTUBE_COOKIES_MAX_BYTES = 256 * 1024
+
+
+class CookieValidationError(ValueError):
+    """Raised when youtube_cookies fails size/format checks. The message
+    NEVER contains any portion of the cookie value — callers surface the
+    message in 422 responses and log lines."""
+
+
+def validate_youtube_cookies(blob: str) -> None:
+    """Size-check + Netscape cookies.txt format check.
+
+    Format reference (Mozilla/curl): one cookie per line, tab-separated,
+    7 fields: domain, include_subdomains, path, secure, expiry, name, value.
+    Lines starting with `#` (including the `#HttpOnly_` prefix) and blank
+    lines are ignored. We require at least one well-formed data line so an
+    empty/comment-only blob is rejected as useless. Raises
+    CookieValidationError with a value-free message on any failure."""
+    if len(blob.encode("utf-8")) > YOUTUBE_COOKIES_MAX_BYTES:
+        raise CookieValidationError(
+            f"youtube_cookies exceeds {YOUTUBE_COOKIES_MAX_BYTES} byte limit"
+        )
+    data_lines = 0
+    for raw in blob.splitlines():
+        line = raw.rstrip("\r")
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        fields = line.split("\t")
+        if len(fields) != 7:
+            raise CookieValidationError(
+                "malformed Netscape cookies.txt: each data line must have "
+                "7 tab-separated fields"
+            )
+        data_lines += 1
+    if data_lines == 0:
+        raise CookieValidationError("cookies blob contains no cookie entries")
+
 
 class JobCreate(BaseModel):
     url: str
@@ -14,6 +55,12 @@ class JobCreate(BaseModel):
     # AnyHttpUrl rejects malformed values at the API boundary (422) so the
     # worker never has to deal with `http:/typo` or similar at delivery time.
     callback_url: AnyHttpUrl | None = None
+    # Optional Netscape cookies.txt blob, supplied per-job by an owner /
+    # extension-token caller (see #308 anti-bot layer B). Size + format are
+    # validated inside the route so the 422 response never echoes the value
+    # (pydantic's RequestValidationError includes the offending input).
+    # The value is never persisted to the DB and never logged.
+    youtube_cookies: str | None = None
 
 
 class CurrentUserView(BaseModel):
