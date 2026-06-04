@@ -50,7 +50,7 @@ export function MobileJobDetail({
 	log: _log,
 	onRefresh: _onRefresh,
 	onCancelJob,
-	onRetryJob: _onRetryJob,
+	onRetryJob,
 	onDeleteJob: _onDeleteJob,
 }) {
 	const job =
@@ -58,9 +58,9 @@ export function MobileJobDetail({
 			? CURRENT_JOB
 			: ACTIVE_JOBS.find((row) => row.id === id) || CURRENT_JOB;
 	const [toast, setToast] = React.useState(null);
-	const [pending, setPending] = React.useState(false);
-	const cancelAbortRef = React.useRef(null);
-	React.useEffect(() => () => cancelAbortRef.current?.abort(), []);
+	const [pending, setPending] = React.useState(null);
+	const actionAbortRef = React.useRef(null);
+	React.useEffect(() => () => actionAbortRef.current?.abort(), []);
 
 	const showToast = React.useCallback((kind, message) => {
 		setToast({ kind, message });
@@ -74,10 +74,10 @@ export function MobileJobDetail({
 
 	const cancel = React.useCallback(async () => {
 		if (!job || !onCancelJob || pending) return;
-		cancelAbortRef.current?.abort();
+		actionAbortRef.current?.abort();
 		const controller = new AbortController();
-		cancelAbortRef.current = controller;
-		setPending(true);
+		actionAbortRef.current = controller;
+		setPending("cancel");
 		try {
 			await onCancelJob(job.id, controller.signal);
 			if (!controller.signal.aborted) {
@@ -89,10 +89,32 @@ export function MobileJobDetail({
 				showToast("err", `Cancel failed · ${message}`);
 			}
 		} finally {
-			if (cancelAbortRef.current === controller) cancelAbortRef.current = null;
-			if (!controller.signal.aborted) setPending(false);
+			if (actionAbortRef.current === controller) actionAbortRef.current = null;
+			if (!controller.signal.aborted) setPending(null);
 		}
 	}, [job, onCancelJob, pending, showToast]);
+
+	const retry = React.useCallback(async () => {
+		if (!job || !onRetryJob || pending) return;
+		actionAbortRef.current?.abort();
+		const controller = new AbortController();
+		actionAbortRef.current = controller;
+		setPending("retry");
+		try {
+			await onRetryJob(job.id, controller.signal);
+			if (!controller.signal.aborted) {
+				showToast("ok", "Retry queued");
+			}
+		} catch (error) {
+			if (!controller.signal.aborted) {
+				const message = error instanceof Error ? error.message : String(error);
+				showToast("err", `Retry failed · ${message}`);
+			}
+		} finally {
+			if (actionAbortRef.current === controller) actionAbortRef.current = null;
+			if (!controller.signal.aborted) setPending(null);
+		}
+	}, [job, onRetryJob, pending, showToast]);
 
 	if (CURRENT_JOB_STATE.loading && !job) {
 		return (
@@ -112,6 +134,7 @@ export function MobileJobDetail({
 	}
 
 	const inFlight = job.status !== "done" && job.status !== "failed";
+	const isFailed = job.status === "failed";
 
 	return (
 		<>
@@ -178,15 +201,32 @@ export function MobileJobDetail({
 					);
 				})}
 			</div>
+			{isFailed && job.error ? (
+				<>
+					<div className="sec-label">Failure</div>
+					<pre className="m-job-error">{job.error}</pre>
+				</>
+			) : null}
 			<div className="m-cancel-wrap">
-				<button
-					type="button"
-					className="bigbtn sec"
-					onClick={cancel}
-					disabled={!inFlight || pending || !onCancelJob}
-				>
-					{pending ? "Cancelling…" : "Cancel job"}
-				</button>
+				{isFailed ? (
+					<button
+						type="button"
+						className="bigbtn"
+						onClick={retry}
+						disabled={pending !== null || !onRetryJob}
+					>
+						{pending === "retry" ? "Retrying…" : "Retry job"}
+					</button>
+				) : (
+					<button
+						type="button"
+						className="bigbtn sec"
+						onClick={cancel}
+						disabled={!inFlight || pending !== null || !onCancelJob}
+					>
+						{pending === "cancel" ? "Cancelling…" : "Cancel job"}
+					</button>
+				)}
 			</div>
 			{toast ? (
 				<output
