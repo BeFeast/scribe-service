@@ -44,6 +44,7 @@ from scribe.api.schemas import (
     BackupSnapshot,
     ConfigEntry,
     ConfigResponse,
+    CookieValidationError,
     CurrentUserView,
     ExtensionTokenCreate,
     ExtensionTokenView,
@@ -74,6 +75,7 @@ from scribe.api.schemas import (
     UserAdminRoleUpdate,
     UserAdminView,
     WorkerPoolSnapshot,
+    validate_youtube_cookies,
 )
 from scribe.config import (
     RUNTIME_CONFIG,
@@ -774,6 +776,25 @@ def create_job(
     failed). Partial-dedup links the existing transcript and enqueues a
     summary-only retry — the worker resume path reuses the existing whisper
     output, so no new Vast spend and no duplicate Transcript row."""
+    if body.youtube_cookies is not None:
+        # Per-job cookies are an owner-attached credential (#308 layer B);
+        # machine-bearer and trusted-LAN actors are not tied to a human owner,
+        # so they cannot supply cookies on someone else's behalf. We check
+        # auth before validating shape so an anonymous caller can't probe
+        # the format checker.
+        if actor.owner_id is None:
+            raise HTTPException(
+                status_code=403,
+                detail="youtube_cookies requires owner or extension-token authentication",
+            )
+        try:
+            validate_youtube_cookies(body.youtube_cookies)
+        except CookieValidationError as exc:
+            # detail is value-free by construction (see schemas.py).
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        # Hand-off: storage + downloader use are #308's next child. Here we
+        # validate + accept; the blob is dropped after this scope so it
+        # cannot leak via DB, logs, or response.
     video_id = initial_video_key(body.url)
 
     owner = current_owner(request)
