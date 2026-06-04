@@ -169,6 +169,29 @@ summary_provider_state = Gauge(
     labelnames=("provider",),
 )
 
+# yt-dlp download canary — nightly end-to-end download of a known-stable
+# public video. Gauge values: 1 = last attempt succeeded, 0 = last attempt
+# failed, -1 = no attempt yet this process. Paired with a "last success
+# timestamp" gauge so alert rules can fire on staleness as well as red.
+download_canary_status = Gauge(
+    "scribe_download_canary_status",
+    "Last yt-dlp download canary result (1=ok, 0=fail, -1=never run).",
+)
+download_canary_status.set(-1)
+
+download_canary_last_success_timestamp = Gauge(
+    "scribe_download_canary_last_success_timestamp_seconds",
+    "Unix epoch of the most recent successful yt-dlp download canary run.",
+)
+download_canary_last_success_timestamp.set(-1)
+
+download_canary_runs_total = Counter(
+    "scribe_download_canary_runs_total",
+    "yt-dlp download canary attempts, labelled by outcome (ok/fail).",
+    labelnames=("outcome",),
+)
+
+
 # Outcome of the overall fallback chain run.
 # outcome labels: success_first, success_after_fallback, all_failed.
 summary_chain_outcome_total = Counter(

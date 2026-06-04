@@ -243,6 +243,18 @@ class Settings(BaseSettings):
     admin_telegram_bot_token: str = ""
     admin_telegram_chat_id: str = ""
 
+    # Nightly yt-dlp download canary. Exercises the real download path against
+    # a known-stable public video (default: "Me at the zoo" — the first YouTube
+    # upload, kept online for historical reasons). A red canary means the pin
+    # or YouTube changed under us; see docs/runbooks/download-canary.md.
+    download_canary_enabled: bool = True
+    download_canary_url: str = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+    download_canary_interval_seconds: int = 86_400
+    download_canary_initial_delay_seconds: int = 600
+    download_canary_runbook_url: str = (
+        "https://github.com/BeFeast/scribe-service/blob/main/docs/runbooks/download-canary.md"
+    )
+
     # go.oklabs.uk shortener (Chhoto on Edgebox). api_url/api_key are env-driven
     # (never hardcode credentials); shortlink_base is the public resolver host.
     shortlink_base: str = "http://go.oklabs.uk"
