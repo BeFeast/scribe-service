@@ -69,9 +69,11 @@ UNAVAILABLE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Retry budget for the bot-wall path. Exponential 8s → 16s → 32s → 64s with
-# ±25% jitter, capped at MAX_TOTAL_BACKOFF_SECONDS of cumulative sleep so a
-# stuck flag-window doesn't pin a worker indefinitely.
+# Retry budget for the bot-wall path: MAX_TRIES attempts with sleeps *between*
+# them, so three backoff intervals fire — 8s → 16s → 32s (±25% jitter), each
+# clamped to MAX_BACKOFF_SECONDS. MAX_TOTAL_BACKOFF_SECONDS is a defensive
+# cumulative-sleep ceiling (not reached at the current MAX_TRIES) that keeps a
+# stuck flag-window from ever pinning a worker indefinitely.
 MAX_TRIES = 4
 BASE_BACKOFF_SECONDS = 8.0
 MAX_BACKOFF_SECONDS = 90.0
