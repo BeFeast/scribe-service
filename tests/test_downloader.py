@@ -123,6 +123,59 @@ def _fake_ytdlp_success(media_path):
     return run
 
 
+def test_download_audio_without_pot_base_url_omits_bgutil_extractor_arg(tmp_path, monkeypatch) -> None:
+    media = tmp_path / "audio.m4a"
+    media.write_text("audio", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    fake = _fake_ytdlp_success(media)
+
+    def capture(args):
+        seen.append(list(args))
+        return fake(args)
+
+    monkeypatch.setattr(downloader, "_run_ytdlp", capture)
+
+    downloader.download_audio("https://youtu.be/jNQXAC9IVRw", tmp_path)
+
+    assert len(seen) == 2
+    for args in seen:
+        # No bgutil extractor-args at all when pot_base_url is unset.
+        assert not any("youtubepot-bgutilhttp" in a for a in args)
+
+
+def test_download_audio_with_pot_base_url_passes_bgutil_extractor_arg(tmp_path, monkeypatch) -> None:
+    media = tmp_path / "audio.m4a"
+    media.write_text("audio", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    fake = _fake_ytdlp_success(media)
+
+    def capture(args):
+        seen.append(list(args))
+        return fake(args)
+
+    monkeypatch.setattr(downloader, "_run_ytdlp", capture)
+
+    downloader.download_audio(
+        "https://youtu.be/jNQXAC9IVRw",
+        tmp_path,
+        pot_base_url="http://scribe-pot:4416",
+    )
+
+    assert len(seen) == 2
+    expected = "youtubepot-bgutilhttp:base_url=http://scribe-pot:4416"
+    for args in seen:
+        # The bgutil extractor-arg appears alongside the youtube:player_client
+        # one; both share the --extractor-args flag but yt-dlp accepts
+        # repeating it for independent provider/extractor scopes.
+        idx_flags = [i for i, a in enumerate(args) if a == "--extractor-args"]
+        flag_values = [args[i + 1] for i in idx_flags]
+        assert expected in flag_values
+        # The pre-existing player_client arg is preserved.
+        assert any(v.startswith("youtube:player_client=") for v in flag_values)
+
+
 def test_download_audio_without_cookies_omits_cookies_flag(tmp_path, monkeypatch) -> None:
     media = tmp_path / "audio.m4a"
     media.write_text("audio", encoding="utf-8")

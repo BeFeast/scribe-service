@@ -31,6 +31,38 @@ def test_compose_persists_scribe_logs_in_journald() -> None:
     assert "logging:\n      driver: journald\n      options:\n        tag: scribe" in compose
 
 
+def test_compose_runs_bgutil_pot_provider_sidecar() -> None:
+    """#309: the stack compose stub documents the bgutil PO-token sidecar
+    and wires its URL into the scribe container. The deploy compose at
+    /opt/stacks/scribe/compose.yaml mirrors this contract for the
+    Dockhand-adopted lifecycle."""
+    compose = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
+
+    # Sidecar service block.
+    assert "scribe-pot:" in compose
+    assert "brainicism/bgutil-ytdlp-pot-provider" in compose
+    # In-network only — the provider is not published to the host.
+    assert "    ports:\n      - \"4416" not in compose
+
+    # scribe reaches it via container-DNS over the project network.
+    assert "SCRIBE_BGUTIL_POT_BASE_URL: http://scribe-pot:4416" in compose
+
+
+def test_pyproject_pins_bgutil_ytdlp_pot_provider_plugin() -> None:
+    """#309: yt-dlp auto-discovers any installed plugin; the bgutil plugin
+    must be in the scribe:local image so the sidecar is actually consulted."""
+    pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert "bgutil-ytdlp-pot-provider==" in pyproject
+
+
+def test_bgutil_pot_runbook_documents_lifecycle_and_verification() -> None:
+    runbook = (REPO_ROOT / "docs/runbooks/bgutil-pot-provider.md").read_text(encoding="utf-8")
+    # Dockhand lifecycle reminder + verification commands.
+    assert "Dockhand" in runbook
+    assert "scribe-pot" in runbook
+    assert "SCRIBE_BGUTIL_POT_BASE_URL" in runbook
+
+
 def test_entrypoint_sources_infisical_env_file_and_runs_guard() -> None:
     entrypoint = ENTRYPOINT.read_text(encoding="utf-8")
 
