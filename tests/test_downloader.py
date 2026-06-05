@@ -9,7 +9,15 @@ import subprocess
 import pytest
 
 from scribe.pipeline import downloader
-from scribe.pipeline.downloader import DownloadError, extract_video_id
+from scribe.pipeline.downloader import (
+    REASON_BOTWALL_TRANSIENT,
+    REASON_NEEDS_COOKIES,
+    REASON_OTHER,
+    REASON_UNAVAILABLE,
+    DownloadError,
+    classify_ytdlp_failure,
+    extract_video_id,
+)
 
 VALID_COOKIES = (
     "# Netscape HTTP Cookie File\n"
@@ -227,6 +235,155 @@ def test_download_audio_with_cookies_writes_0600_temp_and_passes_flag(tmp_path, 
     assert seen_paths[0] == seen_paths[1]
     # The temp is gone after download_audio returned.
     assert not os.path.exists(seen_paths[0])
+
+
+@pytest.mark.parametrize(
+    ("stderr", "expected"),
+    [
+        # Bot-wall — transient soft-ban that the backoff path is designed for.
+        (
+            "ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm you're not a bot. "
+            "Use --cookies-from-browser or --cookies for the authentication. "
+            "See https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp",
+            REASON_BOTWALL_TRANSIENT,
+        ),
+        (
+            "ERROR: [youtube] abcDEFghij1: LOGIN_REQUIRED: Sign in to confirm "
+            "you're not a bot.",
+            REASON_BOTWALL_TRANSIENT,
+        ),
+        # Age/sign-in/members gating — cookies would lift this.
+        (
+            "ERROR: [youtube] xxxxxxxxxxx: Sign in to confirm your age. "
+            "This video may be inappropriate for some users.",
+            REASON_NEEDS_COOKIES,
+        ),
+        (
+            "ERROR: [youtube] yyyyyyyyyyy: Join this channel to get access to "
+            "members-only content.",
+            REASON_NEEDS_COOKIES,
+        ),
+        # Permanently unavailable — not retryable, not unlockable with cookies.
+        (
+            "ERROR: [youtube] zzzzzzzzzzz: Private video. Sign in if you've "
+            "been granted access to this video",
+            REASON_UNAVAILABLE,
+        ),
+        (
+            "ERROR: [youtube] qqqqqqqqqqq: Video unavailable. This video has "
+            "been removed by the uploader",
+            REASON_UNAVAILABLE,
+        ),
+        (
+            "ERROR: [youtube] wwwwwwwwwww: The uploader has not made this "
+            "video available in your country",
+            REASON_UNAVAILABLE,
+        ),
+        # Everything else.
+        ("ERROR: unable to download webpage: HTTP Error 500", REASON_OTHER),
+        ("", REASON_OTHER),
+    ],
+)
+def test_classify_ytdlp_failure(stderr: str, expected: str) -> None:
+    assert classify_ytdlp_failure(stderr) == expected
+
+
+def test_run_ytdlp_retries_botwall_with_backoff(monkeypatch) -> None:
+    calls = {"n": 0}
+
+    def fake_run(args, capture_output, text):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            return subprocess.CompletedProcess(
+                args, 1, stdout="", stderr="Sign in to confirm you're not a bot"
+            )
+        return subprocess.CompletedProcess(args, 0, stdout="ok\n", stderr="")
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(downloader.subprocess, "run", fake_run)
+    monkeypatch.setattr(downloader.time, "sleep", lambda d: sleeps.append(d))
+    # Pin random so the test is deterministic.
+    monkeypatch.setattr(downloader.random, "uniform", lambda a, b: 0.0)
+
+    result = downloader._run_ytdlp(["yt-dlp", "x"])
+
+    assert result.returncode == 0
+    assert calls["n"] == 3
+    # 8s then 16s with zero jitter.
+    assert sleeps == [8.0, 16.0]
+
+
+def test_run_ytdlp_does_not_retry_needs_cookies(monkeypatch) -> None:
+    calls = {"n": 0}
+
+    def fake_run(args, capture_output, text):
+        calls["n"] += 1
+        return subprocess.CompletedProcess(
+            args, 1, stdout="", stderr="Sign in to confirm your age"
+        )
+
+    monkeypatch.setattr(downloader.subprocess, "run", fake_run)
+    monkeypatch.setattr(downloader.time, "sleep", lambda d: pytest.fail("must not sleep"))
+
+    with pytest.raises(DownloadError) as exc_info:
+        downloader._run_ytdlp(["yt-dlp", "x"])
+
+    assert exc_info.value.reason == REASON_NEEDS_COOKIES
+    assert calls["n"] == 1
+
+
+def test_run_ytdlp_does_not_retry_unavailable(monkeypatch) -> None:
+    calls = {"n": 0}
+
+    def fake_run(args, capture_output, text):
+        calls["n"] += 1
+        return subprocess.CompletedProcess(
+            args, 1, stdout="", stderr="Private video"
+        )
+
+    monkeypatch.setattr(downloader.subprocess, "run", fake_run)
+    monkeypatch.setattr(downloader.time, "sleep", lambda d: pytest.fail("must not sleep"))
+
+    with pytest.raises(DownloadError) as exc_info:
+        downloader._run_ytdlp(["yt-dlp", "x"])
+
+    assert exc_info.value.reason == REASON_UNAVAILABLE
+    assert calls["n"] == 1
+
+
+def test_run_ytdlp_botwall_exhausts_retries_and_raises_typed_reason(monkeypatch) -> None:
+    def fake_run(args, capture_output, text):
+        return subprocess.CompletedProcess(
+            args, 1, stdout="", stderr="Sign in to confirm you're not a bot"
+        )
+
+    monkeypatch.setattr(downloader.subprocess, "run", fake_run)
+    monkeypatch.setattr(downloader.time, "sleep", lambda d: None)
+    monkeypatch.setattr(downloader.random, "uniform", lambda a, b: 0.0)
+
+    with pytest.raises(DownloadError) as exc_info:
+        downloader._run_ytdlp(["yt-dlp", "x"])
+
+    assert exc_info.value.reason == REASON_BOTWALL_TRANSIENT
+
+
+def test_run_ytdlp_backoff_respects_total_cap(monkeypatch) -> None:
+    """Cumulative sleep must not exceed MAX_TOTAL_BACKOFF_SECONDS."""
+
+    def fake_run(args, capture_output, text):
+        return subprocess.CompletedProcess(
+            args, 1, stdout="", stderr="Sign in to confirm you're not a bot"
+        )
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(downloader.subprocess, "run", fake_run)
+    monkeypatch.setattr(downloader.time, "sleep", lambda d: sleeps.append(d))
+    monkeypatch.setattr(downloader.random, "uniform", lambda a, b: b)  # max jitter
+
+    with pytest.raises(DownloadError):
+        downloader._run_ytdlp(["yt-dlp", "x"])
+
+    assert sum(sleeps) <= downloader.MAX_TOTAL_BACKOFF_SECONDS
 
 
 def test_download_audio_with_cookies_cleans_up_on_failure(tmp_path, monkeypatch) -> None:
