@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Scribe">
+  <rect width="128" height="128" fill="#f5f6f9"/>
+  <g transform="translate(19.2 19.2) scale(0.7)">
+    <rect width="128" height="128" rx="24" fill="#f5f6f9"/>
+    <path d="M32 48v32M48 36v56M64 48v32M80 44h24M80 64h24M80 84h16" stroke="#657153" stroke-width="9.6" stroke-linecap="round" fill="none"/>
+  </g>
+</svg>

@@ -19,7 +19,7 @@ import re
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -35,14 +35,20 @@ _WEB_DIR = Path(__file__).parent
 _TEMPLATES = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
 _SPA_STATIC_DIR = _WEB_DIR / "static" / "spa"
 _SPA_MANIFEST_PATH = _SPA_STATIC_DIR / ".vite" / "manifest.json"
+_BRAND_DIR = _WEB_DIR / "static" / "brand"
 # Hard cap on the rows the home page renders. Keeps the page fast even after
 # years of accretion; older entries are still reachable by tag/search.
 _LIST_LIMIT = 200
 _FEED_LIMIT = 40
-_FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-<rect width="32" height="32" rx="6" fill="#f5f6f9"/>
-<path d="M8 12v8M12 9v14M16 12v8M20 11h6M20 16h6M20 21h4" stroke="#657153" stroke-width="2.4" stroke-linecap="round"/>
-</svg>"""
+_BRAND_CACHE = "public, max-age=86400"
+_BRAND_ASSETS: dict[str, tuple[str, str]] = {
+    "/favicon.ico": ("favicon.ico", "image/x-icon"),
+    "/favicon.svg": ("scribe.svg", "image/svg+xml"),
+    "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
+    "/icon-192.png": ("icon-192.png", "image/png"),
+    "/icon-512.png": ("icon-512.png", "image/png"),
+    "/icon-maskable-512.png": ("icon-maskable-512.png", "image/png"),
+}
 
 
 @functools.cache
@@ -105,12 +111,70 @@ def spa_shell(request: Request, spa_path: str = "") -> HTMLResponse:
     )
 
 
+def _brand_response(filename: str, media_type: str) -> Response:
+    return FileResponse(
+        _BRAND_DIR / filename,
+        media_type=media_type,
+        headers={"Cache-Control": _BRAND_CACHE},
+    )
+
+
 @router.get("/favicon.ico", include_in_schema=False)
-def favicon() -> Response:
+def favicon_ico() -> Response:
+    return _brand_response(*_BRAND_ASSETS["/favicon.ico"])
+
+
+@router.get("/favicon.svg", include_in_schema=False)
+def favicon_svg() -> Response:
+    return _brand_response(*_BRAND_ASSETS["/favicon.svg"])
+
+
+@router.get("/apple-touch-icon.png", include_in_schema=False)
+def apple_touch_icon() -> Response:
+    return _brand_response(*_BRAND_ASSETS["/apple-touch-icon.png"])
+
+
+@router.get("/icon-192.png", include_in_schema=False)
+def icon_192() -> Response:
+    return _brand_response(*_BRAND_ASSETS["/icon-192.png"])
+
+
+@router.get("/icon-512.png", include_in_schema=False)
+def icon_512() -> Response:
+    return _brand_response(*_BRAND_ASSETS["/icon-512.png"])
+
+
+@router.get("/icon-maskable-512.png", include_in_schema=False)
+def icon_maskable_512() -> Response:
+    return _brand_response(*_BRAND_ASSETS["/icon-maskable-512.png"])
+
+
+@router.get("/manifest.webmanifest", include_in_schema=False)
+def webmanifest() -> Response:
+    body = json.dumps(
+        {
+            "name": "Scribe",
+            "short_name": "Scribe",
+            "start_url": "/",
+            "display": "standalone",
+            "background_color": "#f5f6f9",
+            "theme_color": "#657153",
+            "icons": [
+                {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
+                {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"},
+                {
+                    "src": "/icon-maskable-512.png",
+                    "sizes": "512x512",
+                    "type": "image/png",
+                    "purpose": "maskable",
+                },
+            ],
+        }
+    )
     return Response(
-        _FAVICON_SVG,
-        media_type="image/svg+xml",
-        headers={"Cache-Control": "public, max-age=86400"},
+        body,
+        media_type="application/manifest+json",
+        headers={"Cache-Control": _BRAND_CACHE},
     )
 
 
