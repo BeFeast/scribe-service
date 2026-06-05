@@ -32,6 +32,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
+from scribe.api import cookie_jar
 from scribe.api.routes import render_job_view, transition_job_status
 from scribe.config import settings
 from scribe.db.models import Job, JobStatus, Transcript
@@ -368,8 +369,13 @@ def process_job(session, job: Job) -> None:
                 temp_root = Path(tempfile.gettempdir())
             tmpdir = Path(tempfile.mkdtemp(prefix="scribe-job-", dir=temp_root))
             try:
+                # Per-job YouTube cookies (#313): the API handler stashed
+                # the validated blob keyed by job_id; take it once and let
+                # the downloader manage the 0600 temp lifecycle. ``None``
+                # falls through to the public-only download path.
+                job_cookies = cookie_jar.take(job_id)
                 with _time_stage("download"):
-                    dl = downloader.download_audio(job.url, tmpdir)
+                    dl = downloader.download_audio(job.url, tmpdir, cookies=job_cookies)
                 was_pending_key = job.video_id.startswith("pending:")
                 job.title = dl.title
                 if job.video_id != dl.video_id:
@@ -488,6 +494,11 @@ def process_job(session, job: Job) -> None:
                 _deliver_webhook(session, failed)
             job_log.exception("job failed", extra={"stage": "failed", "error": f"{type(exc).__name__}: {exc}"})
     finally:
+        # Belt-and-braces: any return path above (resume short-circuit,
+        # exception before the download stage, etc.) must not leave a
+        # cookie blob in memory. The download path already pops it; this
+        # discard covers the rest.
+        cookie_jar.discard(job_id)
         metrics.workers_busy.dec()
 
 

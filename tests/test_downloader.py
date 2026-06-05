@@ -2,12 +2,19 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 import subprocess
 
 import pytest
 
 from scribe.pipeline import downloader
 from scribe.pipeline.downloader import DownloadError, extract_video_id
+
+VALID_COOKIES = (
+    "# Netscape HTTP Cookie File\n"
+    ".youtube.com\tTRUE\t/\tTRUE\t2147483647\tLOGIN_INFO\topaque-value\n"
+)
 
 
 @pytest.mark.parametrize(
@@ -93,3 +100,98 @@ def test_download_audio_uses_ytdlp_extractor_key_for_non_youtube(tmp_path, monke
     assert result.title == "tweet video"
     assert result.duration_seconds == 12
     assert result.audio_path == media
+
+
+def _fake_ytdlp_success(media_path):
+    def run(args):
+        if "--dump-single-json" in args:
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                stdout=json.dumps(
+                    {
+                        "extractor_key": "Youtube",
+                        "id": "jNQXAC9IVRw",
+                        "title": "ok",
+                        "duration": 10,
+                    }
+                ),
+                stderr="",
+            )
+        return subprocess.CompletedProcess(args, 0, stdout=f"{media_path}\n", stderr="")
+
+    return run
+
+
+def test_download_audio_without_cookies_omits_cookies_flag(tmp_path, monkeypatch) -> None:
+    media = tmp_path / "audio.m4a"
+    media.write_text("audio", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    fake = _fake_ytdlp_success(media)
+
+    def capture(args):
+        seen.append(list(args))
+        return fake(args)
+
+    monkeypatch.setattr(downloader, "_run_ytdlp", capture)
+
+    downloader.download_audio("https://youtu.be/jNQXAC9IVRw", tmp_path)
+
+    assert len(seen) == 2
+    for args in seen:
+        assert "--cookies" not in args
+
+
+def test_download_audio_with_cookies_writes_0600_temp_and_passes_flag(tmp_path, monkeypatch) -> None:
+    media = tmp_path / "audio.m4a"
+    media.write_text("audio", encoding="utf-8")
+    seen_paths: list[str] = []
+
+    fake = _fake_ytdlp_success(media)
+
+    def capture(args):
+        # Capture the cookies arg and snapshot its mode/contents *during*
+        # the download — both yt-dlp calls must see the same path.
+        idx = args.index("--cookies")
+        cookie_path = args[idx + 1]
+        seen_paths.append(cookie_path)
+        st = os.stat(cookie_path)
+        # 0600 — owner-only read/write, no group/other bits.
+        assert stat.S_IMODE(st.st_mode) == 0o600
+        with open(cookie_path, encoding="utf-8") as fh:
+            assert fh.read() == VALID_COOKIES
+        return fake(args)
+
+    monkeypatch.setattr(downloader, "_run_ytdlp", capture)
+
+    downloader.download_audio(
+        "https://youtu.be/jNQXAC9IVRw", tmp_path, cookies=VALID_COOKIES
+    )
+
+    assert len(seen_paths) == 2
+    # Both invocations saw the *same* temp file path.
+    assert seen_paths[0] == seen_paths[1]
+    # The temp is gone after download_audio returned.
+    assert not os.path.exists(seen_paths[0])
+
+
+def test_download_audio_with_cookies_cleans_up_on_failure(tmp_path, monkeypatch) -> None:
+    seen_path: dict[str, str] = {}
+
+    def failing(args):
+        idx = args.index("--cookies")
+        seen_path["p"] = args[idx + 1]
+        # Sanity: the temp exists during the call.
+        assert os.path.exists(seen_path["p"])
+        raise downloader.DownloadError("simulated yt-dlp failure")
+
+    monkeypatch.setattr(downloader, "_run_ytdlp", failing)
+
+    with pytest.raises(downloader.DownloadError):
+        downloader.download_audio(
+            "https://youtu.be/jNQXAC9IVRw", tmp_path, cookies=VALID_COOKIES
+        )
+
+    assert "p" in seen_path
+    assert not os.path.exists(seen_path["p"])
