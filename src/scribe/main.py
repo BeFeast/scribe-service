@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
 
+from scribe import __version__
 from scribe.api.routes import router as api_router
 from scribe.config import settings
 from scribe.obs.logging import configure as configure_logging
@@ -76,7 +77,7 @@ async def lifespan(app: FastAPI):
             thread.join(timeout=2.0)
 
 
-app = FastAPI(title="scribe", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="scribe", version=__version__, lifespan=lifespan)
 app.mount(
     "/static/spa",
     StaticFiles(
