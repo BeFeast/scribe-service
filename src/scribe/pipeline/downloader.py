@@ -167,7 +167,11 @@ def _cookies_tempfile(blob: str | None):
         return
     fd, path = tempfile.mkstemp(prefix="scribe-cookies-", suffix=".txt")
     try:
-        os.chmod(path, 0o600)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            os.close(fd)
+            raise
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(blob)
         yield path

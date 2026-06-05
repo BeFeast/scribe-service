@@ -101,22 +101,35 @@ VALID_COOKIES_BLOB = (
 )
 
 
-def test_post_jobs_with_cookies_stashes_blob_in_jar(client, db_session):
+def test_post_jobs_with_cookies_stashes_blob_in_jar(client, db_session, monkeypatch):
     """The validated cookie blob must land in the in-process cookie jar
     keyed by the new job_id and must NOT appear on the Job row or in the
     response body. The worker pops it on the download stage (#313)."""
     from scribe.api import cookie_jar
+    from scribe.db.models import Owner, User
 
-    token = _unsigned_jwt(
-        {"sub": "user_with_cookies", "email": "owner@example.test"}
+    monkeypatch.setattr(settings, "auth_test_mode", True)
+    owner = Owner(display_name="owner@example.test")
+    user = User(
+        owner=owner,
+        clerk_subject="user_with_cookies",
+        primary_email="owner@example.test",
+        display_name="owner@example.test",
+        role="user",
     )
+    db_session.add(user)
+    db_session.commit()
+
     resp = client.post(
         "/jobs",
         json={
             "url": "https://youtu.be/cookiejob42",
             "youtube_cookies": VALID_COOKIES_BLOB,
         },
-        headers={"Authorization": f"Bearer {token}"},
+        headers={
+            "X-Scribe-Test-Clerk-Sub": "user_with_cookies",
+            "X-Scribe-Test-Email": "owner@example.test",
+        },
     )
     assert resp.status_code == 201, resp.text
     job_id = resp.json()["job_id"]

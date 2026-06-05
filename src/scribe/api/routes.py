@@ -851,9 +851,14 @@ def create_job(
         session.add(retry)
         session.flush()
         record_job_stage_start(session, retry, JobStatus.queued)
-        session.commit()
         if body.youtube_cookies is not None:
             cookie_jar.stash(retry.id, body.youtube_cookies)
+        try:
+            session.commit()
+        except Exception:
+            if body.youtube_cookies is not None:
+                cookie_jar.discard(retry.id)
+            raise
         metrics.job_status_transitions.labels(status=JobStatus.queued.value).inc()
         return JobView(
             job_id=retry.id, url=body.url, video_id=video_id,
@@ -891,9 +896,14 @@ def create_job(
     session.add(job)
     session.flush()
     record_job_stage_start(session, job, JobStatus.queued)
-    session.commit()
     if body.youtube_cookies is not None:
         cookie_jar.stash(job.id, body.youtube_cookies)
+    try:
+        session.commit()
+    except Exception:
+        if body.youtube_cookies is not None:
+            cookie_jar.discard(job.id)
+        raise
     metrics.job_status_transitions.labels(status=JobStatus.queued.value).inc()
     return JobView(
         job_id=job.id, url=job.url, video_id=video_id, status=job.status.value,
