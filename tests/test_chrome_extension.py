@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 EXTENSION = ROOT / "extension" / "chrome"
@@ -18,11 +22,19 @@ def test_manifest_v3_extension_contract() -> None:
     assert manifest["background"]["service_worker"] == "service_worker.js"
     assert manifest["options_page"] == "options.html"
     assert manifest["action"]["default_title"] == "Submit video to Scribe"
-    assert {"activeTab", "alarms", "contextMenus", "notifications", "storage"} <= set(
-        manifest["permissions"],
-    )
+    assert {
+        "activeTab",
+        "alarms",
+        "contextMenus",
+        "cookies",
+        "notifications",
+        "storage",
+    } <= set(manifest["permissions"])
     assert "https://scribe.oklabs.uk/*" in manifest["host_permissions"]
+    # Default install must remain lean — youtube host permission is opt-in.
+    assert "https://*.youtube.com/*" not in manifest["host_permissions"]
     assert "https://www.youtube.com/*" not in manifest["host_permissions"]
+    assert "https://*.youtube.com/*" in manifest["optional_host_permissions"]
     assert "https://*/*" in manifest["optional_host_permissions"]
     assert manifest["icons"]["16"] == "icons/scribe-16.png"
     assert manifest["icons"]["48"] == "icons/scribe-48.png"
@@ -38,11 +50,11 @@ def test_service_worker_uses_existing_jobs_api_and_video_flows() -> None:
     assert 'const DEFAULT_BASE_URL = "https://scribe.oklabs.uk";' in source
     assert 'const SOURCE = "chrome-extension";' in source
     assert 'fetch(`${config.baseUrl}/jobs`' in source
-    assert "JSON.stringify({ url, source: SOURCE })" in source
+    assert "const payload = { url, source: SOURCE };" in source
+    assert "JSON.stringify(payload)" in source
     assert "chrome.action.onClicked.addListener" in source
     assert "isSubmittableUrl(tab.url || \"\")" in source
     assert "HTTP_URL.test" in source
-    assert "youtube.com" not in source
     assert "chrome.contextMenus.onClicked.addListener" in source
     assert 'id: "submit-page"' in source
     assert 'id: "submit-link"' in source
@@ -121,3 +133,195 @@ def test_extension_docs_include_install_and_manual_verification_checklist() -> N
     assert "unreachable host" in docs
     assert "{Scribe base URL}/#/jobs/{job_id}" in docs
     assert "POST /jobs" in docs
+
+
+def test_service_worker_collects_youtube_cookies_on_submit_without_caching() -> None:
+    source = read("service_worker.js")
+
+    assert 'importScripts("cookies.js")' in source
+    assert "function isYoutubeUrl" in source
+    assert "function collectYoutubeCookies" in source
+    # Cookies are refreshed on every submit — no caching key, no storage write.
+    assert "chrome.cookies.getAll" in source
+    assert 'domain: ".youtube.com"' in source
+    assert "isYoutubeUrl(url)" in source
+    assert "payload.youtube_cookies = cookies" in source
+    # Permission gate: the user must grant the optional host permission first.
+    assert "chrome.permissions.contains" in source
+    assert "https://*.youtube.com/*" in source
+    # No cookie storage: never write cookie payloads back to chrome.storage.
+    assert "chrome.storage.local.set({ cookies" not in source
+    assert "chrome.storage.sync.set({ cookies" not in source
+
+
+def test_service_worker_never_logs_cookie_values_or_names() -> None:
+    sw = read("service_worker.js")
+    cookies_js = read("cookies.js")
+
+    # No console.log anywhere — we never want cookie values reaching devtools.
+    for module_source in (sw, cookies_js):
+        assert "console.log" not in module_source
+        assert "console.debug" not in module_source
+        assert "console.info" not in module_source
+
+
+def test_cookies_module_serializer_contract() -> None:
+    source = read("cookies.js")
+
+    assert "function serializeCookiesToNetscape" in source
+    assert "# Netscape HTTP Cookie File" in source
+    assert "#HttpOnly_" in source
+    # The serializer must use TAB delimiters per the Netscape format spec.
+    assert "\\t" in source
+    # Tabs and newlines in cookie names/values would corrupt the file —
+    # the serializer must reject those lines.
+    assert "containsTabOrNewline" in source
+
+
+def test_options_page_exposes_youtube_cookie_grant_and_revoke() -> None:
+    html = read("options.html")
+    source = read("options.js")
+
+    assert 'id="grant-youtube"' in html
+    assert 'id="revoke-youtube"' in html
+    assert "YouTube cookies" in html
+    assert "https://*.youtube.com/*" in source
+    assert "chrome.permissions.request" in source
+    assert "chrome.permissions.remove" in source
+
+
+def test_extension_docs_describe_youtube_cookie_flow() -> None:
+    docs = read("README.md")
+
+    assert "YouTube cookies" in docs
+    assert "Enable YouTube cookies" in docs
+    assert "https://*.youtube.com/*" in docs
+    assert "youtube_cookies" in docs
+    assert "never stored" in docs.lower() or "nothing is cached" in docs
+
+
+# ---------------------------------------------------------------------------
+# Netscape serializer unit tests (run the JS under bun).
+# ---------------------------------------------------------------------------
+
+_BUN_BIN = shutil.which("bun")
+
+
+def _run_serializer(cookies: list) -> str:
+    """Execute serializeCookiesToNetscape via bun and return the result."""
+    if _BUN_BIN is None:
+        pytest.skip("bun is required to run the cookies.js serializer test")
+    script = (
+        f'const {{ serializeCookiesToNetscape }} = require("{EXTENSION / "cookies.js"}");\n'
+        f"const cookies = {json.dumps(cookies)};\n"
+        "process.stdout.write(serializeCookiesToNetscape(cookies));\n"
+    )
+    proc = subprocess.run(
+        [_BUN_BIN, "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout
+
+
+def test_serializer_empty_input_returns_empty_string() -> None:
+    assert _run_serializer([]) == ""
+
+
+def test_serializer_emits_netscape_header_and_tab_fields() -> None:
+    out = _run_serializer(
+        [
+            {
+                "name": "LOGIN_INFO",
+                "value": "opaque",
+                "domain": ".youtube.com",
+                "path": "/",
+                "secure": True,
+                "httpOnly": True,
+                "hostOnly": False,
+                "session": False,
+                "expirationDate": 2147483647.0,
+            },
+            {
+                "name": "VISITOR_INFO1_LIVE",
+                "value": "abc123",
+                "domain": ".youtube.com",
+                "path": "/",
+                "secure": True,
+                "httpOnly": False,
+                "hostOnly": False,
+                "session": True,
+            },
+        ],
+    )
+    assert out.startswith("# Netscape HTTP Cookie File")
+    lines = [ln for ln in out.splitlines() if ln and not ln.startswith("# ")]
+    assert lines == [
+        "#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t2147483647\tLOGIN_INFO\topaque",
+        ".youtube.com\tTRUE\t/\tTRUE\t0\tVISITOR_INFO1_LIVE\tabc123",
+    ]
+
+
+def test_serializer_handles_host_only_cookie_without_leading_dot() -> None:
+    out = _run_serializer(
+        [
+            {
+                "name": "PREF",
+                "value": "v",
+                "domain": "youtube.com",
+                "path": "/",
+                "secure": False,
+                "httpOnly": False,
+                "hostOnly": True,
+                "session": False,
+                "expirationDate": 1900000000.0,
+            },
+        ],
+    )
+    body = [ln for ln in out.splitlines() if ln and not ln.startswith("#")]
+    assert body == ["youtube.com\tFALSE\t/\tFALSE\t1900000000\tPREF\tv"]
+
+
+def test_serializer_skips_cookies_with_tabs_or_newlines() -> None:
+    out = _run_serializer(
+        [
+            {
+                "name": "OK",
+                "value": "good",
+                "domain": ".youtube.com",
+                "path": "/",
+                "secure": True,
+                "httpOnly": False,
+                "hostOnly": False,
+                "session": False,
+                "expirationDate": 2000000000,
+            },
+            {
+                "name": "BAD\tNAME",
+                "value": "anything",
+                "domain": ".youtube.com",
+                "path": "/",
+                "secure": True,
+                "httpOnly": False,
+                "hostOnly": False,
+                "session": False,
+                "expirationDate": 2000000000,
+            },
+            {
+                "name": "ALSO_BAD",
+                "value": "line\nbreak",
+                "domain": ".youtube.com",
+                "path": "/",
+                "secure": True,
+                "httpOnly": False,
+                "hostOnly": False,
+                "session": False,
+                "expirationDate": 2000000000,
+            },
+        ],
+    )
+    lines = [ln for ln in out.splitlines() if ln and not ln.startswith("#")]
+    assert lines == [".youtube.com\tTRUE\t/\tTRUE\t2000000000\tOK\tgood"]

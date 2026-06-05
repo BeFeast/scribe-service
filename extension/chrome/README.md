@@ -23,6 +23,25 @@ Open the extension options page and set:
 Saving the base URL asks Chrome for permission to reach that Scribe origin.
 The token is stored in Chrome sync storage and sent as `Authorization: Bearer ...` only when configured. No token is hardcoded in the extension.
 
+### YouTube cookies (optional)
+
+To submit gated YouTube videos (age-restricted, member-only, private) the
+extension can forward your `youtube.com` cookies with each submission. On the
+options page, click **Enable YouTube cookies** and approve Chrome's host
+permission prompt for `https://*.youtube.com/*`. The extension then:
+
+- Reads cookies fresh via `chrome.cookies.getAll({ domain: ".youtube.com" })`
+  on every submit; nothing is cached or written to extension storage.
+- Serializes them to a Netscape `cookies.txt` blob and attaches the result as
+  `youtube_cookies` on the `POST /jobs` body. Non-YouTube URLs never include
+  cookies.
+- Never logs cookie names or values; only counts/sizes are observable.
+
+When the host permission is not granted, or no cookies exist for `.youtube.com`,
+submissions still go through — Scribe just falls back to the public download
+path. Click **Disable** on the options page to revoke the permission at any
+time.
+
 ## Manual Verification
 
 1. Load the unpacked extension and keep the default Scribe base URL or set a local/runtime Scribe URL.
@@ -41,3 +60,6 @@ The extension posts to Scribe's existing `POST /jobs` API with:
 ```json
 {"url":"https://example.com/video-page","source":"chrome-extension"}
 ```
+
+For YouTube submissions with the cookie permission granted, the body also
+includes `"youtube_cookies": "<Netscape cookies.txt blob>"`.
