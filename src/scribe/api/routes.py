@@ -26,6 +26,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
+from scribe.api import cookie_jar
 from scribe.api.auth import (
     Actor,
     AuthState,
@@ -792,9 +793,9 @@ def create_job(
         except CookieValidationError as exc:
             # detail is value-free by construction (see schemas.py).
             raise HTTPException(status_code=422, detail=str(exc)) from None
-        # Hand-off: storage + downloader use are #308's next child. Here we
-        # validate + accept; the blob is dropped after this scope so it
-        # cannot leak via DB, logs, or response.
+        # Hand-off: the validated blob is stashed in the in-process
+        # cookie_jar after the Job row is committed (#313). It never
+        # touches the DB, the response, or the log buffer.
     video_id = initial_video_key(body.url)
 
     owner = current_owner(request)
@@ -851,6 +852,8 @@ def create_job(
         session.flush()
         record_job_stage_start(session, retry, JobStatus.queued)
         session.commit()
+        if body.youtube_cookies is not None:
+            cookie_jar.stash(retry.id, body.youtube_cookies)
         metrics.job_status_transitions.labels(status=JobStatus.queued.value).inc()
         return JobView(
             job_id=retry.id, url=body.url, video_id=video_id,
@@ -889,6 +892,8 @@ def create_job(
     session.flush()
     record_job_stage_start(session, job, JobStatus.queued)
     session.commit()
+    if body.youtube_cookies is not None:
+        cookie_jar.stash(job.id, body.youtube_cookies)
     metrics.job_status_transitions.labels(status=JobStatus.queued.value).inc()
     return JobView(
         job_id=job.id, url=job.url, video_id=video_id, status=job.status.value,

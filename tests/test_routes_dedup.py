@@ -95,6 +95,53 @@ def test_post_jobs_dedup_returns_done_transcript(client, db_session):
     assert body["transcript"]["id"] == transcript.id
 
 
+VALID_COOKIES_BLOB = (
+    "# Netscape HTTP Cookie File\n"
+    ".youtube.com\tTRUE\t/\tTRUE\t2147483647\tLOGIN_INFO\topaque-value\n"
+)
+
+
+def test_post_jobs_with_cookies_stashes_blob_in_jar(client, db_session):
+    """The validated cookie blob must land in the in-process cookie jar
+    keyed by the new job_id and must NOT appear on the Job row or in the
+    response body. The worker pops it on the download stage (#313)."""
+    from scribe.api import cookie_jar
+
+    token = _unsigned_jwt(
+        {"sub": "user_with_cookies", "email": "owner@example.test"}
+    )
+    resp = client.post(
+        "/jobs",
+        json={
+            "url": "https://youtu.be/cookiejob42",
+            "youtube_cookies": VALID_COOKIES_BLOB,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 201, resp.text
+    job_id = resp.json()["job_id"]
+    try:
+        assert "LOGIN_INFO" not in resp.text
+        assert "opaque-value" not in resp.text
+        # The blob was stashed for the worker (popped exactly once).
+        assert cookie_jar.take(job_id) == VALID_COOKIES_BLOB
+        # No DB column carries the blob — Job has no youtube_cookies attr.
+        job = db_session.get(Job, job_id)
+        assert job is not None
+        assert not hasattr(job, "youtube_cookies")
+    finally:
+        cookie_jar.discard(job_id)
+
+
+def test_post_jobs_without_cookies_leaves_jar_untouched(client, db_session):
+    from scribe.api import cookie_jar
+
+    resp = client.post("/jobs", json={"url": "https://youtu.be/nocookies1"})
+    assert resp.status_code == 201, resp.text
+    job_id = resp.json()["job_id"]
+    assert cookie_jar.take(job_id) is None
+
+
 def test_post_jobs_accepts_x_url_into_queue(client, db_session):
     resp = client.post("/jobs", json={"url": "https://x.com/i/status/2057105488165163198"})
     assert resp.status_code == 201, resp.text

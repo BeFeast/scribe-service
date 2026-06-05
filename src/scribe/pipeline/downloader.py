@@ -13,9 +13,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
+import tempfile
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -149,42 +152,83 @@ def _run_ytdlp(args: list[str]) -> subprocess.CompletedProcess:
     raise DownloadError(f"video extraction failed (yt-dlp rc={last.returncode}):\n{detail}")
 
 
-def download_audio(url: str, dest_dir: Path, *, deno_path: str = "deno") -> DownloadResult:
-    """Download the audio stream of `url` into `dest_dir`, return metadata + path."""
+@contextmanager
+def _cookies_tempfile(blob: str | None):
+    """Materialize the per-job cookie blob into a 0600 temp file for the
+    duration of the download stage, then delete it (success or failure).
+
+    Yields ``None`` when no blob is supplied so the caller can use the
+    same control flow for the public-only path. The temp path is never
+    logged and its contents are never read back by Python — the file
+    exists only so yt-dlp can read it via ``--cookies``.
+    """
+    if blob is None:
+        yield None
+        return
+    fd, path = tempfile.mkstemp(prefix="scribe-cookies-", suffix=".txt")
+    try:
+        os.chmod(path, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(blob)
+        yield path
+    finally:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+
+
+def download_audio(
+    url: str,
+    dest_dir: Path,
+    *,
+    deno_path: str = "deno",
+    cookies: str | None = None,
+) -> DownloadResult:
+    """Download the audio stream of `url` into `dest_dir`, return metadata + path.
+
+    When ``cookies`` is provided, the blob is written to a 0600 temp
+    file and passed to both yt-dlp invocations via ``--cookies``. The
+    temp is deleted on the way out of this function whether the
+    download succeeded or raised.
+    """
     dest_dir.mkdir(parents=True, exist_ok=True)
     base = _base_args(deno_path)
 
-    meta = _run_ytdlp([*base, "--skip-download", "--dump-single-json", url])
-    try:
-        info = json.loads(meta.stdout.strip().splitlines()[-1])
-    except (IndexError, json.JSONDecodeError) as exc:
-        raise DownloadError("video extraction failed: yt-dlp returned invalid metadata") from exc
-    video_id = normalized_video_key(info.get("extractor_key"), info.get("id")) or initial_video_key(url)
-    title = info.get("title") or url
-    duration = info.get("duration")
-    try:
-        duration_seconds: int | None = int(float(duration))
-    except (ValueError, TypeError):
-        duration_seconds = None
+    with _cookies_tempfile(cookies) as cookies_path:
+        cookie_args = ["--cookies", cookies_path] if cookies_path is not None else []
 
-    # Download the raw audio stream only (no -x / ffmpeg). ffmpeg.py resamples.
-    out_tmpl = str(dest_dir / "%(id)s.%(ext)s")
-    dl = _run_ytdlp([
-        *base, "-f", "ba/best[height<=360]/18",
-        "-o", out_tmpl, "--print", "after_move:filepath", url,
-    ])
-    audio_path = Path(dl.stdout.strip().splitlines()[-1])
-    if not audio_path.is_file():
-        raise DownloadError(f"yt-dlp reported {audio_path} but the file is missing")
+        meta = _run_ytdlp([*base, *cookie_args, "--skip-download", "--dump-single-json", url])
+        try:
+            info = json.loads(meta.stdout.strip().splitlines()[-1])
+        except (IndexError, json.JSONDecodeError) as exc:
+            raise DownloadError("video extraction failed: yt-dlp returned invalid metadata") from exc
+        video_id = normalized_video_key(info.get("extractor_key"), info.get("id")) or initial_video_key(url)
+        title = info.get("title") or url
+        duration = info.get("duration")
+        try:
+            duration_seconds: int | None = int(float(duration))
+        except (ValueError, TypeError):
+            duration_seconds = None
 
-    author_name, author_handle, author_url, source_platform = _author_from_info(info)
-    return DownloadResult(
-        audio_path=audio_path,
-        title=title,
-        video_id=video_id,
-        duration_seconds=duration_seconds,
-        author_name=author_name,
-        author_handle=author_handle,
-        author_url=author_url,
-        source_platform=source_platform,
-    )
+        # Download the raw audio stream only (no -x / ffmpeg). ffmpeg.py resamples.
+        out_tmpl = str(dest_dir / "%(id)s.%(ext)s")
+        dl = _run_ytdlp([
+            *base, *cookie_args, "-f", "ba/best[height<=360]/18",
+            "-o", out_tmpl, "--print", "after_move:filepath", url,
+        ])
+        audio_path = Path(dl.stdout.strip().splitlines()[-1])
+        if not audio_path.is_file():
+            raise DownloadError(f"yt-dlp reported {audio_path} but the file is missing")
+
+        author_name, author_handle, author_url, source_platform = _author_from_info(info)
+        return DownloadResult(
+            audio_path=audio_path,
+            title=title,
+            video_id=video_id,
+            duration_seconds=duration_seconds,
+            author_name=author_name,
+            author_handle=author_handle,
+            author_url=author_url,
+            source_platform=source_platform,
+        )
