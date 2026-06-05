@@ -186,6 +186,29 @@ token that has `write:packages`.
 Moved from `kossoy/scribe` (private, archived) to `BeFeast/scribe-service`
 (public) to attach the Greptile code-review engine.
 
+## Releases
+
+scribe-service uses [SemVer](https://semver.org/) (`MAJOR.MINOR.PATCH`) with a
+label-driven, per-merge release pipeline.
+
+- **Single source of truth:** the `version` field in `pyproject.toml`. Nothing
+  else carries the canonical version.
+- **Per-PR label:** every pull request carries exactly one `semver:*` label that
+  declares the bump it should produce when merged:
+
+  | Label | Bump | When |
+  |---|---|---|
+  | `semver:major` | `MAJOR` | Breaking API / behaviour change |
+  | `semver:minor` | `MINOR` | Backward-compatible feature |
+  | `semver:patch` | `PATCH` | Fix, docs, chore, refactor |
+
+- **Default is `patch`:** an unlabeled PR is treated as `semver:patch`.
+- **Cadence is per-merge, continuous:** every merge to `main` triggers a release.
+  The pipeline bumps the `pyproject.toml` version according to the merged PR's
+  label, creates a `vX.Y.Z` git tag, and publishes the corresponding release.
+  There is no separate manual release step or batched release train — one merge,
+  one version bump, one tag, one release.
+
 ## License
 
 Personal homelab service. No public license terms — vendor-or-fork at will.
