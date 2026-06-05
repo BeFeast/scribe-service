@@ -6,12 +6,46 @@ services:
     ports:
       - "13120:8000"   # TODO(task#12): confirm port
     env_file: .env
+    environment:
+      # bgutil PO-token provider sidecar (#309). Container-DNS over the
+      # implicit project network. Empty disables the integration.
+      SCRIBE_BGUTIL_POT_BASE_URL: http://scribe-pot:4416
     volumes:
       - ./data/codex-auth:/root/.codex          # codex auth JSON (transferred)
       - /mnt/nfs/scribe-tmp:/data/tmp           # TODO(task#12): NFS mount of TrueNAS
+    depends_on:
+      scribe-pot:
+        condition: service_started
     logging:
       driver: journald
       options:
         tag: scribe
     restart: unless-stopped
     # network: reach db-dev Postgres — TODO(task#12)
+
+  # bgutil PO-token provider (#309). HTTP server mode on port 4416 (the
+  # plugin's default). Stays on the implicit project network — scribe reaches
+  # it as `scribe-pot:4416`, the port is not published to the host. The
+  # image bundles its own Node/Deno runtime; no persistent state to mount.
+  # On the devbox stack at /opt/stacks/scribe this service is reconciled by
+  # the Dockhand-adopted lifecycle (no `docker compose up`); see
+  # docs/runbooks/bgutil-pot-provider.md.
+  scribe-pot:
+    container_name: scribe-pot
+    image: brainicism/bgutil-ytdlp-pot-provider:1.3.1
+    init: true
+    restart: unless-stopped
+    expose:
+      - "4416"
+    healthcheck:
+      # The provider exposes a JSON ping endpoint on its listen port.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4416/ping || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"

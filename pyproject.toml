@@ -19,6 +19,12 @@ dependencies = [
     # change here, paired with a green nightly canary (see
     # docs/runbooks/download-canary.md and worker/download_canary.py).
     "yt-dlp==2026.3.17",
+    # bgutil PO-token provider plugin (#309). yt-dlp auto-discovers any
+    # installed yt-dlp plugin package; pairing this with the bgutil HTTP
+    # provider sidecar (default `http://scribe-pot:4416`) lets yt-dlp
+    # request GVS PO tokens so the mweb/web client paths stop falling
+    # back to bot-walled fallbacks. Pinned for the same reason yt-dlp is.
+    "bgutil-ytdlp-pot-provider==1.3.1",
     "markdown>=3.10.2",
     "prometheus-client>=0.25.0",
     "pyjwt[crypto]>=2.10",

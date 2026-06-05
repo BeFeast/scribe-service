@@ -375,7 +375,12 @@ def process_job(session, job: Job) -> None:
                 # falls through to the public-only download path.
                 job_cookies = cookie_jar.take(job_id)
                 with _time_stage("download"):
-                    dl = downloader.download_audio(job.url, tmpdir, cookies=job_cookies)
+                    dl = downloader.download_audio(
+                        job.url,
+                        tmpdir,
+                        cookies=job_cookies,
+                        pot_base_url=settings.bgutil_pot_base_url or None,
+                    )
                 was_pending_key = job.video_id.startswith("pending:")
                 job.title = dl.title
                 if job.video_id != dl.video_id:

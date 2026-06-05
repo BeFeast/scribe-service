@@ -1,10 +1,13 @@
 """yt-dlp downloader — runs locally from a residential IP.
 
 Ported from run_vast_video_summary.py's remote_shell_script. The "Sign in to
-confirm you're not a bot" wall the Vast pipeline fought is an IP-reputation gate
-on datacenter IPs; from a residential IP it is structurally absent, so the
-bot-wall retry here is cheap insurance only. No bgutil PO token provider needed
-(android_vr in the chain is token-free).
+confirm you're not a bot" wall the Vast pipeline fought is an IP-reputation
+gate on datacenter IPs; from a residential IP it is structurally absent, so
+the bot-wall retry here is cheap insurance only. A bgutil PO-token provider
+(#309) is optional but lets yt-dlp keep mweb/web in the client chain —
+without a GVS PO token yt-dlp logs a warning and falls back to clients that
+are more likely to trip bot checks. The provider base URL is forwarded via
+``--extractor-args "youtubepot-bgutilhttp:base_url=…"`` when configured.
 
 This module only *downloads* the raw audio stream — no `-x`/ffmpeg postprocessing.
 Resampling to 16 kHz mono wav is a separate single ffmpeg pass (see ffmpeg.py).
@@ -124,8 +127,8 @@ def normalized_video_key(extractor: str | None, media_id: str | None) -> str | N
     return f"{provider}:{media_id}"
 
 
-def _base_args(deno_path: str) -> list[str]:
-    return [
+def _base_args(deno_path: str, pot_base_url: str | None = None) -> list[str]:
+    args = [
         "yt-dlp",
         "--no-playlist",
         "--remote-components", "ejs:github",
@@ -135,6 +138,14 @@ def _base_args(deno_path: str) -> list[str]:
         "--min-sleep-interval", "1",
         "--max-sleep-interval", "3",
     ]
+    if pot_base_url:
+        # The bgutil-ytdlp-pot-provider plugin (#309) reads its provider
+        # endpoint from this extractor arg; the plugin auto-loads from the
+        # site-packages install in pyproject.toml. Multiple --extractor-args
+        # are merged client-side by yt-dlp, so this is independent of the
+        # youtube:player_client setting above.
+        args += ["--extractor-args", f"youtubepot-bgutilhttp:base_url={pot_base_url}"]
+    return args
 
 
 def _run_ytdlp(args: list[str]) -> subprocess.CompletedProcess:
@@ -188,6 +199,7 @@ def download_audio(
     *,
     deno_path: str = "deno",
     cookies: str | None = None,
+    pot_base_url: str | None = None,
 ) -> DownloadResult:
     """Download the audio stream of `url` into `dest_dir`, return metadata + path.
 
@@ -195,9 +207,14 @@ def download_audio(
     file and passed to both yt-dlp invocations via ``--cookies``. The
     temp is deleted on the way out of this function whether the
     download succeeded or raised.
+
+    ``pot_base_url`` is forwarded to the bgutil-ytdlp-pot-provider plugin
+    (#309) as ``--extractor-args "youtubepot-bgutilhttp:base_url=…"``. When
+    empty/``None`` the integration is silently disabled and yt-dlp behaves
+    as it did before the plugin was installed.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
-    base = _base_args(deno_path)
+    base = _base_args(deno_path, pot_base_url=pot_base_url)
 
     with _cookies_tempfile(cookies) as cookies_path:
         cookie_args = ["--cookies", cookies_path] if cookies_path is not None else []

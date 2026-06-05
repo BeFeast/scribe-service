@@ -255,6 +255,15 @@ class Settings(BaseSettings):
         "https://github.com/BeFeast/scribe-service/blob/main/docs/runbooks/download-canary.md"
     )
 
+    # bgutil PO-token provider sidecar (#309). Empty disables the integration
+    # so yt-dlp falls back to its old token-free clients. The default points at
+    # the in-stack sidecar name (`scribe-pot`) on the scribe network; override
+    # via SCRIBE_BGUTIL_POT_BASE_URL if the sidecar runs elsewhere. The
+    # bgutil-ytdlp-pot-provider plugin (installed via pyproject) is auto-
+    # discovered by yt-dlp; downloader.py forwards this value as
+    # `--extractor-args "youtubepot-bgutilhttp:base_url=…"`.
+    bgutil_pot_base_url: str = "http://scribe-pot:4416"
+
     # go.oklabs.uk shortener (Chhoto on Edgebox). api_url/api_key are env-driven
     # (never hardcode credentials); shortlink_base is the public resolver host.
     shortlink_base: str = "http://go.oklabs.uk"

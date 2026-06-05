@@ -38,7 +38,11 @@ def run_download_canary(url: str | None = None) -> bool:
 
     with tempfile.TemporaryDirectory(prefix="scribe-canary-") as tmp:
         try:
-            result = download_audio(target, Path(tmp))
+            result = download_audio(
+                target,
+                Path(tmp),
+                pot_base_url=settings.bgutil_pot_base_url or None,
+            )
         except DownloadError as exc:
             _record_failure(target, str(exc))
             return False
