@@ -50,7 +50,7 @@ def test_compose_runs_bgutil_pot_provider_sidecar() -> None:
 
 def test_pyproject_pins_bgutil_ytdlp_pot_provider_plugin() -> None:
     """#309: yt-dlp auto-discovers any installed plugin; the bgutil plugin
-    must be in the scribe:local image so the sidecar is actually consulted."""
+    must be in the scribe image so the sidecar is actually consulted."""
     pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert "bgutil-ytdlp-pot-provider==" in pyproject
 

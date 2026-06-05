@@ -3,7 +3,7 @@
 Layer A of the download anti-bot strategy (#307, #309). The sidecar is the
 [`brainicism/bgutil-ytdlp-pot-provider`](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)
 HTTP server. The yt-dlp plugin `bgutil-ytdlp-pot-provider` is installed in the
-`scribe:local` image via `pyproject.toml`; yt-dlp auto-discovers it and asks
+scribe image via `pyproject.toml`; yt-dlp auto-discovers it and asks
 the sidecar for GVS PO tokens whenever a youtube extraction needs one.
 
 Without this, yt-dlp logs:

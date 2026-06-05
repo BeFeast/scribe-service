@@ -2,7 +2,11 @@
 services:
   scribe:
     build: .
-    image: scribe:local
+    # Release image managed by scripts/release-deploy.sh: the script builds
+    # scribe:X.Y.Z and retags it scribe:current, so `docker compose up -d`
+    # recreates against the just-deployed image. Local dev still rebuilds with
+    # `docker compose up -d --build`.
+    image: scribe:current
     ports:
       - "13120:8000"   # TODO(task#12): confirm port
     env_file: .env
