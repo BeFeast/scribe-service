@@ -1,12 +1,19 @@
 const DEFAULT_BASE_URL = "https://scribe.oklabs.uk";
+const YOUTUBE_COOKIE_ORIGIN = "https://*.youtube.com/*";
 
 const form = document.querySelector("#settings-form");
 const baseUrlInput = document.querySelector("#base-url");
 const bearerTokenInput = document.querySelector("#bearer-token");
 const status = document.querySelector("#status");
+const youtubeStatus = document.querySelector("#youtube-status");
+const grantYoutubeButton = document.querySelector("#grant-youtube");
+const revokeYoutubeButton = document.querySelector("#revoke-youtube");
 
 document.addEventListener("DOMContentLoaded", restoreOptions);
+document.addEventListener("DOMContentLoaded", refreshYoutubeStatus);
 form.addEventListener("submit", saveOptions);
+grantYoutubeButton?.addEventListener("click", grantYoutubeCookies);
+revokeYoutubeButton?.addEventListener("click", revokeYoutubeCookies);
 
 async function restoreOptions() {
   const stored = await chrome.storage.sync.get({
@@ -44,6 +51,36 @@ async function saveOptions(event) {
   });
   status.style.color = "#137333";
   status.textContent = "Saved.";
+}
+
+async function refreshYoutubeStatus() {
+  if (!youtubeStatus) {
+    return;
+  }
+  const granted = await chrome.permissions.contains({
+    origins: [YOUTUBE_COOKIE_ORIGIN],
+  });
+  youtubeStatus.style.color = granted ? "#137333" : "#5b6472";
+  youtubeStatus.textContent = granted
+    ? "Enabled. Cookies will be attached to YouTube submissions."
+    : "Disabled. YouTube submissions will be sent without cookies.";
+}
+
+async function grantYoutubeCookies() {
+  const granted = await chrome.permissions.request({
+    origins: [YOUTUBE_COOKIE_ORIGIN],
+  });
+  if (!granted) {
+    youtubeStatus.style.color = "#b3261e";
+    youtubeStatus.textContent = "Chrome did not grant access to youtube.com.";
+    return;
+  }
+  await refreshYoutubeStatus();
+}
+
+async function revokeYoutubeCookies() {
+  await chrome.permissions.remove({ origins: [YOUTUBE_COOKIE_ORIGIN] });
+  await refreshYoutubeStatus();
 }
 
 function normalizeBaseUrl(value) {

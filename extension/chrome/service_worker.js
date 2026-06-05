@@ -1,3 +1,9 @@
+try {
+  importScripts("cookies.js");
+} catch (_err) {
+  // Service worker cold-start in test contexts may not expose importScripts.
+}
+
 const DEFAULT_BASE_URL = "https://scribe.oklabs.uk";
 const SOURCE = "chrome-extension";
 const NOTIFICATION_LINKS_KEY = "notificationLinks";
@@ -5,6 +11,8 @@ const NOTIFICATION_ICON = "icons/scribe-128.png";
 const CLEAR_BADGE_ALARM = "clear-scribe-badge";
 
 const HTTP_URL = /^https?:\/\//i;
+const YOUTUBE_HOST = /(^|\.)youtube\.com$|^youtu\.be$/i;
+const YOUTUBE_COOKIE_ORIGIN = "https://*.youtube.com/*";
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
@@ -79,6 +87,41 @@ function isSubmittableUrl(url) {
   return HTTP_URL.test(String(url || ""));
 }
 
+function isYoutubeUrl(url) {
+  try {
+    const host = new URL(String(url || "")).hostname;
+    return YOUTUBE_HOST.test(host);
+  } catch (_err) {
+    return false;
+  }
+}
+
+async function collectYoutubeCookies() {
+  // Refresh on each submit — never cache. Returns "" if the user has not
+  // granted the optional youtube.com host permission, or no cookies exist.
+  try {
+    const granted = await chrome.permissions.contains({
+      origins: [YOUTUBE_COOKIE_ORIGIN],
+    });
+    if (!granted) {
+      return "";
+    }
+    if (!chrome.cookies || typeof chrome.cookies.getAll !== "function") {
+      return "";
+    }
+    const cookies = await chrome.cookies.getAll({ domain: ".youtube.com" });
+    const serializer = (typeof globalThis !== "undefined" ? globalThis : self)
+      .scribeCookies?.serializeCookiesToNetscape;
+    if (!serializer) {
+      return "";
+    }
+    return serializer(cookies) || "";
+  } catch (_err) {
+    // Never surface cookie values via error messages.
+    return "";
+  }
+}
+
 async function getConfig() {
   const stored = await chrome.storage.sync.get({
     baseUrl: DEFAULT_BASE_URL,
@@ -120,12 +163,20 @@ async function createJob(config, url) {
     headers.Authorization = `Bearer ${config.bearerToken}`;
   }
 
+  const payload = { url, source: SOURCE };
+  if (isYoutubeUrl(url)) {
+    const cookies = await collectYoutubeCookies();
+    if (cookies) {
+      payload.youtube_cookies = cookies;
+    }
+  }
+
   let response;
   try {
     response = await fetch(`${config.baseUrl}/jobs`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ url, source: SOURCE }),
+      body: JSON.stringify(payload),
     });
   } catch (error) {
     throw new Error(`Could not reach Scribe at ${config.baseUrl}: ${error.message}`);
