@@ -1,22 +1,34 @@
-"""yt-dlp downloader — runs locally from a residential IP.
+"""yt-dlp downloader — runs locally on the devbox.
 
 Ported from run_vast_video_summary.py's remote_shell_script. The "Sign in to
-confirm you're not a bot" wall the Vast pipeline fought is an IP-reputation
-gate on datacenter IPs; from a residential IP it is structurally absent, so
-the bot-wall retry here is cheap insurance only. A bgutil PO-token provider
-(#309) is optional but lets yt-dlp keep mweb/web in the client chain —
-without a GVS PO token yt-dlp logs a warning and falls back to clients that
-are more likely to trip bot checks. The provider base URL is forwarded via
-``--extractor-args "youtubepot-bgutilhttp:base_url=…"`` when configured.
+confirm you're not a bot" wall is an IP-reputation soft-ban. Datacenter IPs
+get hit hardest, but the devbox's residential IP is no longer immune — it
+gets transiently flagged in short windows and then recovers. We mitigate at
+three layers: (1) here, by classifying the failure and retrying bot-wall hits
+with jittered exponential backoff so we don't hammer inside the same flag
+window; (2) at the job level (#312), by accepting a per-job YouTube cookie
+blob that lifts age/sign-in/members gates; (3) via an optional bgutil
+PO-token provider (#309) — when configured, the provider base URL is
+forwarded as ``--extractor-args "youtubepot-bgutilhttp:base_url=…"`` so
+yt-dlp can keep mweb/web in the client chain (without a GVS PO token it logs
+a warning and falls back to clients more likely to trip bot checks). The
+token-free ``android_vr`` client remains the workhorse; web clients use EJS +
+deno for JS challenges.
 
-This module only *downloads* the raw audio stream — no `-x`/ffmpeg postprocessing.
-Resampling to 16 kHz mono wav is a separate single ffmpeg pass (see ffmpeg.py).
+Failures are surfaced via :class:`DownloadError` with a typed ``reason``
+field so callers (worker, mobile UI #306) can branch on retryable vs
+needs-cookies vs permanently-unavailable.
+
+This module only *downloads* the raw audio stream — no ``-x``/ffmpeg
+postprocessing. Resampling to 16 kHz mono wav is a separate single ffmpeg
+pass (see ffmpeg.py).
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import random
 import re
 import subprocess
 import tempfile
@@ -28,15 +40,86 @@ from pathlib import Path
 # yt-dlp tries these clients in order. android_vr is the token-free workhorse;
 # the web clients use EJS + deno for JS-challenge solving.
 PLAYER_CLIENTS = "mweb,web_safari,android_vr,web_embedded"
-BOTWALL_RE = re.compile(r"Sign in to confirm|LOGIN_REQUIRED|not a bot", re.IGNORECASE)
-MAX_TRIES = 3
-BACKOFF_SECONDS = 45
+# Bot-wall (transient IP-reputation soft-ban). Tight enough to not collide
+# with the age-gate "Sign in to confirm your age" string.
+BOTWALL_RE = re.compile(
+    r"not a bot|LOGIN_REQUIRED|sign in to confirm you(?:'|’)?re",
+    re.IGNORECASE,
+)
+# Cookie-gated states: explicit sign-in / age-gate / members-only signals.
+NEEDS_COOKIES_RE = re.compile(
+    r"age[- ]restricted"
+    r"|confirm your age"
+    r"|inappropriate for some users"
+    r"|members[- ]only"
+    r"|join this channel"
+    r"|sign in to view",
+    re.IGNORECASE,
+)
+# Terminal-unavailable states: not retryable, not unlockable with cookies.
+UNAVAILABLE_RE = re.compile(
+    r"private video"
+    r"|video unavailable"
+    r"|has been removed"
+    r"|removed by the uploader"
+    r"|account.*terminated"
+    r"|available in your country"
+    r"|geo[- ]restricted"
+    r"|copyright",
+    re.IGNORECASE,
+)
+
+# Retry budget for the bot-wall path: MAX_TRIES attempts with sleeps *between*
+# them, so three backoff intervals fire — 8s → 16s → 32s (±25% jitter), each
+# clamped to MAX_BACKOFF_SECONDS. MAX_TOTAL_BACKOFF_SECONDS is a defensive
+# cumulative-sleep ceiling (not reached at the current MAX_TRIES) that keeps a
+# stuck flag-window from ever pinning a worker indefinitely.
+MAX_TRIES = 4
+BASE_BACKOFF_SECONDS = 8.0
+MAX_BACKOFF_SECONDS = 90.0
+MAX_TOTAL_BACKOFF_SECONDS = 180.0
+BACKOFF_JITTER = 0.25
+
 _VIDEO_ID_RE = re.compile(r"(?:v=|youtu\.be/|/shorts/|/embed/)([0-9A-Za-z_-]{11})")
 _NON_KEY_CHARS_RE = re.compile(r"[^a-z0-9_.-]+")
 
 
+# Public reason taxonomy. Stable strings — the mobile UI (#306) branches on these.
+REASON_BOTWALL_TRANSIENT = "botwall_transient"
+REASON_NEEDS_COOKIES = "needs_cookies"
+REASON_UNAVAILABLE = "unavailable"
+REASON_OTHER = "other"
+
+
 class DownloadError(RuntimeError):
-    pass
+    """Raised when the download stage cannot produce audio.
+
+    ``reason`` is one of ``botwall_transient`` / ``needs_cookies`` /
+    ``unavailable`` / ``other`` and is the contract the mobile error
+    surface (#306) branches on.
+    """
+
+    def __init__(self, message: str, *, reason: str = REASON_OTHER) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+def classify_ytdlp_failure(stderr: str) -> str:
+    """Map yt-dlp stderr to a stable ``DownloadError.reason``.
+
+    Checked in priority order: ``unavailable`` first (terminal states that
+    must not be retried), then ``needs_cookies`` (gated content where a
+    cookie blob would lift the gate), then ``botwall_transient`` (the
+    soft-ban that backoff is designed for), else ``other``.
+    """
+    text = stderr or ""
+    if UNAVAILABLE_RE.search(text):
+        return REASON_UNAVAILABLE
+    if NEEDS_COOKIES_RE.search(text):
+        return REASON_NEEDS_COOKIES
+    if BOTWALL_RE.search(text):
+        return REASON_BOTWALL_TRANSIENT
+    return REASON_OTHER
 
 
 def _author_from_info(info: dict) -> tuple[str | None, str | None, str | None, str | None]:
@@ -148,19 +231,45 @@ def _base_args(deno_path: str, pot_base_url: str | None = None) -> list[str]:
     return args
 
 
+def _backoff_delay(attempt: int) -> float:
+    """Jittered exponential backoff for attempt N (1-indexed).
+
+    8s, 16s, 32s, ... clamped to MAX_BACKOFF_SECONDS, with ±BACKOFF_JITTER
+    multiplicative jitter so retries from concurrent workers desynchronise.
+    """
+    base = min(MAX_BACKOFF_SECONDS, BASE_BACKOFF_SECONDS * (2 ** (attempt - 1)))
+    jitter = 1.0 + random.uniform(-BACKOFF_JITTER, BACKOFF_JITTER)
+    return max(0.0, base * jitter)
+
+
 def _run_ytdlp(args: list[str]) -> subprocess.CompletedProcess:
-    """Run yt-dlp; retry on the YouTube bot-wall signature."""
+    """Run yt-dlp; retry on the YouTube bot-wall signature with jittered
+    exponential backoff, capped by ``MAX_TOTAL_BACKOFF_SECONDS`` of
+    cumulative sleep. Non-bot-wall failures bail immediately and surface
+    a typed ``DownloadError.reason``.
+    """
     last: subprocess.CompletedProcess | None = None
+    total_slept = 0.0
     for attempt in range(1, MAX_TRIES + 1):
         last = subprocess.run(args, capture_output=True, text=True)
         if last.returncode == 0:
             return last
-        if BOTWALL_RE.search(last.stderr or "") and attempt < MAX_TRIES:
-            time.sleep(BACKOFF_SECONDS)
-            continue
-        break
+        stderr = last.stderr or ""
+        reason = classify_ytdlp_failure(stderr)
+        if reason != REASON_BOTWALL_TRANSIENT or attempt >= MAX_TRIES:
+            break
+        delay = _backoff_delay(attempt)
+        if total_slept + delay > MAX_TOTAL_BACKOFF_SECONDS:
+            break
+        time.sleep(delay)
+        total_slept += delay
+    assert last is not None
     detail = (last.stderr or last.stdout or "")[-2000:]
-    raise DownloadError(f"video extraction failed (yt-dlp rc={last.returncode}):\n{detail}")
+    reason = classify_ytdlp_failure(last.stderr or "")
+    raise DownloadError(
+        f"video extraction failed (yt-dlp rc={last.returncode}, reason={reason}):\n{detail}",
+        reason=reason,
+    )
 
 
 @contextmanager

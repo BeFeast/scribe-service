@@ -44,7 +44,7 @@ def run_download_canary(url: str | None = None) -> bool:
                 pot_base_url=settings.bgutil_pot_base_url or None,
             )
         except DownloadError as exc:
-            _record_failure(target, str(exc))
+            _record_failure(target, f"[{exc.reason}] {exc}")
             return False
         except Exception as exc:  # defensive — unexpected subprocess/IO failures
             _record_failure(target, f"unexpected error: {exc}")
