@@ -1,8 +1,10 @@
 # scribe — deploy on DevBox /opt/stacks/scribe/. TODO(task#12): finalize.
 services:
   scribe:
-    build: .
-    image: scribe:local
+    # Deploy pulls a pre-built tag; the explicit `docker build` happens in
+    # release-deploy.sh, not on `compose up`. `scribe:current` is re-pointed
+    # to the chosen release image — see docs/runbooks/release-rollback.md.
+    image: scribe:current
     ports:
       - "13120:8000"   # TODO(task#12): confirm port
     env_file: .env
