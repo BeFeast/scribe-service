@@ -186,6 +186,19 @@ token that has `write:packages`.
 Moved from `kossoy/scribe` (private, archived) to `BeFeast/scribe-service`
 (public) to attach the Greptile code-review engine.
 
+## Releases
+
+Every release gets a dated `vX.Y.Z` section in [`CHANGELOG.md`](CHANGELOG.md),
+listing the merged pull-request titles in the tag range. Cut one with:
+
+```bash
+uv run python scripts/generate_changelog.py vX.Y.Z --bump patch
+```
+
+This prepends the new section (newest first) from `git log <previous-tag>..HEAD`
+and is idempotent — re-running for an already-recorded version is a no-op. Pass
+`--from <tag>`, `--date YYYY-MM-DD`, or `--dry-run` to override the defaults.
+
 ## License
 
 Personal homelab service. No public license terms — vendor-or-fork at will.
