@@ -7,16 +7,16 @@ echo '=== Project Test Suite ==='
 python -m pytest
 
 echo '=== Requirement Verification ==='
-echo 'Requirement 1: Resolve the app version dynamically from installed package metadata (e.g. `impor...'
-echo 'WARN: Run tests in .codex-work/pr19/test_migrations.py'
-
-echo 'Requirement 2: `/healthz` `.version` returns that value.'
-python -m pytest
-
-echo 'Requirement 3: Bumping `pyproject.toml` version (and rebuilding) changes `/healthz .version` wi...'
+echo 'Requirement 1: Document the release scheme in `AGENTS.md` (and/or `CONTRIBUTING`/README): the `...'
 echo 'WARN: Run tests in tests/test_source_links.py'
 
-echo 'Requirement 4: A unit test asserts `/healthz .version == importlib.metadata.version("scribe")`.'
-echo 'WARN: Run tests in .codex-work/pr19/test_migrations.py'
+echo 'Requirement 2: State that merge to `main` triggers, continuously and per-merge, a version bump ...'
+python -m pytest
+
+echo 'Requirement 3: A documented section explains the `semver:*` label taxonomy, the default-`patch`...'
+python -m pytest
+
+echo 'Requirement 4: The three `semver:*` labels exist in the repo (already created).'
+python -m pytest
 
 echo 'All verifications passed.'

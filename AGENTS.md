@@ -17,3 +17,10 @@
 ## Runtime Tools
 - Use bun for Node/frontend commands: bun install, bun run, bunx.
 - Use uv for Python commands: uv sync, uv run, uvx.
+
+## Release Policy
+- Versioning follows SemVer (MAJOR.MINOR.PATCH). The `version` field in `pyproject.toml` is the single source of truth.
+- Every PR carries exactly one `semver:*` label declaring the bump on merge: `semver:major` (breaking change), `semver:minor` (backward-compatible feature), `semver:patch` (fix/docs/chore).
+- Default is `semver:patch`: an unlabeled PR is treated as a patch bump.
+- Cadence is per-merge and continuous: each merge to `main` triggers a version bump in `pyproject.toml`, a `vX.Y.Z` git tag, and a release. No manual or batched release step.
+- See README "Releases" for the full label taxonomy table.
