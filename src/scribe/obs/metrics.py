@@ -50,6 +50,13 @@ vast_orphans_destroyed_total = Counter(
     "Stale scribe-labelled Vast.ai instances the orphan reaper attempted to destroy.",
 )
 
+# Jobs requeued after a transient transport/capacity failure instead of going
+# straight to a manual-retry-only `failed` row.
+job_transient_retries_total = Counter(
+    "scribe_job_transient_retries_total",
+    "Jobs requeued after a transient transport/capacity failure (vs terminal failed).",
+)
+
 # Rolling 24h Vast spend (USD) — same window the daily-spend cap uses.
 # Sampled from the DB on each /metrics scrape so alert rules can compare
 # directly against SCRIBE_DAILY_SPEND_CAP_USD.

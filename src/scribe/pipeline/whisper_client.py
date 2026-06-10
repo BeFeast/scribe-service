@@ -317,14 +317,63 @@ def _ssh_endpoints(instance: dict) -> list[tuple[str, int, str]]:
     return unique
 
 
-def _scp_to(host: str, port: int, key_path: Path, src: Path, target: str) -> None:
-    _run(["scp", "-q", "-i", str(key_path), "-o", "StrictHostKeyChecking=accept-new",
-          "-P", str(port), str(src), f"root@{host}:{target}"], timeout=600)
+# Transient SSH/scp transport failures on Vast's flaky proxy / cheap hosts.
+# A single TCP drop ("closed by remote host", "lost connection") must NOT kill
+# the job -- these markers (or an scp/ssh timeout) trigger a bounded retry.
+_TRANSIENT_TRANSPORT_MARKERS = (
+    "closed by remote host", "lost connection", "connection closed",
+    "connection reset", "connection timed out", "connection refused",
+    "broken pipe", "kex_exchange_identification", "operation timed out",
+    "timed out",
+)
 
 
-def _scp_from(host: str, port: int, key_path: Path, src: str, target: Path) -> None:
-    _run(["scp", "-q", "-i", str(key_path), "-o", "StrictHostKeyChecking=accept-new",
-          "-P", str(port), f"root@{host}:{src}", str(target)], timeout=120)
+def _is_transient_transport(proc: subprocess.CompletedProcess) -> bool:
+    if proc.returncode == 0:
+        return False
+    if proc.returncode == 124:  # _run's timeout sentinel
+        return True
+    stderr = (proc.stderr or "").lower()
+    return any(marker in stderr for marker in _TRANSIENT_TRANSPORT_MARKERS)
+
+
+def _run_transfer(cmd: list[str], *, timeout: int, attempts: int, label: str) -> subprocess.CompletedProcess:
+    """Run an scp/ssh transfer with bounded retry on transient transport errors,
+    then raise the same WhisperError _run would have raised on final failure."""
+    attempts = max(1, attempts)
+    last: subprocess.CompletedProcess | None = None
+    for attempt in range(1, attempts + 1):
+        proc = _run(cmd, check=False, timeout=timeout)
+        if proc.returncode == 0:
+            return proc
+        last = proc
+        if attempt < attempts and _is_transient_transport(proc):
+            backoff = 2.0 * attempt
+            print(
+                f"Warning: transient transport failure on {label} "
+                f"(attempt {attempt}/{attempts}, rc={proc.returncode}); retrying in {backoff:.0f}s",
+                file=sys.stderr,
+            )
+            time.sleep(backoff)
+            continue
+        break
+    assert last is not None
+    raise WhisperError(
+        f"command failed ({last.returncode}) after {attempts} attempt(s): {' '.join(cmd)}\n"
+        f"stdout:\n{last.stdout}\nstderr:\n{last.stderr}"
+    )
+
+
+def _scp_to(host: str, port: int, key_path: Path, src: Path, target: str, *, attempts: int = 3) -> None:
+    _run_transfer(["scp", "-q", "-i", str(key_path), "-o", "StrictHostKeyChecking=accept-new",
+                   "-P", str(port), str(src), f"root@{host}:{target}"],
+                  timeout=600, attempts=attempts, label=f"scp->{host}:{target}")
+
+
+def _scp_from(host: str, port: int, key_path: Path, src: str, target: Path, *, attempts: int = 3) -> None:
+    _run_transfer(["scp", "-q", "-i", str(key_path), "-o", "StrictHostKeyChecking=accept-new",
+                   "-P", str(port), f"root@{host}:{src}", str(target)],
+                  timeout=120, attempts=attempts, label=f"scp<-{host}:{src}")
 
 
 # --- budget + waits -----------------------------------------------------
@@ -447,6 +496,7 @@ def _transcribe_impl(
     max_job_cost = float(settings.vast_max_job_cost)
     ready_timeout = int(settings.vast_instance_ready_timeout)
     offer_attempts = max(1, int(settings.vast_offer_attempts))
+    transfer_attempts = int(settings.vast_transfer_retry_attempts)
     key_path, public_key = _ensure_local_ssh_key()
     _ensure_vast_ssh_key(api_key, public_key)
     offers = _select_offers(
@@ -547,9 +597,10 @@ def _transcribe_impl(
             local_json = tmpdir / "result.json"
             local_md = tmpdir / "transcript.md"
 
-            _run([*_ssh_base(host, port, key_path), "mkdir -p /root/work /root/out"], timeout=45)
-            _scp_to(host, port, key_path, remote_script, "/root/remote_transcribe.py")
-            _scp_to(host, port, key_path, wav, "/root/work/input-16k.wav")
+            _run_transfer([*_ssh_base(host, port, key_path), "mkdir -p /root/work /root/out"],
+                          timeout=45, attempts=transfer_attempts, label="ssh mkdir")
+            _scp_to(host, port, key_path, remote_script, "/root/remote_transcribe.py", attempts=transfer_attempts)
+            _scp_to(host, port, key_path, wav, "/root/work/input-16k.wav", attempts=transfer_attempts)
 
             context.raise_if_cancelled()
             cmd = (
@@ -567,8 +618,8 @@ def _transcribe_impl(
             remote_timeout = max(120, int(deadline - time.monotonic()))
             _run([*_ssh_base(host, port, key_path), cmd], timeout=remote_timeout)
             context.raise_if_cancelled()
-            _scp_from(host, port, key_path, "/root/out/result.json", local_json)
-            _scp_from(host, port, key_path, "/root/out/transcript.md", local_md)
+            _scp_from(host, port, key_path, "/root/out/result.json", local_json, attempts=transfer_attempts)
+            _scp_from(host, port, key_path, "/root/out/transcript.md", local_md, attempts=transfer_attempts)
 
             result = json.loads(local_json.read_text(encoding="utf-8"))
             elapsed = time.monotonic() - started

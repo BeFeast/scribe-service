@@ -273,3 +273,69 @@ def test_transcribe_impl_invokes_monthly_cap_check_before_provisioning(monkeypat
 
     assert select_calls == []
     assert create_calls == []
+
+
+# --- transport retry (transient scp/ssh drop) -------------------------------
+import subprocess as _subprocess  # noqa: E402
+
+
+def _cp(returncode, stderr=""):
+    return _subprocess.CompletedProcess(["scp"], returncode, "", stderr)
+
+
+def test_is_transient_transport_classification():
+    assert whisper_client._is_transient_transport(_cp(124)) is True
+    assert whisper_client._is_transient_transport(_cp(255, "Connection closed by remote host")) is True
+    assert whisper_client._is_transient_transport(_cp(1, "lost connection")) is True
+    assert whisper_client._is_transient_transport(_cp(0)) is False
+    assert whisper_client._is_transient_transport(_cp(1, "scp: /x: No such file or directory")) is False
+
+
+def test_scp_from_retries_transient_then_succeeds(monkeypatch, tmp_path):
+    calls = []
+    seq = [_cp(1, "lost connection"), _cp(0)]
+
+    def fake_run(cmd, *, check=False, timeout=None):
+        calls.append(cmd)
+        return seq[len(calls) - 1]
+
+    monkeypatch.setattr(whisper_client, "_run", fake_run)
+    monkeypatch.setattr(whisper_client.time, "sleep", lambda *_a, **_k: None)
+    key = tmp_path / "id"
+    key.write_text("k", encoding="utf-8")
+    whisper_client._scp_from("h", 22, key, "/root/out/result.json", tmp_path / "out.json", attempts=3)
+    assert len(calls) == 2  # failed once (transient), retried, succeeded
+
+
+def test_scp_to_raises_after_exhausting_attempts(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(cmd, *, check=False, timeout=None):
+        calls.append(cmd)
+        return _cp(255, "Connection closed by remote host")
+
+    monkeypatch.setattr(whisper_client, "_run", fake_run)
+    monkeypatch.setattr(whisper_client.time, "sleep", lambda *_a, **_k: None)
+    key = tmp_path / "id"
+    key.write_text("k", encoding="utf-8")
+    src = tmp_path / "src"
+    src.write_text("data", encoding="utf-8")
+    with pytest.raises(whisper_client.WhisperError, match="after 3 attempt"):
+        whisper_client._scp_to("h", 22, key, src, "/root/work/x", attempts=3)
+    assert len(calls) == 3  # exhausted all attempts
+
+
+def test_scp_non_transient_fails_immediately_without_retry(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(cmd, *, check=False, timeout=None):
+        calls.append(cmd)
+        return _cp(1, "scp: /root/out/result.json: No such file or directory")
+
+    monkeypatch.setattr(whisper_client, "_run", fake_run)
+    monkeypatch.setattr(whisper_client.time, "sleep", lambda *_a, **_k: None)
+    key = tmp_path / "id"
+    key.write_text("k", encoding="utf-8")
+    with pytest.raises(whisper_client.WhisperError):
+        whisper_client._scp_from("h", 22, key, "/root/out/result.json", tmp_path / "out.json", attempts=3)
+    assert len(calls) == 1  # non-transient: no retry

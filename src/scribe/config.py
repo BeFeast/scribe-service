@@ -181,6 +181,8 @@ class Settings(BaseSettings):
     # ride out the offer→ask race (HTTP 400 no_such_ask) and ready-timeout
     # churn without instantly failing the job.
     vast_offer_attempts: int = 12
+    vast_transfer_retry_attempts: int = 3
+    job_max_transient_retries: int = 2
     # Rolling 30-day hard ceiling on Vast spend (USD). 0 disables. When the
     # cap is reached, the worker refuses to provision new instances and
     # raises WhisperError instead of submitting a new ask.

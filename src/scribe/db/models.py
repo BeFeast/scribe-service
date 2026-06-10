@@ -130,6 +130,7 @@ class Job(Base):
     source: Mapped[str | None] = mapped_column(Text, nullable=True)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0", default=0)
     vast_instance_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     destroy_failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Optional webhook target — scribe POSTs the final JobView JSON to

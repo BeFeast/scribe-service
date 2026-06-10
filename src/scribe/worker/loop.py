@@ -338,6 +338,28 @@ def _summarize_and_finalize(session, job: Job, transcript: Transcript, title: st
     _deliver_webhook(session, job)
 
 
+# Job-level auto-retry: a transient transport/capacity failure should requeue
+# the job (bounded) instead of dumping a manual-retry-only `failed` row.
+_RETRYABLE_JOB_MARKERS = (
+    "closed by remote host", "lost connection", "connection closed",
+    "connection reset", "connection timed out", "connection refused",
+    "broken pipe", "kex_exchange_identification",
+    "no vast instance became ready", "no vast offer matched",
+)
+
+
+def _is_retryable_job_error(exc: BaseException) -> bool:
+    # Wall-clock/budget/cap guards are intentionally terminal -- requeueing them
+    # just re-burns money on the same too-slow/too-expensive shape.
+    from scribe.pipeline.whisper_client import TranscribeTimeoutError
+    if isinstance(exc, TranscribeTimeoutError):
+        return False
+    msg = str(exc).lower()
+    if "budget guard" in msg or "monthly cap" in msg:
+        return False
+    return any(m in msg for m in _RETRYABLE_JOB_MARKERS)
+
+
 def process_job(session, job: Job) -> None:
     """Run the full pipeline for a claimed job (already status=downloading)."""
     job_id = job.id
@@ -494,10 +516,22 @@ def process_job(session, job: Job) -> None:
             session.rollback()
             failed = session.get(Job, job_id)
             if failed is not None:
-                failed.error = f"{type(exc).__name__}: {exc}"
-                _set_job_status(session, failed, JobStatus.failed)
-                _deliver_webhook(session, failed)
-            job_log.exception("job failed", extra={"stage": "failed", "error": f"{type(exc).__name__}: {exc}"})
+                err = f"{type(exc).__name__}: {exc}"
+                if _is_retryable_job_error(exc) and (failed.attempts or 0) < settings.job_max_transient_retries:
+                    failed.attempts = (failed.attempts or 0) + 1
+                    failed.error = err
+                    _set_job_status(session, failed, JobStatus.queued)
+                    session.commit()
+                    metrics.job_transient_retries_total.inc()
+                    job_log.warning(
+                        "transient job failure; requeued",
+                        extra={"stage": "retry", "attempt": failed.attempts, "error": err},
+                    )
+                else:
+                    failed.error = err
+                    _set_job_status(session, failed, JobStatus.failed)
+                    _deliver_webhook(session, failed)
+                    job_log.exception("job failed", extra={"stage": "failed", "error": err})
     finally:
         # Belt-and-braces: any return path above (resume short-circuit,
         # exception before the download stage, etc.) must not leave a
