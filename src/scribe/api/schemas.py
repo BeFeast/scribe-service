@@ -63,6 +63,22 @@ class JobCreate(BaseModel):
     youtube_cookies: str | None = None
 
 
+class PreflightResponse(BaseModel):
+    """Offline yt-dlp URL-support verdict (#339).
+
+    ``single_media`` is the only auto-submit signal: it is true only when a
+    dedicated extractor matches AND its ``_RETURN_TYPE`` is ``"video"``.
+    Containers (playlist/feed/channel/search) report ``supported=True`` with
+    ``single_media=False`` and must be confirmed by the user, never
+    auto-submitted. See :func:`scribe.api.preflight.match_url`."""
+
+    supported: bool
+    extractor: str | None
+    return_type: str | None
+    single_media: bool
+    generic_only: bool
+
+
 class CurrentUserView(BaseModel):
     authenticated: bool
     kind: str
