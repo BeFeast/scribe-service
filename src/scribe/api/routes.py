@@ -38,6 +38,7 @@ from scribe.api.auth import (
     require_operator_auth,
     token_hash,
 )
+from scribe.api.preflight import match_url
 from scribe.api.schemas import (
     ActiveJobsResponse,
     ActiveJobView,
@@ -58,6 +59,7 @@ from scribe.api.schemas import (
     LibraryResponse,
     LibraryRow,
     OpsSnapshot,
+    PreflightResponse,
     PromptActiveWrite,
     PromptDryRunCreate,
     PromptDryRunView,
@@ -763,6 +765,29 @@ def enable_user(
     session.commit()
     session.refresh(user)
     return _user_view(user)
+
+
+@router.get("/preflight", response_model=PreflightResponse, tags=["meta"])
+def preflight(
+    url: str = Query("", description="URL to classify"),
+    _actor: Actor = Depends(require_actor),
+) -> PreflightResponse:
+    """Would the deployed yt-dlp treat ``url`` as a single playable video?
+    Offline, read-only — no job row, no DB write, no network (#339).
+
+    The extension calls this before submitting: ``single_media`` URLs
+    auto-submit on one click; everything else (containers, generic-only,
+    unsupported) drops to a confirm step. Unsupported or malformed input is a
+    normal 200 verdict, not an error — the caller is asking a question, not
+    issuing a command. Same auth gate as ``POST /jobs``."""
+    result = match_url(url)
+    return PreflightResponse(
+        supported=result.supported,
+        extractor=result.extractor,
+        return_type=result.return_type,
+        single_media=result.single_media,
+        generic_only=result.generic_only,
+    )
 
 
 @router.post("/jobs", response_model=JobView, status_code=201)

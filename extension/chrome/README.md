@@ -23,6 +23,26 @@ Open the extension options page and set:
 Saving the base URL asks Chrome for permission to reach that Scribe origin.
 The token is stored in Chrome sync storage and sent as `Authorization: Bearer ...` only when configured. No token is hardcoded in the extension.
 
+## Preflight & confirm (no blind submits)
+
+Clicking the toolbar icon opens a small popup — it does **not** silently mint a
+job. The popup asks Scribe's `GET /preflight` whether the deployed `yt-dlp`
+treats the active tab as a single playable video (offline extractor matching,
+no download):
+
+- **Single video** (e.g. `https://www.youtube.com/watch?v=…`) — submitted on
+  the spot; the popup shows the receipt with an `Open job #N` link.
+- **Feed / playlist / channel / search** (e.g. the YouTube home page
+  `https://www.youtube.com/`, `/@channel`, `/playlist?list=…`,
+  `/results?search_query=…`) — **not** submitted. The popup explains it is not
+  a single video and offers a **Submit anyway** button so you decide.
+- **Unknown / preflight unreachable** — same confirm step; the check is a
+  courtesy, never an infrastructure hard-block.
+
+The right-click context-menu paths apply the same gate: a single video submits,
+a container/unknown page gets a "not submitted" notification telling you to open
+the page and use the toolbar to confirm.
+
 ### YouTube cookies (optional)
 
 To submit gated YouTube videos (age-restricted, member-only, private) the
@@ -46,13 +66,13 @@ time.
 
 1. Load the unpacked extension and keep the default Scribe base URL or set a local/runtime Scribe URL.
 2. If using a non-default Scribe URL, open the extension options page, save the base URL, and approve Chrome's host access prompt.
-3. Open a video page supported by `yt-dlp` and click the toolbar action.
-4. Confirm Chrome shows a success notification and clicking it opens `{Scribe base URL}/#/jobs/{job_id}`.
+3. Open the YouTube **home** page (`https://www.youtube.com/`) and click the toolbar action; confirm the popup says it is not a single video and shows **Submit anyway** — no job is minted unless you click it.
+4. Open a video watch page supported by `yt-dlp` and click the toolbar action; confirm the popup submits in one click and shows an `Open job #N` link to `{Scribe base URL}/#/jobs/{job_id}`.
 5. Right-click a video page and choose Submit this video page to Scribe; confirm success or already-known status is shown clearly.
 6. Right-click a video link and choose Submit video link to Scribe; confirm success or already-known status is shown clearly.
 7. For a protected Scribe URL, leave the bearer token blank and submit again; confirm a 401/403 notification explains that auth is required.
 8. Set an invalid bearer token for a protected Scribe URL and submit again; confirm the notification explains that the token is invalid or unauthorized.
-9. Set the base URL to an unreachable host and submit again; confirm the notification includes a useful connectivity error.
+9. Set the base URL to an unreachable host and submit again; confirm the popup includes a useful connectivity error from the unreachable host.
 10. Submit a non-http(s) toolbar page; confirm the extension reports that an http(s) video page is required.
 
 The extension posts to Scribe's existing `POST /jobs` API with:

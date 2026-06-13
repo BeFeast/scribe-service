@@ -52,13 +52,85 @@ def test_service_worker_uses_existing_jobs_api_and_video_flows() -> None:
     assert 'fetch(`${config.baseUrl}/jobs`' in source
     assert "const payload = { url, source: SOURCE };" in source
     assert "JSON.stringify(payload)" in source
-    assert "chrome.action.onClicked.addListener" in source
-    assert "isSubmittableUrl(tab.url || \"\")" in source
-    assert "HTTP_URL.test" in source
+    # The blind one-click submit is gone (#339): the toolbar opens a popup that
+    # drives submit via messages instead of chrome.action.onClicked, and the
+    # bare "is it http(s)" gate (isSubmittableUrl/HTTP_URL) is replaced by the
+    # preflight classifier.
+    assert "chrome.action.onClicked" not in source
+    assert "isSubmittableUrl" not in source
+    assert "HTTP_URL" not in source
+    assert "chrome.runtime.onMessage.addListener" in source
+    assert 'message?.type === "submit-active-tab"' in source
     assert "chrome.contextMenus.onClicked.addListener" in source
     assert 'id: "submit-page"' in source
     assert 'id: "submit-link"' in source
     assert "info.linkUrl || info.pageUrl" in source
+
+
+def test_service_worker_gates_submit_through_preflight() -> None:
+    source = read("service_worker.js")
+
+    # The pure gate logic lives in preflight.js, loaded via importScripts.
+    assert 'importScripts("preflight.js")' in source
+    assert "preflightHelpers" in source
+    assert "fetchPreflight" in source
+    assert "classifySubmit" in source
+    assert "verdictMessage" in source
+    # Toolbar popup submit flow — single-media auto-submits, else confirm.
+    assert "async function submitActiveTab" in source
+    assert "confirm: true" in source
+    # Context-menu path is gated by preflight too (no silent container submit).
+    assert 'verdict !== "submit"' in source
+
+
+def test_manifest_opens_popup_and_bumps_version() -> None:
+    manifest = json.loads(read("manifest.json"))
+
+    # The toolbar action opens a popup (the confirm surface) instead of firing
+    # chrome.action.onClicked and blind-submitting (#339).
+    assert manifest["action"]["default_popup"] == "popup.html"
+    # Version must be bumped past the pre-fix 0.1.0.
+    parts = tuple(int(p) for p in str(manifest["version"]).split("."))
+    assert parts > (0, 1, 0)
+    assert (EXTENSION / "popup.html").is_file()
+    assert (EXTENSION / "popup.js").is_file()
+    assert (EXTENSION / "preflight.js").is_file()
+
+
+def test_popup_is_receipt_and_confirm_surface() -> None:
+    html = read("popup.html")
+    js = read("popup.js")
+
+    assert 'src="popup.js"' in html
+    assert "Submit anyway" in html
+    assert 'type: "submit-active-tab"' in js
+    assert "force" in js
+    # Success receipt links to the job, same scheme as the notification path.
+    assert "/#/jobs/" in js
+    # No cookie/value leakage to devtools from popup logic either.
+    assert "console.log" not in js
+
+
+def test_preflight_module_is_pure_and_exports_gate() -> None:
+    source = read("preflight.js")
+
+    assert "function classifySubmit" in source
+    assert "function fetchPreflight" in source
+    assert "function verdictMessage" in source
+    # single_media is the ONLY auto-submit signal (#339 correction).
+    assert "preflightResult.single_media" in source
+    # Pure module: no chrome.* reference so it loads under importScripts + bun.
+    assert "chrome." not in source
+    assert "module.exports" in source
+
+
+def test_extension_docs_describe_preflight_confirm() -> None:
+    docs = read("README.md")
+
+    assert "GET /preflight" in docs
+    assert "Submit anyway" in docs
+    assert "https://www.youtube.com/" in docs
+    assert "single" in docs.lower() and "video" in docs.lower()
 
 
 def test_service_worker_reports_success_dedup_and_errors() -> None:
@@ -325,3 +397,68 @@ def test_serializer_skips_cookies_with_tabs_or_newlines() -> None:
     )
     lines = [ln for ln in out.splitlines() if ln and not ln.startswith("#")]
     assert lines == [".youtube.com\tTRUE\t/\tTRUE\t2000000000\tOK\tgood"]
+
+
+# ---------------------------------------------------------------------------
+# Preflight classifier unit tests (run the JS under bun) — the pure gate that
+# replaces the bare http(s) check (#339).
+# ---------------------------------------------------------------------------
+
+_WATCH = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+_BASE_HOST = "scribe.oklabs.uk"
+_SINGLE_MEDIA = {"supported": True, "single_media": True, "generic_only": False}
+_CONTAINER = {"supported": True, "single_media": False, "generic_only": False}
+_GENERIC_ONLY = {"supported": False, "single_media": False, "generic_only": True}
+_UNSUPPORTED = {"supported": False, "single_media": False, "generic_only": False}
+
+
+def _run_classify(url: str, base_host: str, preflight_result) -> str:
+    """Execute classifySubmit via bun and return the verdict string."""
+    if _BUN_BIN is None:
+        pytest.skip("bun is required to run the preflight.js classifier test")
+    script = (
+        f'const {{ classifySubmit }} = require("{EXTENSION / "preflight.js"}");\n'
+        f"const out = classifySubmit("
+        f"{json.dumps(url)}, {json.dumps(base_host)}, {json.dumps(preflight_result)});\n"
+        "process.stdout.write(String(out));\n"
+    )
+    proc = subprocess.run(
+        [_BUN_BIN, "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout
+
+
+def test_classify_single_media_submits() -> None:
+    assert _run_classify(_WATCH, _BASE_HOST, _SINGLE_MEDIA) == "submit"
+
+
+def test_classify_container_goes_to_confirm() -> None:
+    # The YouTube home page lands here: supported (YoutubeRecommended) but not
+    # single-media — must NOT auto-submit.
+    assert _run_classify("https://www.youtube.com/", _BASE_HOST, _CONTAINER) == "confirm"
+
+
+def test_classify_generic_only_goes_to_confirm() -> None:
+    assert _run_classify("https://example.com/article", _BASE_HOST, _GENERIC_ONLY) == "confirm"
+
+
+def test_classify_unsupported_refuses() -> None:
+    assert _run_classify("https://example.com/article", _BASE_HOST, _UNSUPPORTED) == "refuse"
+
+
+def test_classify_preflight_unavailable_goes_to_confirm() -> None:
+    # Null verdict (timeout / network error / non-2xx) never hard-blocks.
+    assert _run_classify(_WATCH, _BASE_HOST, None) == "confirm"
+
+
+def test_classify_non_http_scheme_refuses() -> None:
+    assert _run_classify("chrome://extensions", _BASE_HOST, None) == "refuse"
+
+
+def test_classify_own_host_refuses_even_for_single_media() -> None:
+    assert _run_classify(f"https://{_BASE_HOST}/#/jobs/1", _BASE_HOST, _SINGLE_MEDIA) == "refuse"

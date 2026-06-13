@@ -1,5 +1,6 @@
 try {
   importScripts("cookies.js");
+  importScripts("preflight.js");
 } catch (_err) {
   // Service worker cold-start in test contexts may not expose importScripts.
 }
@@ -10,7 +11,6 @@ const NOTIFICATION_LINKS_KEY = "notificationLinks";
 const NOTIFICATION_ICON = "icons/scribe-128.png";
 const CLEAR_BADGE_ALARM = "clear-scribe-badge";
 
-const HTTP_URL = /^https?:\/\//i;
 const YOUTUBE_HOST = /(^|\.)youtube\.com$|^youtu\.be$/i;
 const YOUTUBE_COOKIE_ORIGIN = "https://*.youtube.com/*";
 
@@ -30,19 +30,55 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-chrome.action.onClicked.addListener(async (tab) => {
-  if (!isSubmittableUrl(tab.url || "")) {
-    await notifyFailure("Open an http(s) video page before using the toolbar action.");
-    return;
+// The toolbar click opens popup.html (manifest `default_popup`), which asks
+// this worker to preflight + submit the active tab — the popup IS the receipt
+// (#339). The action's onClicked event does not fire when an action has a
+// popup, so the blind one-click submit is gone: a single-media URL submits,
+// everything else surfaces a confirm step in the popup before any job is minted.
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "submit-active-tab") {
+    // `force` is the popup's Submit-anyway button (#339): the user already saw
+    // the preflight confirm state, so skip the check and submit.
+    submitActiveTab({ force: Boolean(message.force) }).then(sendResponse, (error) =>
+      sendResponse({ ok: false, message: String(error?.message || error) }),
+    );
+    return true;
   }
-
-  await submitToScribe(tab.url);
+  return undefined;
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const url = info.linkUrl || info.pageUrl || tab?.url || "";
-  if (!isSubmittableUrl(url)) {
-    await notifyFailure("Use this menu on an http(s) video page or link.");
+
+  let config;
+  try {
+    config = await getConfig();
+  } catch (error) {
+    await notifyFailure(error.message || String(error));
+    return;
+  }
+  const baseHost = baseHostOf(config.baseUrl);
+  const helpers = preflightHelpers();
+
+  // Local hard-refusal first (no server call): non-http(s) schemes and Scribe's
+  // own pages can never be jobs.
+  if (helpers.classifySubmit(url, baseHost, null) === "refuse") {
+    await notifyFailure("Use this menu on an http(s) video page or link — Scribe's own pages can't be jobs.");
+    return;
+  }
+
+  // Gate the context menu through preflight too (#339): only single-media
+  // auto-submits. Containers/generic/unsupported get a guidance notification —
+  // never a silent job. When preflight is unavailable the explicit right-click
+  // still submits; we never hard-block a deliberate submit on infrastructure.
+  const preflightResult = await helpers.fetchPreflight(config.baseUrl, url, {
+    headers: authHeaders(config),
+  });
+  const verdict = helpers.classifySubmit(url, baseHost, preflightResult);
+  if (verdict !== "submit" && preflightResult !== null) {
+    await notifyFailure(
+      `Not submitted — ${helpers.verdictMessage(preflightResult)} Open the page and use the toolbar to confirm.`,
+    );
     return;
   }
 
@@ -83,8 +119,97 @@ async function submitToScribe(url) {
   }
 }
 
-function isSubmittableUrl(url) {
-  return HTTP_URL.test(String(url || ""));
+// Preflight gate helpers, loaded via importScripts("preflight.js"). Read from
+// the global at call time so the worker degrades gracefully if the import was
+// skipped (cold-start test contexts).
+function preflightHelpers() {
+  return (typeof globalThis !== "undefined" ? globalThis : self).scribePreflight;
+}
+
+function authHeaders(config) {
+  return config.bearerToken ? { Authorization: `Bearer ${config.bearerToken}` } : {};
+}
+
+// The toolbar popup's submit flow (#339): preflight the active tab and only
+// auto-submit a single-media URL. Containers/generic/unsupported return a
+// confirm/refuse verdict the popup renders before any job is minted; `force`
+// (the popup's Submit-anyway button) skips straight to submit. Returns a plain
+// object the popup renders — no notification (the popup IS the receipt).
+async function submitActiveTab({ force = false } = {}) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const url = tab?.url || "";
+  const tabTitle = tab?.title || "";
+
+  let config;
+  try {
+    config = await getConfig();
+  } catch (error) {
+    return { ok: false, message: error.message || String(error) };
+  }
+  const baseHost = baseHostOf(config.baseUrl);
+  const helpers = preflightHelpers();
+
+  // Local hard-refusals (no server call): non-http(s) schemes and Scribe's own
+  // pages. classifySubmit returns "refuse" for these even with a null verdict.
+  if (helpers.classifySubmit(url, baseHost, null) === "refuse") {
+    return {
+      ok: false,
+      message:
+        "Open an http(s) video page before submitting — Scribe's own pages and chrome:// URLs can't be jobs.",
+    };
+  }
+
+  // Surface a missing host grant before the preflight: its fetch would only
+  // fail silently into the confirm state, hiding the actionable settings fix.
+  try {
+    await ensureHostPermission(config.baseUrl);
+  } catch (error) {
+    return { ok: false, message: error.message || String(error) };
+  }
+
+  let extractor = null;
+  if (!force) {
+    const preflightResult = await helpers.fetchPreflight(config.baseUrl, url, {
+      headers: authHeaders(config),
+    });
+    const verdict = helpers.classifySubmit(url, baseHost, preflightResult);
+    if (verdict === "confirm") {
+      return { ok: false, confirm: true, message: helpers.verdictMessage(preflightResult) };
+    }
+    if (verdict === "refuse") {
+      return { ok: false, message: helpers.verdictMessage(preflightResult) };
+    }
+    extractor = preflightResult?.extractor ?? null;
+  }
+
+  setBadge("...", "#5b6472");
+  try {
+    const result = await createJob(config, url);
+    if (!result.job_id) {
+      throw new Error("Scribe responded OK but returned no job ID.");
+    }
+    setBadge("OK", "#137333");
+    return {
+      ok: true,
+      jobId: result.job_id,
+      deduplicated: Boolean(result.deduplicated),
+      status: result.status ?? null,
+      extractor,
+      baseUrl: config.baseUrl,
+      tabTitle,
+    };
+  } catch (error) {
+    setBadge("ERR", "#b3261e");
+    return { ok: false, message: error.message || String(error) };
+  }
+}
+
+function baseHostOf(baseUrl) {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return "";
+  }
 }
 
 function isYoutubeUrl(url) {

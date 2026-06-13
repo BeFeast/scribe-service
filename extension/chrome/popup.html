@@ -1,0 +1,107 @@
+<!doctype html>
+<!-- Toolbar popup — the receipt + confirm surface (#339). Opening it asks the
+     service worker to preflight the active tab and submit only when yt-dlp
+     classifies it as a single video; containers/feeds/unknown pages render a
+     confirm step here instead of minting a job. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Scribe</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        width: 320px;
+        margin: 0;
+        font: 13px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        color: #1f2430;
+        background: #ffffff;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-bottom: 1px solid #e6e8ec;
+        font-weight: 650;
+      }
+      header .host {
+        margin-left: auto;
+        font-weight: 400;
+        font-size: 11px;
+        color: #6b7280;
+      }
+      header img {
+        width: 18px;
+        height: 18px;
+      }
+      main {
+        padding: 14px;
+      }
+      #status {
+        white-space: pre-wrap;
+      }
+      #status.error {
+        color: #b3261e;
+      }
+      #status.confirm {
+        color: #8a5a00;
+      }
+      #status.ok {
+        color: #137333;
+      }
+      .meta {
+        margin-top: 6px;
+        font-size: 11px;
+        color: #6b7280;
+      }
+      .actions {
+        margin-top: 12px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      button {
+        font: inherit;
+        padding: 5px 12px;
+        border-radius: 6px;
+        border: 1px solid #c9ccd2;
+        background: #f4f5f7;
+        cursor: pointer;
+      }
+      button.primary {
+        background: #1f6feb;
+        border-color: #1f6feb;
+        color: #fff;
+      }
+      button[hidden] {
+        display: none;
+      }
+      a.openjob {
+        color: #1f6feb;
+        text-decoration: none;
+      }
+      a.openjob[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <img src="icons/scribe-48.png" alt="" />
+      <span>Scribe</span>
+      <span class="host" id="host"></span>
+    </header>
+    <main>
+      <div id="status">Checking this page…</div>
+      <div class="meta" id="meta" hidden></div>
+      <div class="actions">
+        <button type="button" id="confirm" class="primary" hidden>Submit anyway</button>
+        <a class="openjob" id="openjob" target="_blank" rel="noopener" hidden></a>
+        <button type="button" id="settings" hidden>Settings</button>
+      </div>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
