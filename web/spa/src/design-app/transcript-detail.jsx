@@ -653,25 +653,30 @@ function AuthorValue({ author }) {
   const name = scalar(author.name);
   const handle = scalar(author.handle);
   const url = scalar(author.url);
+  const safeUrl = url && /^https?:\/\//.test(url) ? url : null;
   return (
     <span className="fm-author">
       {name && (
-        url
-          ? <a className="fm-link" href={url} target="_blank" rel="noreferrer">
+        safeUrl
+          ? <a className="fm-link" href={safeUrl} target="_blank" rel="noreferrer">
               {name}<IconExternal size={11} style={{verticalAlign: -1, marginLeft: 4}}/>
             </a>
           : <span>{name}</span>
       )}
       {handle && <span className="fm-pill fm-handle">{handle}</span>}
-      {!name && !handle && url && (
-        <a className="fm-link" href={url} target="_blank" rel="noreferrer">{url}</a>
+      {!name && !handle && safeUrl && (
+        <a className="fm-link" href={safeUrl} target="_blank" rel="noreferrer">{safeUrl}</a>
       )}
+      {!name && !handle && url && !safeUrl && <span>{url}</span>}
     </span>
   );
 }
 
 function titleCasePlatform(value) {
-  return value.charAt(0).toUpperCase() + value.slice(1);
+  return value
+    .split(/[_\s]+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
 }
 
 function PropertyIcon({ row }) {
