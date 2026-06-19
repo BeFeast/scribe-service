@@ -343,8 +343,40 @@ def test_transcript_summary_frontmatter_renders_as_properties_panel() -> None:
         ".fm-link",
         ".fm-tag",
         ".fm-copy",
+        ".fm-author",
+        ".fm-handle",
         ".body-dimmed",
     ):
+        assert marker in styles
+
+
+def test_transcript_properties_renders_author_and_platform_rows() -> None:
+    """Issue #269: Properties surfaces author (name + handle pill) and platform rows."""
+    transcript = read("design-app/transcript-detail.jsx")
+    icons = read("design-app/icons.jsx")
+    styles = read("styles.css")
+
+    # The author/author_handle/author_url frontmatter keys collapse into one row.
+    assert "function AuthorValue" in transcript
+    assert 'row.author' in transcript
+    assert 'byKey["author"] || byKey["author_name"]' in transcript
+    assert 'byKey["author_handle"]' in transcript
+    assert 'byKey["author_url"]' in transcript
+    assert 'authorSkip' in transcript
+    # Author value: name links to channel URL + handle pill; gated on non-empty.
+    assert '<span className="fm-author">' in transcript
+    assert '<span className="fm-pill fm-handle">' in transcript
+    assert 'target="_blank" rel="noreferrer"' in transcript
+    # Platform row: icon + name, title-cased pill, gated on non-empty string.
+    assert 'key === "platform"' in transcript
+    assert 'function titleCasePlatform' in transcript
+    assert '<span className="fm-pill">{titleCasePlatform(value)}</span>' in transcript
+    # Icons used by the new rows (production-only additions, not in design export).
+    assert "export const IconUser" in icons
+    assert "export const IconGlobe" in icons
+    assert "IconUser" in transcript
+    assert "IconGlobe" in transcript
+    for marker in (".fm-author", ".fm-handle"):
         assert marker in styles
 
 
