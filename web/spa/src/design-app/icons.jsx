@@ -38,4 +38,7 @@ export const IconWave       = (p) => <Icon {...p}><path d="M2 8h1M4 5v6M6 6v4M8 
 export const IconSparkle    = (p) => <Icon {...p}><path d="M8 2l1.4 4.2L13.5 8 9.4 9.8 8 14l-1.4-4.2L2.5 8 6.6 6.2 8 2z"/></Icon>;
 export const IconDollar     = (p) => <Icon {...p}><path d="M8 2v12M11 5H7a2 2 0 000 4h2a2 2 0 010 4H5"/></Icon>;
 export const IconAlert      = (p) => <Icon {...p}><path d="M8 2.5l6 11h-12l6-11z"/><path d="M8 7v3M8 12v.1"/></Icon>;
+// Production-only glyphs for transcript author/platform Properties rows (not in design export).
+export const IconUser       = (p) => <Icon {...p}><circle cx="8" cy="5.5" r="2.3"/><path d="M3.5 13.2a4.5 4.5 0 019 0"/></Icon>;
+export const IconGlobe      = (p) => <Icon {...p}><circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c1.6 1.7 1.6 9.3 0 11M8 2.5c-1.6 1.7-1.6 9.3 0 11"/></Icon>;
 

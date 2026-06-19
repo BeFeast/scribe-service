@@ -1600,6 +1600,17 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   font-style: italic;
 }
 
+.fm-author {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.fm-author .fm-handle {
+  font-weight: 650;
+}
+
 .fm-link,
 .fm-tag {
   appearance: none;

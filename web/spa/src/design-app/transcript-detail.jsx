@@ -1,7 +1,7 @@
 // biome-ignore-all lint: Claude Design source port; integration-only edits live in api/data/main.
 import React from "react";
 import { useAuth } from "../hooks/useAuth";
-import { IconAlert, IconArrow, IconCheck, IconClock, IconCopy, IconDownload, IconExternal, IconLink, IconRSS, IconRefresh, IconSparkle, IconWave, IconX } from "./icons.jsx";
+import { IconAlert, IconArrow, IconCheck, IconClock, IconCopy, IconDownload, IconExternal, IconGlobe, IconLink, IconRSS, IconRefresh, IconSparkle, IconUser, IconWave, IconX } from "./icons.jsx";
 import { CURRENT_TRANSCRIPT, CURRENT_TRANSCRIPT_STATE, TRANSCRIPTS, fmtDuration, fmtRelative, fmtUsd, publicBaseUrl } from "./data.js";
 // Transcript detail — title, meta, summary (rendered from MD), transcript body.
 
@@ -525,13 +525,37 @@ function PropertiesPanel({ props, navigate }) {
   const [open, setOpen] = React.useState(false);
   const [copied, setCopied] = React.useState(null);
 
-  function copyValue(prop) {
+  // The backend injects author/author_handle/author_url as separate frontmatter
+  // keys. Collapse them into one "author" row (name + handle pill) so the
+  // panel reads as a single creator identity rather than three loose rows.
+  const byKey = {};
+  for (const p of props) byKey[p.key.toLowerCase()] = p;
+  const authorName = byKey["author"] || byKey["author_name"];
+  const authorHandle = byKey["author_handle"];
+  const authorUrl = byKey["author_url"];
+  const authorGroup = (authorName || authorHandle || authorUrl)
+    ? { name: authorName, handle: authorHandle, url: authorUrl }
+    : null;
+  const authorSkip = new Set(authorGroup ? ["author", "author_name", "author_handle", "author_url"] : []);
+
+  const rows = [];
+  if (authorGroup) rows.push({ key: "author", author: authorGroup });
+  for (const prop of props) {
+    if (authorSkip.has(prop.key.toLowerCase())) continue;
+    rows.push({ key: prop.key, prop });
+  }
+  // Count reflects what the user sees (author counts as one).
+  const visibleCount = rows.length;
+
+  function copyValue(row) {
+    const text = row.author ? authorCopyText(row.author) : scalarToCopy(row.prop.value);
+    const id = row.key;
     try {
-      navigator.clipboard && navigator.clipboard.writeText(scalarToCopy(prop.value));
-      setCopied(prop.key);
+      navigator.clipboard && navigator.clipboard.writeText(text);
+      setCopied(id);
       setTimeout(() => setCopied(null), 1400);
     } catch {
-      setCopied("err:" + prop.key);
+      setCopied("err:" + id);
       setTimeout(() => setCopied(null), 1800);
     }
   }
@@ -541,23 +565,23 @@ function PropertiesPanel({ props, navigate }) {
       <button className="fm-header" type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <span className="fm-caret">{open ? "▾" : "▸"}</span>
         <span>Properties</span>
-        <span className="fm-count">{props.length}</span>
+        <span className="fm-count">{visibleCount}</span>
         <span className="spacer"/>
         <span className="fm-source">frontmatter</span>
       </button>
       {open && (
         <div className="fm-rows">
-          {props.map((prop) => (
-            <div className="fm-row" key={prop.key}>
+          {rows.map((row) => (
+            <div className="fm-row" key={row.key}>
               <div className="fm-name">
-                <PropertyIcon prop={prop}/>
-                <span>{formatPropName(prop.key)}</span>
+                <PropertyIcon row={row}/>
+                <span>{formatPropName(row.key)}</span>
               </div>
               <div className="fm-value">
-                <PropertyValue prop={prop} navigate={navigate}/>
+                <PropertyValue row={row} navigate={navigate}/>
               </div>
-              <button className="fm-copy" type="button" onClick={() => copyValue(prop)} title={`Copy ${formatPropName(prop.key)}`}>
-                {copied === prop.key ? "copied" : <IconCopy size={12}/>}
+              <button className="fm-copy" type="button" onClick={() => copyValue(row)} title={`Copy ${formatPropName(row.key)}`}>
+                {copied === row.key ? "copied" : <IconCopy size={12}/>}
               </button>
             </div>
           ))}
@@ -567,9 +591,27 @@ function PropertiesPanel({ props, navigate }) {
   );
 }
 
-function PropertyValue({ prop, navigate }) {
+function authorCopyText(author) {
+  const name = scalar(author.name);
+  const handle = scalar(author.handle);
+  if (name && handle) return `${name} (${handle})`;
+  return name || handle || scalar(author.url) || "";
+}
+
+function scalar(prop) {
+  if (!prop) return "";
+  const v = prop.value;
+  return typeof v === "string" ? v : String(v ?? "");
+}
+
+function PropertyValue({ row, navigate }) {
+  if (row.author) return <AuthorValue author={row.author}/>;
+  const prop = row.prop;
   const key = prop.key.toLowerCase();
   const value = prop.value;
+  if (key === "platform" && typeof value === "string" && value) {
+    return <span className="fm-pill">{titleCasePlatform(value)}</span>;
+  }
   if ((key === "type" || key === "category") && typeof value === "string") {
     return <span className="fm-pill accent">{value.toUpperCase()}</span>;
   }
@@ -607,8 +649,35 @@ function PropertyValue({ prop, navigate }) {
   return <span>{String(value)}</span>;
 }
 
-function PropertyIcon({ prop }) {
-  const key = prop.key.toLowerCase();
+function AuthorValue({ author }) {
+  const name = scalar(author.name);
+  const handle = scalar(author.handle);
+  const url = scalar(author.url);
+  return (
+    <span className="fm-author">
+      {name && (
+        url
+          ? <a className="fm-link" href={url} target="_blank" rel="noreferrer">
+              {name}<IconExternal size={11} style={{verticalAlign: -1, marginLeft: 4}}/>
+            </a>
+          : <span>{name}</span>
+      )}
+      {handle && <span className="fm-pill fm-handle">{handle}</span>}
+      {!name && !handle && url && (
+        <a className="fm-link" href={url} target="_blank" rel="noreferrer">{url}</a>
+      )}
+    </span>
+  );
+}
+
+function titleCasePlatform(value) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function PropertyIcon({ row }) {
+  if (row.author) return <IconUser size={13}/>;
+  const key = row.prop.key.toLowerCase();
+  if (key === "platform") return <IconGlobe size={13}/>;
   if (key === "type" || key === "category") return <IconSparkle size={13}/>;
   if (key === "date" || key === "created" || key === "updated") return <IconClock size={13}/>;
   if (key === "source" || key === "url" || key === "link") return <IconLink size={13}/>;
