@@ -70,6 +70,24 @@ vast_burn_rate_usd_per_hour = Gauge(
     "Current Vast.ai burn rate in USD/hour, sampled from live instances.",
 )
 
+# Predictive burn projection (#355). Unix epoch of the projected cap-breach
+# time at the current live burn rate, or -1 when no breach is projected.
+vast_burn_projected_breach_timestamp_seconds = Gauge(
+    "scribe_vast_burn_projected_breach_timestamp_seconds",
+    "Unix epoch of the projected Vast monthly-cap breach at the current "
+    "live burn rate; -1 when no breach is projected.",
+)
+vast_burn_projected_breach_timestamp_seconds.set(-1)
+
+# Hours remaining until the projected cap breach at the current burn rate,
+# or -1 when no breach is projected. Lets alert rules fire on a horizon.
+vast_burn_hours_to_cap = Gauge(
+    "scribe_vast_burn_hours_to_cap",
+    "Hours until the rolling monthly Vast cap is breached at the current "
+    "live burn rate; -1 when no breach is projected.",
+)
+vast_burn_hours_to_cap.set(-1)
+
 
 def compute_daily_spend_cap_pct(spent_usd: float, cap_usd: float) -> float:
     """Percent of cap consumed. Returns 0.0 when the cap is disabled (<=0)."""

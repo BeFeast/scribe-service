@@ -7,16 +7,28 @@ echo '=== Project Test Suite ==='
 python -m pytest
 
 echo '=== Requirement Verification ==='
-echo 'Requirement 1: Document the release scheme in `AGENTS.md` (and/or `CONTRIBUTING`/README): the `...'
-echo 'WARN: Run tests in tests/test_source_links.py'
+echo 'Requirement 1: The orphan reaper destroys only by **age**, so a runaway/misconfigured offer can...'
+echo 'WARN: Run tests in tests/test_vast_reaper.py'
 
-echo 'Requirement 2: State that merge to `main` triggers, continuously and per-merge, a version bump ...'
+echo 'Requirement 2: The budget monitor samples burn rate but gives no **predictive** "at current bur...'
+echo 'WARN: Run tests in tests/test_docker_runtime.py'
+
+echo 'Requirement 3: Instances stuck initializing (never reached running) aren'\''t reaped.'
 python -m pytest
 
-echo 'Requirement 3: A documented section explains the `semver:*` label taxonomy, the default-`patch`...'
+echo 'Requirement 4: Add cost-aware reaping: flag/destroy instances whose $/hr exceeds a configurable...'
 python -m pytest
 
-echo 'Requirement 4: The three `semver:*` labels exist in the repo (already created).'
-python -m pytest
+echo 'Requirement 5: Add a predictive burn alert: project month-to-date burn against the cap and aler...'
+echo 'WARN: Run tests in tests/test_alerts.py'
+
+echo 'Requirement 6: A runaway-cost or stuck-initializing instance is reaped before max-age, with an ...'
+echo 'WARN: Run tests in tests/test_vast_instance_lifecycle.py'
+
+echo 'Requirement 7: A predictive alert fires (Telegram + a Prometheus gauge) when projected to breac...'
+echo 'WARN: Run tests in tests/test_alerts.py'
+
+echo 'Requirement 8: Thresholds configurable; tests for the reaping predicate and the projection math...'
+echo 'WARN: Run tests in .codex-work/pr22/tests/test_routes_dedup.py'
 
 echo 'All verifications passed.'

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from scribe.alerts import send_admin_alert
 from scribe.config import settings
 from scribe.db.models import Job, JobStatus, Transcript
+from scribe.db.session import SessionLocal
 from scribe.obs import metrics
 from scribe.pipeline.whisper_client import (
     MAX_INSTANCE_SECONDS,
@@ -52,6 +53,23 @@ class BudgetCheck:
     instances: tuple[InstanceBurn, ...]
 
 
+@dataclass(frozen=True)
+class BurnProjection:
+    """Projection of rolling 30-day burn against the monthly cap (#355).
+
+    `hours_to_breach` / `projected_breach_at` are None when no breach is
+    projected (cap disabled, burn stopped, or already over the cap)."""
+
+    spent_usd: float
+    cap_usd: float
+    remaining_usd: float
+    burn_rate_usd_per_hour: float
+    horizon_hours: float
+    hours_to_breach: float | None
+    projected_breach_at: dt.datetime | None
+    will_breach: bool
+
+
 def monthly_vast_spend_usd(session: Session, *, now: dt.datetime | None = None) -> float:
     """Sum `transcripts.vast_cost` over the last 30 days."""
     cutoff = (now or dt.datetime.now(dt.UTC)) - dt.timedelta(days=_MONTH_WINDOW_DAYS)
@@ -76,6 +94,52 @@ def in_flight_vast_reserve_usd(session: Session) -> float:
         float(settings.vast_max_price_per_hour) * MAX_INSTANCE_SECONDS / 3600.0,
     )
     return float(in_flight) * per_job_cap
+
+
+def project_monthly_breach(
+    *,
+    spent_usd: float,
+    cap_usd: float,
+    burn_rate_usd_per_hour: float,
+    horizon_hours: float,
+    now: dt.datetime | None = None,
+) -> BurnProjection:
+    """Project rolling-30-day burn against the monthly cap at the current
+    live burn rate (#355). Pure math so tests can exercise the projection
+    without a DB session.
+
+    - When the cap is disabled, burn is stopped, or the cap is already
+      reached/exceeded, `will_breach` is False and no projected breach time
+      is emitted (the hard-cap path already fires via enforce_monthly_cap).
+    - Otherwise `hours_to_breach = remaining / burn_rate` and a breach is
+      flagged when it falls within `horizon_hours`.
+    """
+    current = (now or dt.datetime.now(dt.UTC)).astimezone(dt.UTC)
+    remaining = cap_usd - spent_usd
+    if cap_usd <= 0 or burn_rate_usd_per_hour <= 0 or remaining <= 0:
+        return BurnProjection(
+            spent_usd=float(spent_usd),
+            cap_usd=float(cap_usd),
+            remaining_usd=float(remaining),
+            burn_rate_usd_per_hour=float(burn_rate_usd_per_hour),
+            horizon_hours=float(horizon_hours),
+            hours_to_breach=None,
+            projected_breach_at=None,
+            will_breach=False,
+        )
+    hours_to_breach = remaining / burn_rate_usd_per_hour
+    projected_breach_at = current + dt.timedelta(hours=hours_to_breach)
+    will_breach = hours_to_breach <= max(0.0, float(horizon_hours))
+    return BurnProjection(
+        spent_usd=float(spent_usd),
+        cap_usd=float(cap_usd),
+        remaining_usd=float(remaining),
+        burn_rate_usd_per_hour=float(burn_rate_usd_per_hour),
+        horizon_hours=float(horizon_hours),
+        hours_to_breach=hours_to_breach,
+        projected_breach_at=projected_breach_at,
+        will_breach=will_breach,
+    )
 
 
 def enforce_monthly_cap(session: Session, *, now: dt.datetime | None = None) -> None:
@@ -168,7 +232,87 @@ def check_vast_budget() -> BudgetCheck | None:
                 "instance_count": len(check.instances),
             },
         )
+    _check_predictive_breach(check.burn_rate_usd_per_hour)
     return check
+
+
+def _check_predictive_breach(burn_rate_usd_per_hour: float) -> BurnProjection | None:
+    """Project MTD burn against the monthly cap and alert when on track to
+    breach within the configured horizon (#355). Emits a Prometheus gauge
+    with the projected breach time and a Telegram admin alert."""
+    cap = float(settings.vast_monthly_cap_usd)
+    horizon_hours = max(1, settings.vast_budget_predictive_alert_horizon_days) * 24.0
+    if cap <= 0:
+        metrics.vast_burn_projected_breach_timestamp_seconds.set(-1)
+        metrics.vast_burn_hours_to_cap.set(-1)
+        return None
+    try:
+        with SessionLocal() as session:
+            spent = monthly_vast_spend_usd(session)
+    except Exception:
+        log.exception("vast predictive burn projection failed: DB read error")
+        return None
+    projection = project_monthly_breach(
+        spent_usd=spent,
+        cap_usd=cap,
+        burn_rate_usd_per_hour=burn_rate_usd_per_hour,
+        horizon_hours=horizon_hours,
+    )
+    if projection.hours_to_breach is not None and projection.projected_breach_at is not None:
+        metrics.vast_burn_projected_breach_timestamp_seconds.set(
+            projection.projected_breach_at.timestamp()
+        )
+        metrics.vast_burn_hours_to_cap.set(projection.hours_to_breach)
+    else:
+        metrics.vast_burn_projected_breach_timestamp_seconds.set(-1)
+        metrics.vast_burn_hours_to_cap.set(-1)
+    if projection.will_breach:
+        _emit_predictive_alert(projection)
+    else:
+        log.info(
+            "vast burn projection sampled",
+            extra={
+                "spent_usd": round(projection.spent_usd, 6),
+                "cap_usd": round(projection.cap_usd, 6),
+                "remaining_usd": round(projection.remaining_usd, 6),
+                "burn_rate_usd_per_hour": round(projection.burn_rate_usd_per_hour, 6),
+                "hours_to_breach": (
+                    round(projection.hours_to_breach, 2)
+                    if projection.hours_to_breach is not None
+                    else None
+                ),
+            },
+        )
+    return projection
+
+
+def _emit_predictive_alert(projection: BurnProjection) -> None:
+    assert projection.projected_breach_at is not None
+    assert projection.hours_to_breach is not None
+    breach_utc = projection.projected_breach_at.strftime("%Y-%m-%d %H:%M UTC")
+    message = (
+        "Scribe Vast.ai burn-rate breach projected\n"
+        f"Spent: ${projection.spent_usd:.4f} / cap ${projection.cap_usd:.4f} "
+        f"(rolling {_MONTH_WINDOW_DAYS}d)\n"
+        f"Burn rate: ${projection.burn_rate_usd_per_hour:.4f}/hour\n"
+        f"Projected breach: {breach_utc} "
+        f"(in {projection.hours_to_breach:.1f} hours)\n"
+        "Tune SCRIBE_VAST_MONTHLY_CAP_USD or reduce concurrency to slow burn."
+    )
+    log.warning(
+        "vast burn-rate breach projected",
+        extra={
+            "spent_usd": round(projection.spent_usd, 6),
+            "cap_usd": round(projection.cap_usd, 6),
+            "burn_rate_usd_per_hour": round(projection.burn_rate_usd_per_hour, 6),
+            "hours_to_breach": round(projection.hours_to_breach, 2),
+            "projected_breach_at": breach_utc,
+        },
+    )
+    try:
+        send_admin_alert(message)
+    except Exception:
+        log.exception("vast predictive burn admin alert failed")
 
 
 def start_budget_monitor(interval_seconds: int | None = None) -> tuple[threading.Thread, threading.Event]:
