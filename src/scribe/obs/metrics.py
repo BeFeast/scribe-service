@@ -200,6 +200,42 @@ summary_chain_outcome_total = Counter(
     labelnames=("outcome",),
 )
 
+# Transcription-provider chain telemetry — mirrors the summary-provider
+# metrics. The fallback chain (scribe.pipeline.transcribe_providers) tries each
+# provider (vast → optional openai / local-whisper) in order; a per-provider
+# circuit breaker short-circuits a provider that has failed often enough.
+#
+# result labels: success, usage_limit, unavailable, timeout, error, skipped_tripped.
+transcribe_provider_calls_total = Counter(
+    "scribe_transcribe_provider_calls_total",
+    "Transcription provider invocations, labelled by provider and outcome.",
+    labelnames=("provider", "result"),
+)
+
+# Per-provider transcription breaker state. 0=closed, 1=half_open, 2=tripped.
+transcribe_provider_state = Gauge(
+    "scribe_transcribe_provider_state",
+    "Circuit-breaker state per transcription provider (0=closed, 1=half_open, 2=tripped).",
+    labelnames=("provider",),
+)
+
+# Outcome of the overall transcription fallback-chain run.
+# outcome labels: success_first, success_after_fallback, all_failed.
+transcribe_chain_outcome_total = Counter(
+    "scribe_transcribe_chain_outcome_total",
+    "Transcription fallback-chain outcomes per run.",
+    labelnames=("outcome",),
+)
+
+# Per-provider estimated transcription spend (USD). The Vast line mirrors
+# scribe_vast_spend_usd_total; hosted providers (e.g. openai) get their own
+# cost line here so spend caps and dashboards can see each backend separately.
+transcribe_provider_spend_usd_total = Counter(
+    "scribe_transcribe_provider_spend_usd_total",
+    "Cumulative estimated transcription spend in USD, labelled by provider.",
+    labelnames=("provider",),
+)
+
 
 def gauge_value(g: Gauge) -> float:
     """Read the current value of an unlabelled Gauge using prometheus_client's

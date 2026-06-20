@@ -76,6 +76,13 @@ class TranscribeResult:
     backend: str
     vast_instance_id: int
     vast_cost: float
+    # Which transcription provider served this result (see
+    # scribe.pipeline.transcribe_providers). Defaults to "vast" so the Vast
+    # GPU path — the historical and only producer of this dataclass — keeps
+    # the right label without touching every construction site. `vast_cost`
+    # carries the provider's estimated USD spend regardless of provider; only
+    # the Vast path persists it to transcripts.vast_cost (daily-cap input).
+    provider: str = "vast"
 
 
 def _noop_instance_created(_instance_id: int) -> None:

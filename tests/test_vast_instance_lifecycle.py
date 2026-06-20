@@ -135,7 +135,12 @@ def test_process_job_marks_destroy_failure_and_does_not_reach_done(db_session, m
     assert job.vast_instance_id == 888
     assert job.destroy_failed_at is not None
     assert job.error is not None
-    assert "WhisperError" in job.error
+    # The Vast failure now surfaces through the transcription provider chain:
+    # a WhisperError from the Vast provider exhausts the (default Vast-only)
+    # chain, so the worker records a TranscribeChainError that preserves the
+    # underlying root cause ("destroy failed").
+    assert "TranscribeChainError" in job.error
+    assert "destroy failed" in job.error
 
 
 def test_recover_interrupted_job_retries_visible_vast_instance(db_session, monkeypatch):

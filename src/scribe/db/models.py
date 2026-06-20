@@ -185,6 +185,11 @@ class Transcript(Base):
     # whisper_client.TranscribeResult.vast_cost; NULL when whisper ran
     # outside the metered path (warm pool, mock, etc).
     vast_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Which transcription provider produced this transcript (see
+    # scribe.pipeline.transcribe_providers): "vast" (GPU), "openai" (hosted
+    # API), "local-whisper" (CPU), etc. NULL for legacy rows written before
+    # the fallback chain existed.
+    transcribe_provider: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Video author / channel metadata captured from yt-dlp info-dict, surfaced
     # in summary frontmatter and the SPA Properties panel.
     author_name: Mapped[str | None] = mapped_column(Text, nullable=True)
