@@ -53,7 +53,19 @@ class VastInstanceFailedError(WhisperError):
 
 
 class VastReadyTimeoutError(WhisperError):
-    """Vast container did not become ready within the per-attempt budget."""
+    """Vast container did not become ready within the per-attempt ready budget."""
+
+
+class VastBudgetExceededError(WhisperError):
+    """Per-attempt cost budget exhausted (distinct from a ready-timeout).
+
+    Raised by `_ensure_budget` when the deadline fired for cost reasons
+    rather than the ready_timeout window. Keeping this separate from
+    `VastReadyTimeoutError` lets the offer loop decide whether the host
+    itself is bad (ready-timeout / container-failed → blacklist) or the
+    job simply ran out of money (cost-cap → do not blacklist a healthy
+    host's sibling offers).
+    """
 
 
 @dataclass
@@ -340,25 +352,33 @@ def _ensure_budget(
     max_cost: float,
     *,
     ready_timeout: float | None = None,
+    ready_started: float | None = None,
     label: str = "",
 ) -> None:
     """Raise when the per-attempt deadline is exceeded.
 
     The deadline is the min of cost-budget and ready-timeout (set in the
-    main loop). When `ready_timeout` is provided we can tell which of the
-    two actually fired by comparing elapsed against ready_timeout — that
-    keeps logs accurate for triage instead of always saying 'budget guard'.
+    main loop). When `ready_timeout` *and* `ready_started` are provided we
+    classify the failure by the **per-attempt** elapsed time
+    (`time.monotonic() - ready_started`), not the cumulative job elapsed
+    time (`started`). Otherwise a multi-offer run where earlier attempts
+    already burned most of `ready_timeout` would mislabel a cost-cap as a
+    ready-timeout. Both messages include the offer/host label for triage.
     """
     if time.monotonic() <= deadline:
         return
-    elapsed = time.monotonic() - started
     suffix = f" ({label})" if label else ""
-    if ready_timeout is not None and elapsed >= ready_timeout:
-        raise VastReadyTimeoutError(
-            f"Vast ready_timeout exceeded after {elapsed:.0f}s (cap {ready_timeout:.0f}s){suffix}"
-        )
-    raise WhisperError(
-        f"Vast budget guard tripped after {elapsed:.0f}s (~${price * elapsed / 3600:.4f}, cap ${max_cost}){suffix}"
+    if ready_timeout is not None and ready_started is not None:
+        ready_elapsed = time.monotonic() - ready_started
+        if ready_elapsed >= ready_timeout:
+            raise VastReadyTimeoutError(
+                f"Vast ready_timeout exceeded after {ready_elapsed:.0f}s "
+                f"(cap {ready_timeout:.0f}s){suffix}"
+            )
+    elapsed = time.monotonic() - started
+    raise VastBudgetExceededError(
+        f"Vast budget guard tripped after {elapsed:.0f}s "
+        f"(~${price * elapsed / 3600:.4f}, cap ${max_cost}){suffix}"
     )
 
 
@@ -388,10 +408,13 @@ def _format_failure_detail(info: dict, failure_state: str) -> str:
 
 def _wait_for_ssh(
     api_key, instance_id, key_path, started, deadline, price, max_cost,
-    *, ready_timeout: float, label: str = "",
+    *, ready_timeout: float, ready_started: float | None = None, label: str = "",
 ) -> tuple[str, int]:
     while True:
-        _ensure_budget(started, deadline, price, max_cost, ready_timeout=ready_timeout, label=label)
+        _ensure_budget(
+            started, deadline, price, max_cost,
+            ready_timeout=ready_timeout, ready_started=ready_started, label=label,
+        )
         info = _get_instance(api_key, instance_id)
         failure = _vast_failure_state(info)
         if failure is not None:
@@ -409,11 +432,14 @@ def _wait_for_ssh(
 
 def _wait_remote_ready(
     api_key, instance_id, host, port, key_path, started, deadline, price, max_cost,
-    *, ready_timeout: float, label: str = "",
+    *, ready_timeout: float, ready_started: float | None = None, label: str = "",
 ) -> None:
     check = "test -f /root/video-summary-ready && command -v uv >/dev/null && nvidia-smi -L"
     while True:
-        _ensure_budget(started, deadline, price, max_cost, ready_timeout=ready_timeout, label=label)
+        _ensure_budget(
+            started, deadline, price, max_cost,
+            ready_timeout=ready_timeout, ready_started=ready_started, label=label,
+        )
         info = _get_instance(api_key, instance_id)
         failure = _vast_failure_state(info)
         if failure is not None:
@@ -509,23 +535,32 @@ def _transcribe_impl(
             on_instance_created(instance_id)
             context.set_instance(instance_id)
             context.raise_if_cancelled()
-            startup_deadline = min(deadline, time.monotonic() + ready_timeout)
+            # ready_timeout bounds a *single* offer's startup window, so
+            # measure it from this attempt, not the cumulative job start.
+            attempt_started = time.monotonic()
+            startup_deadline = min(deadline, attempt_started + ready_timeout)
             host, port = _wait_for_ssh(
                 api_key, instance_id, key_path, started, startup_deadline, price, max_job_cost,
-                ready_timeout=ready_timeout, label=offer_label,
+                ready_timeout=ready_timeout, ready_started=attempt_started, label=offer_label,
             )
             _wait_remote_ready(
                 api_key, instance_id, host, port, key_path, started, startup_deadline, price, max_job_cost,
-                ready_timeout=ready_timeout, label=offer_label,
+                ready_timeout=ready_timeout, ready_started=attempt_started, label=offer_label,
             )
             break
         except (WhisperError, TimeoutError, TranscribeTimeoutError) as exc:
             last_err = exc
             print(f"Warning: Vast offer {offer.get('id')} unusable: {exc} ({offer_label})", file=sys.stderr)
-            # Anything that wasn't a vanished-offer / cost-cap is likely host-side
-            # (failed container, ready timeout, ssh never came up). Blacklist the
-            # host so we don't waste another attempt on a sibling offer.
-            if offer_host_id is not None and not isinstance(exc, TranscribeTimeoutError):
+            # Blacklist the host only for host-side failures: a container
+            # that failed to start, a ready_timeout, or a create-time API
+            # error. A cost-cap (VastBudgetExceededError) is a job-budget
+            # condition, not a bad host — don't skip a healthy host's
+            # sibling offers. Vanished offers (no_such_ask) already
+            # `continue`d above. TranscribeTimeoutError is the wall-clock
+            # guard and aborts the whole job.
+            if offer_host_id is not None and not isinstance(
+                exc, (TranscribeTimeoutError, VastBudgetExceededError)
+            ):
                 excluded_hosts.add(offer_host_id)
             if instance_id is not None:
                 context.destroy_instance()
