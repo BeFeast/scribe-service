@@ -112,3 +112,70 @@ def test_malformed_authorization_header_is_401(monkeypatch):
     )
 
     assert resp.status_code == 401
+
+
+def test_trusted_proxy_xff_drives_cidr_auth(monkeypatch):
+    """#348: with a configured trusted proxy, X-Forwarded-For resolves the
+    real client IP, so a client on the trusted LAN is allowed while a client
+    outside it is not."""
+    monkeypatch.setattr(settings, "trusted_cidrs", "10.10.0.0/16")
+    monkeypatch.setattr(settings, "trusted_proxies", "172.16.0.0/12")
+    monkeypatch.setattr(settings, "machine_bearer_token", MACHINE_TOKEN)
+    # Peer is a trusted proxy; XFF claims a client on the trusted LAN.
+    inside = TestClient(app, client=("172.16.0.1", 50000)).post(
+        "/api/prompts/active",
+        json={"version": "not-a-version"},
+        headers={"x-forwarded-for": "10.10.0.5"},
+    )
+    assert inside.status_code == 422  # trusted -> reached validation
+
+    # Same proxy peer, but XFF client is outside the trusted CIDR.
+    outside = TestClient(app, client=("172.16.0.1", 50000)).post(
+        "/api/prompts/active",
+        json={"version": "v1"},
+        headers={"x-forwarded-for": "203.0.113.10"},
+    )
+    assert outside.status_code == 401
+
+
+def test_trusted_proxy_walks_past_spoofed_leftmost(monkeypatch):
+    """#348: XFF is walked right-to-left skipping trusted proxies, so a client
+    cannot gain trust by prepending a fake trusted-LAN entry."""
+    monkeypatch.setattr(settings, "trusted_cidrs", "10.10.0.0/16")
+    monkeypatch.setattr(settings, "trusted_proxies", "172.16.0.0/12")
+    monkeypatch.setattr(settings, "machine_bearer_token", MACHINE_TOKEN)
+    # Spoofed leftmost LAN IP, but the rightmost non-trusted hop is external.
+    resp = TestClient(app, client=("172.16.0.1", 50000)).post(
+        "/api/prompts/active",
+        json={"version": "v1"},
+        headers={"x-forwarded-for": "10.10.0.5, 203.0.113.10"},
+    )
+    assert resp.status_code == 401
+
+
+def test_no_trusted_proxy_config_ignores_xff(monkeypatch):
+    """#348: without trusted_proxies, XFF is not honoured even if the peer is
+    a plausible proxy address — the safe default."""
+    monkeypatch.setattr(settings, "trusted_cidrs", "10.10.0.0/16")
+    monkeypatch.setattr(settings, "trusted_proxies", "")
+    monkeypatch.setattr(settings, "machine_bearer_token", MACHINE_TOKEN)
+    resp = TestClient(app, client=("172.16.0.1", 50000)).post(
+        "/api/prompts/active",
+        json={"version": "v1"},
+        headers={"x-forwarded-for": "10.10.0.5"},
+    )
+    assert resp.status_code == 401
+
+
+def test_untrusted_peer_with_trusted_proxies_ignores_xff(monkeypatch):
+    """#348: if the immediate peer is not a configured proxy, XFF is ignored
+    even with trusted_proxies set, so a direct external client cannot spoof."""
+    monkeypatch.setattr(settings, "trusted_cidrs", "10.10.0.0/16")
+    monkeypatch.setattr(settings, "trusted_proxies", "172.16.0.0/12")
+    monkeypatch.setattr(settings, "machine_bearer_token", MACHINE_TOKEN)
+    resp = TestClient(app, client=("198.51.100.7", 50000)).post(
+        "/api/prompts/active",
+        json={"version": "v1"},
+        headers={"x-forwarded-for": "10.10.0.5"},
+    )
+    assert resp.status_code == 401

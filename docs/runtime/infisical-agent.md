@@ -30,7 +30,7 @@ services:
     # ...existing keys...
     env_file: .env
     volumes:
-      - ./data/codex-auth:/root/.codex
+      - ./data/codex-auth:/home/scribe/.codex
       - /mnt/nfs/scribe-tmp:/data/tmp
       - scribe-secrets:/secrets:ro          # rendered env-file (read-only)
     depends_on:

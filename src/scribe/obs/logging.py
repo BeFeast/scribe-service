@@ -17,7 +17,29 @@ import logging
 import os
 import sys
 
-from scribe.obs.live_logs import JobLogBufferHandler, payload_from_record
+from scribe.obs.live_logs import JobLogBufferHandler, configure_redaction, payload_from_record
+
+# Settings fields whose loaded values are treated as secrets and scrubbed
+# from every log payload / traceback (#348). Publishable keys are excluded.
+_SECRET_SETTING_FIELDS = (
+    "vast_api_key",
+    "openai_transcribe_api_key",
+    "freellmapi_api_key",
+    "machine_bearer_token",
+    "clerk_secret_key",
+    "shortlink_api_key",
+    "admin_telegram_bot_token",
+    "config_api_bearer_token",
+    "auth_clerk_jwks_json",
+)
+
+
+def _collect_secret_settings() -> list[str]:
+    try:
+        from scribe.config import settings
+    except Exception:
+        return []
+    return [str(getattr(settings, field, "") or "") for field in _SECRET_SETTING_FIELDS]
 
 
 class JsonFormatter(logging.Formatter):
@@ -39,6 +61,8 @@ def configure(level: str | int | None = None) -> None:
         root.removeHandler(h)
     root.addHandler(handler)
     root.addHandler(JobLogBufferHandler())
+    # Scrub known secret values from every emitted log line / traceback (#348).
+    configure_redaction(_collect_secret_settings())
     root.setLevel(level)
     # Quiet uvicorn's access log noise; access events go through the same
     # handler but at WARNING by default. Flip to INFO via env if needed.

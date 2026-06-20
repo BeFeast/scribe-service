@@ -13,7 +13,7 @@ services:
       # implicit project network. Empty disables the integration.
       SCRIBE_BGUTIL_POT_BASE_URL: http://scribe-pot:4416
     volumes:
-      - ./data/codex-auth:/root/.codex          # codex auth JSON (transferred)
+      - ./data/codex-auth:/home/scribe/.codex   # codex auth JSON (transferred; chown host dir to UID 1001)
       - /mnt/nfs/scribe-tmp:/data/tmp           # TODO(task#12): NFS mount of TrueNAS
     depends_on:
       scribe-pot:

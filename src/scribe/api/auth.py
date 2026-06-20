@@ -140,6 +140,16 @@ def _trusted_networks() -> list[ipaddress._BaseNetwork]:
     return networks
 
 
+def _trusted_proxy_networks() -> list[ipaddress._BaseNetwork]:
+    networks: list[ipaddress._BaseNetwork] = []
+    for raw in settings.trusted_proxies.split(","):
+        value = raw.strip()
+        if not value:
+            continue
+        networks.append(ipaddress.ip_network(value, strict=False))
+    return networks
+
+
 def _is_trusted_host(host: str) -> bool:
     if host == "testclient":
         return True
@@ -150,12 +160,39 @@ def _is_trusted_host(host: str) -> bool:
     return any(ip in network for network in _trusted_networks())
 
 
+def _host_in_networks(host: str, networks: list[ipaddress._BaseNetwork]) -> bool:
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return any(ip in network for network in networks)
+
+
 def _client_ip(request: Request) -> str:
-    host = request.client.host if request.client else ""
-    forwarded_for = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
-    if forwarded_for and _is_trusted_host(host):
+    """Resolve the real client IP for CIDR auth + logging (#348).
+
+    With ``trusted_proxies`` configured, X-Forwarded-For is honoured only when
+    the immediate peer is a configured proxy, and the chain is walked
+    right-to-left skipping trusted proxies so a client cannot spoof the
+    leftmost entry. Without ``trusted_proxies`` the safe default is preserved
+    (XFF is ignored unless the immediate peer is itself trusted via
+    ``trusted_cidrs`` / testclient), matching pre-#348 behaviour.
+    """
+    peer = request.client.host if request.client else ""
+    xff = request.headers.get("x-forwarded-for", "")
+    proxies = _trusted_proxy_networks()
+    if proxies:
+        if not _host_in_networks(peer, proxies):
+            return peer
+        candidates = [c.strip() for c in xff.split(",") if c.strip()]
+        for candidate in reversed(candidates):
+            if not _host_in_networks(candidate, proxies):
+                return candidate
+        return peer
+    forwarded_for = xff.split(",", 1)[0].strip()
+    if forwarded_for and _is_trusted_host(peer):
         return forwarded_for
-    return host
+    return peer
 
 
 def _normal_email(value: str | None) -> str | None:

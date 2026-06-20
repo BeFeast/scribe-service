@@ -389,6 +389,13 @@ class Settings(BaseSettings):
     # old token on the very next request.
     machine_bearer_grace_seconds: int = 300
     trusted_cidrs: str = "127.0.0.0/8,::1/128"
+    # Trusted reverse-proxy peers (#348). Comma-separated CIDRs/IPs whose
+    # direct peer connection we trust to have appended the real client IP to
+    # `X-Forwarded-For`. When unset (empty), XFF is never honoured and the
+    # immediate peer IP is used for CIDR auth + logging (safe default). When
+    # set, XFF is walked right-to-left skipping trusted proxies so a client
+    # cannot spoof the leftmost entry.
+    trusted_proxies: str = ""
 
     # Path the scribe-backups sidecar writes after each successful run; surfaced
     # by GET /admin/backup-status for healthcheck curl-polling (PRD §4.12).
@@ -442,6 +449,19 @@ class Settings(BaseSettings):
                 ip_network(cidr, strict=False)
             except ValueError as exc:
                 raise ValueError(f"SCRIBE_TRUSTED_CIDRS contains invalid CIDR {cidr!r}") from exc
+        return value
+
+    @field_validator("trusted_proxies")
+    @classmethod
+    def _validate_trusted_proxies(cls, value: str) -> str:
+        for raw in value.split(","):
+            entry = raw.strip()
+            if not entry:
+                continue
+            try:
+                ip_network(entry, strict=False)
+            except ValueError as exc:
+                raise ValueError(f"SCRIBE_TRUSTED_PROXIES contains invalid CIDR/IP {entry!r}") from exc
         return value
 
     def runtime_overlay(self, rows: Mapping[str, str] | None = None) -> set[str]:
