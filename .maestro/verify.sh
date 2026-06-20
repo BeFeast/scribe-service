@@ -7,16 +7,28 @@ echo '=== Project Test Suite ==='
 python -m pytest
 
 echo '=== Requirement Verification ==='
-echo 'Requirement 1: Document the release scheme in `AGENTS.md` (and/or `CONTRIBUTING`/README): the `...'
-echo 'WARN: Run tests in tests/test_source_links.py'
-
-echo 'Requirement 2: State that merge to `main` triggers, continuously and per-merge, a version bump ...'
+echo 'Requirement 1: `src/scribe/pipeline/summary_providers.py:402` — flock acquired well before ex...'
 python -m pytest
 
-echo 'Requirement 3: A documented section explains the `semver:*` label taxonomy, the default-`patch`...'
+echo 'Requirement 2: **Confirm** the lock truly spans the full exec (not just session/daemon acquisit...'
+echo 'WARN: Run tests in .codex-work/pr19/test_migrations.py'
+
+echo 'Requirement 3: If confirmed: hold the lock only for the critical section that genuinely needs m...'
+echo 'WARN: Run tests in .codex-work/pr19/test_migrations.py'
+
+echo 'Requirement 4: If the lock is actually required for the whole exec (e.g. codex CLI is not concu...'
+echo 'WARN: Run tests in .codex-work/pr19/test_migrations.py'
+
+echo 'Requirement 5: A written finding confirming/refuting the serialization.'
 python -m pytest
 
-echo 'Requirement 4: The three `semver:*` labels exist in the repo (already created).'
+echo 'Requirement 6: If real: two concurrent jobs summarize without serializing on the full exec (dem...'
+echo 'WARN: Run tests in tests/test_jobs_youtube_cookies.py'
+
+echo 'Requirement 7: A `codex_lock_wait_seconds` metric (or similar) so contention is observable.'
 python -m pytest
+
+echo 'Requirement 8: No regression in codex auth/token handling.'
+echo 'WARN: Run tests in .codex-work/pr19/test_migrations.py'
 
 echo 'All verifications passed.'

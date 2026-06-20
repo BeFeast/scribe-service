@@ -23,6 +23,7 @@ def test_metrics_export_contains_scribe_metrics():
     assert "scribe_worker_queue_depth" in text
     assert "scribe_last_success_timestamp_seconds" in text
     assert "scribe_codex_token_revoked_total" in text
+    assert "scribe_codex_lock_wait_seconds" in text
     assert "scribe_daily_spend_usd" in text
     assert "scribe_daily_spend_cap_pct" in text
     assert "scribe_vast_burn_rate_usd_per_hour" in text
