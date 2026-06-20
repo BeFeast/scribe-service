@@ -55,6 +55,8 @@ def _seed_transcript(
     url: str | None = None,
     owner_subject: str | None = None,
     owner_email: str | None = None,
+    summary_shortlink: str | None = "https://go.example/s",
+    transcript_shortlink: str | None = "https://go.example/t",
 ):
     job = Job(
         url=url or f"https://youtu.be/{video_id}",
@@ -79,8 +81,8 @@ def _seed_transcript(
         vast_cost=vast_cost,
         owner_subject=owner_subject,
         owner_email=owner_email,
-        summary_shortlink="https://go.example/s",
-        transcript_shortlink="https://go.example/t",
+        summary_shortlink=summary_shortlink,
+        transcript_shortlink=transcript_shortlink,
     )
     if created_at is not None:
         transcript.created_at = created_at
@@ -277,6 +279,9 @@ def test_transcript_detail_json_keeps_full_body_for_spa(client, db_session):
     assert body["summary_md"].startswith("# Heading")
     assert body["transcript_md"] == "transcript body"
     assert body["vast_cost"] == 0.125
+    # Issue #295: mobile Share sheet reads these off the detail payload.
+    assert body["summary_shortlink"] == "https://go.example/s"
+    assert body["transcript_shortlink"] == "https://go.example/t"
 
 
 def test_transcript_detail_json_allows_partial_summary(client, db_session):
@@ -294,6 +299,29 @@ def test_transcript_detail_json_allows_partial_summary(client, db_session):
 
     assert resp.status_code == 200
     assert resp.json()["summary_md"] is None
+
+
+def test_transcript_detail_json_shortlinks_null_when_unminted(client, db_session):
+    # Issue #295: no fabricated links — an unminted shortlink stays null on the
+    # detail payload so the mobile Share sheet hides the row.
+    _, transcript = _seed_transcript(
+        db_session,
+        video_id="detailnolink",
+        title="No Shortlinks",
+        summary_md="# Heading",
+        summary_shortlink=None,
+        transcript_shortlink=None,
+    )
+
+    resp = client.get(
+        f"/transcripts/{transcript.id}",
+        headers={"Accept": "application/json"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["summary_shortlink"] is None
+    assert body["transcript_shortlink"] is None
 
 
 def test_transcript_detail_html_accept_redirects_to_spa(client, db_session):

@@ -7,28 +7,34 @@ echo '=== Project Test Suite ==='
 python -m pytest
 
 echo '=== Requirement Verification ==='
-echo 'Requirement 1: `src/scribe/pipeline/summary_providers.py:402` — flock acquired well before ex...'
+echo 'Requirement 1: "Copy summary link" → `transcript.summary_shortlink`'
+echo 'WARN: Run tests in tests/test_source_links.py'
+
+echo 'Requirement 2: "Copy transcript link" → `transcript.transcript_shortlink`'
+echo 'WARN: Run tests in tests/test_source_links.py'
+
+echo 'Requirement 3: `GET /transcripts/:id` returns `summary_shortlink` and `transcript_shortlink` (n...'
 python -m pytest
 
-echo 'Requirement 2: **Confirm** the lock truly spans the full exec (not just session/daemon acquisit...'
-echo 'WARN: Run tests in .codex-work/pr19/test_migrations.py'
-
-echo 'Requirement 3: If confirmed: hold the lock only for the critical section that genuinely needs m...'
-echo 'WARN: Run tests in .codex-work/pr19/test_migrations.py'
-
-echo 'Requirement 4: If the lock is actually required for the whole exec (e.g. codex CLI is not concu...'
-echo 'WARN: Run tests in .codex-work/pr19/test_migrations.py'
-
-echo 'Requirement 5: A written finding confirming/refuting the serialization.'
+echo 'Requirement 4: `adaptTranscript()` passes both fields through.'
 python -m pytest
 
-echo 'Requirement 6: If real: two concurrent jobs summarize without serializing on the full exec (dem...'
-echo 'WARN: Run tests in tests/test_jobs_youtube_cookies.py'
-
-echo 'Requirement 7: A `codex_lock_wait_seconds` metric (or similar) so contention is observable.'
+echo 'Requirement 5: Remove the TODO guards in `ShareSheet.jsx` so the two rows render when the field...'
 python -m pytest
 
-echo 'Requirement 8: No regression in codex auth/token handling.'
-echo 'WARN: Run tests in .codex-work/pr19/test_migrations.py'
+echo 'Requirement 6: `GET /transcripts/:id` includes `summary_shortlink` / `transcript_shortlink` (st...'
+python -m pytest
+
+echo 'Requirement 7: `adaptTranscript()` forwards both.'
+python -m pytest
+
+echo 'Requirement 8: Mobile Share sheet shows the two link rows for a transcript that has shortlinks;...'
+echo 'WARN: Run tests in tests/test_source_links.py'
+
+echo 'Requirement 9: No fabricated/placeholder links — null stays hidden.'
+echo 'WARN: Run tests in tests/test_source_links.py'
+
+echo 'Requirement 10: `uv run pytest -q` + SPA `bun run build` green.'
+echo 'WARN: Run tests in tests/test_api_spa_endpoints.py'
 
 echo 'All verifications passed.'

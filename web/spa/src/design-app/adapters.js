@@ -40,6 +40,11 @@ export function adaptTranscript(row) {
 			row.transcript_md ?? row.transcript_excerpt ?? "",
 		),
 		job_id: row.job_id ?? null,
+		// Per-transcript share shortlinks from GET /transcripts/:id; null when
+		// the backend has not minted one. Never fabricated — null stays null so
+		// the mobile Share sheet hides the row.
+		summary_shortlink: row.summary_shortlink ?? null,
+		transcript_shortlink: row.transcript_shortlink ?? null,
 	};
 }
 
