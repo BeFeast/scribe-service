@@ -1,4 +1,5 @@
 import React from "react";
+import { usePoll } from "../hooks/usePoll";
 import { adaptConfig, adaptFailure, adaptJob, adaptLibraryRow, adaptOps, adaptTranscript, adaptUsers } from "./adapters.js";
 
 export function useScribeRuntime(auth, route) {
@@ -36,21 +37,11 @@ export function useScribeRuntime(auth, route) {
 		}
 	}, [auth]);
 
-	React.useEffect(() => {
-		if (auth.bootstrap !== "ready") {
-			return;
-		}
-		const controller = new AbortController();
-		void refreshCore(controller.signal);
-		const timer = window.setInterval(() => {
-			const tickController = new AbortController();
-			void refreshCore(tickController.signal);
-		}, 5000);
-		return () => {
-			controller.abort();
-			window.clearInterval(timer);
-		};
-	}, [refreshCore, auth.bootstrap]);
+	// Single visibility-aware polling timer for the core library/jobs/ops
+	// views. usePoll suspends while document.hidden (no network calls),
+	// fires an immediate deduped refresh on focus, and aborts overlapping
+	// in-flight refreshes via the AbortSignal it passes to refreshCore.
+	usePoll(refreshCore, 5000, { enabled: auth.bootstrap === "ready" });
 
 	const wasSignedIn = React.useRef(auth.signedIn);
 	React.useEffect(() => {
@@ -89,28 +80,54 @@ export function useScribeRuntime(auth, route) {
 		}
 		const controller = new AbortController();
 		let timer = 0;
+		let running = false;
+		let stopped = false;
 		setCurrentJob((previous) => ({ loading: true, error: null, value: previous.value?.id === route.params.id ? previous.value : null }));
-		const load = async () => {
-			try {
-				const body = await fetchJson(auth, "/jobs/" + route.params.id, controller.signal);
-				const job = adaptJob(body);
-				setCurrentJob({ loading: false, error: null, value: job });
-				if (!controller.signal.aborted && isInFlight(job.status)) {
-					timer = window.setTimeout(load, 2000);
-				}
-			} catch (error) {
-				if (!controller.signal.aborted) {
-					setCurrentJob((previous) => ({ loading: false, error: messageOf(error), value: previous.value }));
-					if (isTransientFetchError(error)) {
-						timer = window.setTimeout(load, 2000);
-					}
-				}
+		const scheduleNext = () => {
+			window.clearTimeout(timer);
+			timer = 0;
+			if (!stopped && !document.hidden) {
+				timer = window.setTimeout(load, 2000);
 			}
 		};
+		const load = async () => {
+			if (stopped || running) {
+				return;
+			}
+			running = true;
+			try {
+				const body = await fetchJson(auth, "/jobs/" + route.params.id, controller.signal);
+				if (controller.signal.aborted) return;
+				const job = adaptJob(body);
+				setCurrentJob({ loading: false, error: null, value: job });
+				if (isInFlight(job.status)) {
+					scheduleNext();
+				}
+			} catch (error) {
+				if (controller.signal.aborted) return;
+				setCurrentJob((previous) => ({ loading: false, error: messageOf(error), value: previous.value }));
+				if (isTransientFetchError(error)) {
+					scheduleNext();
+				}
+			} finally {
+				running = false;
+			}
+		};
+		const onVisibilityChange = () => {
+			if (document.hidden) {
+				window.clearTimeout(timer);
+				timer = 0;
+				return;
+			}
+			void load();
+		};
+		document.addEventListener("visibilitychange", onVisibilityChange);
 		void load();
 		return () => {
+			stopped = true;
 			controller.abort();
 			window.clearTimeout(timer);
+			document.removeEventListener("visibilitychange", onVisibilityChange);
 		};
 	}, [auth, route.page, route.params.id]);
 
