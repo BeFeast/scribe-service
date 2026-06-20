@@ -379,10 +379,50 @@ def _matches_any(text: str, needles: tuple[str, ...]) -> bool:
     return any(n.lower() in lowered for n in needles)
 
 
+def _acquire_flock_bounded(
+    lock_fd: int, timeout_secs: float, *, poll_interval: float = 0.1
+) -> tuple[bool, float]:
+    """Acquire an exclusive `flock`, blocking at most `timeout_secs`.
+
+    Returns `(acquired, waited_secs)`. Polls non-blockingly (`LOCK_NB`) so a
+    long-running codex held by another worker bounds the wait instead of
+    blocking for the full codex timeout. `timeout_secs <= 0` means a single
+    non-blocking attempt. `waited_secs` is recorded even on timeout so the
+    caller can publish the contention metric.
+    """
+    start = time.monotonic()
+    while True:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True, time.monotonic() - start
+        except OSError:
+            # EAGAIN/EACCES: the lock is held by another process/fd.
+            waited = time.monotonic() - start
+            if waited >= timeout_secs:
+                return False, waited
+            time.sleep(min(poll_interval, max(0.0, timeout_secs - waited)))
+
+
 class CodexProvider:
     """codex CLI backend. Serialised via `fcntl.flock` on
     `settings.codex_lock_path` so concurrent codex runs do not race the
     single-use OAuth refresh token.
+
+    The lock spans the **whole** `codex exec`, not just an auth handshake: codex
+    may rotate its single-use ChatGPT OAuth refresh token at an unpredictable
+    point during the run and writes the rotated token back to the shared auth
+    store. `codex exec` exposes no separate auth-only phase, and we run no codex
+    daemon/pool, so the critical section cannot be narrowed below the full exec
+    without risking mutual token revocation between concurrent workers.
+
+    To stop that lock from globally serialising all summary work (issue #352),
+    acquisition is **bounded** by `settings.codex_lock_wait_timeout_secs`: a
+    worker that cannot get the lock in time raises `ProviderError`
+    (`codex_lock_timeout`) so the fallback chain advances to the next provider
+    rather than blocking for the full codex timeout. The lock-wait time is
+    published to `metrics.codex_lock_wait_seconds` so contention is observable.
+    `codex_lock_timeout` is a generic `ProviderError` (not trip-relevant): codex
+    itself is healthy, just busy, so it must not trip codex's circuit breaker.
 
     Maps codex stderr signatures into typed `ProviderError` subclasses:
       * token_revoked / refresh_token_reused / "Please log out and sign in
@@ -405,58 +445,76 @@ class CodexProvider:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         lock_fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            with tempfile.TemporaryDirectory(prefix="scribe-codex-") as tmp:
-                out_file = Path(tmp) / "summary.md"
-                cmd = [
-                    s.codex_bin, "exec",
-                    "--skip-git-repo-check",
-                    "--dangerously-bypass-approvals-and-sandbox",
-                    "-c", f"model_reasoning_effort={s.codex_reasoning}",
-                    "-o", str(out_file),
-                ]
-                if s.codex_model:
-                    cmd += ["-m", s.codex_model]
-                cmd += ["-"]  # read prompt from stdin
-                try:
-                    proc = subprocess.run(
-                        cmd,
-                        input=prompt,
-                        text=True,
-                        capture_output=True,
-                        timeout=s.codex_timeout_secs,
-                    )
-                except subprocess.TimeoutExpired as exc:
-                    raise ProviderTimeoutError(
-                        reason="timeout",
-                        details=f"codex exec timed out after {s.codex_timeout_secs}s",
-                    ) from exc
-                stderr = proc.stderr or ""
-                if proc.returncode != 0 or not out_file.is_file():
-                    stderr_tail = stderr or proc.stdout or ""
-                    if _matches_any(stderr, _CODEX_TOKEN_REVOKED_PATTERNS):
-                        log.error("codex token revoked", extra={"rc": proc.returncode})
-                        metrics.codex_token_revoked_total.inc()
-                        self.last_token_revoked_stderr = stderr_tail
-                        raise ProviderUnavailableError(
-                            reason="codex_token_revoked",
-                            details=f"OAuth token revoked: {stderr_tail[-400:]}",
-                        )
-                    if _matches_any(stderr, _CODEX_USAGE_LIMIT_PATTERNS):
-                        raise ProviderUsageLimitError(
-                            reason="codex_usage_limit",
-                            details=stderr_tail[-400:],
-                        )
-                    raise ProviderError(
-                        reason="codex_error",
-                        details=f"rc={proc.returncode}: {stderr_tail[-2000:]}",
-                    )
-                summary_md = out_file.read_text(encoding="utf-8").strip()
-        finally:
+            acquired, waited = _acquire_flock_bounded(
+                lock_fd, s.codex_lock_wait_timeout_secs
+            )
+            metrics.codex_lock_wait_seconds.observe(waited)
+            if not acquired:
+                log.warning(
+                    "scribe.summary.codex_lock_timeout",
+                    extra={
+                        "waited_secs": round(waited, 2),
+                        "timeout_secs": s.codex_lock_wait_timeout_secs,
+                    },
+                )
+                raise ProviderError(
+                    reason="codex_lock_timeout",
+                    details=(
+                        f"codex lock held by another summary for >"
+                        f"{s.codex_lock_wait_timeout_secs}s; advancing to next provider"
+                    ),
+                )
             try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                with tempfile.TemporaryDirectory(prefix="scribe-codex-") as tmp:
+                    out_file = Path(tmp) / "summary.md"
+                    cmd = [
+                        s.codex_bin, "exec",
+                        "--skip-git-repo-check",
+                        "--dangerously-bypass-approvals-and-sandbox",
+                        "-c", f"model_reasoning_effort={s.codex_reasoning}",
+                        "-o", str(out_file),
+                    ]
+                    if s.codex_model:
+                        cmd += ["-m", s.codex_model]
+                    cmd += ["-"]  # read prompt from stdin
+                    try:
+                        proc = subprocess.run(
+                            cmd,
+                            input=prompt,
+                            text=True,
+                            capture_output=True,
+                            timeout=s.codex_timeout_secs,
+                        )
+                    except subprocess.TimeoutExpired as exc:
+                        raise ProviderTimeoutError(
+                            reason="timeout",
+                            details=f"codex exec timed out after {s.codex_timeout_secs}s",
+                        ) from exc
+                    stderr = proc.stderr or ""
+                    if proc.returncode != 0 or not out_file.is_file():
+                        stderr_tail = stderr or proc.stdout or ""
+                        if _matches_any(stderr, _CODEX_TOKEN_REVOKED_PATTERNS):
+                            log.error("codex token revoked", extra={"rc": proc.returncode})
+                            metrics.codex_token_revoked_total.inc()
+                            self.last_token_revoked_stderr = stderr_tail
+                            raise ProviderUnavailableError(
+                                reason="codex_token_revoked",
+                                details=f"OAuth token revoked: {stderr_tail[-400:]}",
+                            )
+                        if _matches_any(stderr, _CODEX_USAGE_LIMIT_PATTERNS):
+                            raise ProviderUsageLimitError(
+                                reason="codex_usage_limit",
+                                details=stderr_tail[-400:],
+                            )
+                        raise ProviderError(
+                            reason="codex_error",
+                            details=f"rc={proc.returncode}: {stderr_tail[-2000:]}",
+                        )
+                    summary_md = out_file.read_text(encoding="utf-8").strip()
             finally:
-                os.close(lock_fd)
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
 
         if not summary_md:
             raise ProviderError(reason="empty_response", details="codex produced empty output")

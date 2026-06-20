@@ -10,7 +10,10 @@ Resilience (PRD §4.4):
     a sustained outage on one backend doesn't burn timeout budget on every job.
   * `CodexProvider` keeps the `fcntl.flock(codex_lock_path)` serialisation —
     ChatGPT-account OAuth refresh tokens are single-use and concurrent codex
-    runs race them into mutual revocation.
+    runs race them into mutual revocation. The lock acquire is bounded by
+    `codex_lock_wait_timeout_secs` (issue #352): a second worker that can't get
+    the lock falls through to the next provider instead of stalling for the full
+    codex timeout, and `scribe_codex_lock_wait_seconds` exposes the contention.
   * If the whole chain fails and codex's last failure was a token-revoked
     signature, scribe fires a one-shot admin Telegram alert with the codex
     stderr tail so the operator knows to re-login. The alert is suppressed if

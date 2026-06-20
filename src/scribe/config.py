@@ -249,6 +249,15 @@ class Settings(BaseSettings):
     # codex processes would race the refresh and revoke each other's tokens.
     codex_lock_path: str = "/tmp/scribe-codex.lock"
 
+    # Max seconds a summary worker waits to acquire the single-codex lock
+    # before giving up and letting the fallback chain advance to the next
+    # provider. The lock still spans the whole `codex exec` (the OAuth refresh
+    # token rotates mid-exec and codex exposes no separate auth phase), so this
+    # bounds a second worker's worst-case wait from the full codex timeout
+    # (`codex_timeout_secs`) down to this value instead of globally serialising
+    # all summary work. Contention is observable via `scribe_codex_lock_wait_seconds`.
+    codex_lock_wait_timeout_secs: int = 120
+
     # Fallback summary providers tried in order when codex (or any earlier
     # provider) fails. Sourced from SCRIBE_SUMMARY_PROVIDERS as a
     # comma-separated, case-insensitive list. Unknown names are dropped at

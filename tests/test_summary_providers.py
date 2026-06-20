@@ -8,13 +8,17 @@ translates `ProviderError(chain_exhausted)` into `SummarizeError` /
 """
 from __future__ import annotations
 
+import fcntl
+import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
+from scribe.obs import metrics
 from scribe.pipeline import summarizer, summary_providers
 from scribe.pipeline.summary_providers import (
     ClaudeProvider,
@@ -26,7 +30,19 @@ from scribe.pipeline.summary_providers import (
     ProviderUsageLimitError,
     SummaryResult,
     build_provider_chain,
+    summarize_with_chain,
 )
+
+
+def _hist_count(hist: Any) -> float:
+    """Return the `_count` sample of an unlabelled Histogram via collect()."""
+    metric = next(iter(hist.collect()), None)
+    if metric is None:
+        return 0.0
+    for sample in metric.samples:
+        if sample.name.endswith("_count"):
+            return sample.value
+    return 0.0
 
 
 @pytest.fixture(autouse=True)
@@ -147,6 +163,99 @@ def test_codex_provider_generic_error_when_nonzero_without_known_signature(
     assert exc.value.reason == "codex_error"
     assert not isinstance(exc.value, ProviderUsageLimitError)
     assert not isinstance(exc.value, ProviderUnavailableError)
+
+
+# ---------- CodexProvider lock-wait bounding (issue #352) ---------------------
+
+
+def test_codex_provider_records_lock_wait_metric_on_happy_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The uncontended path still publishes the lock-wait histogram (≈0s) so
+    contention is observable from a stable baseline."""
+    _patch_codex_settings(monkeypatch, tmp_path)
+
+    def fake_run(cmd, input, text, capture_output, timeout):  # noqa: A002, ARG001
+        out_file = Path(cmd[cmd.index("-o") + 1])
+        out_file.write_text(_OK_MARKDOWN, encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(summary_providers.subprocess, "run", fake_run)
+    before = _hist_count(metrics.codex_lock_wait_seconds)
+    CodexProvider().summarize("prompt")
+    assert _hist_count(metrics.codex_lock_wait_seconds) == before + 1
+
+
+def test_codex_provider_lock_held_times_out_without_running_exec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When another process holds the codex lock, acquisition is bounded by
+    codex_lock_wait_timeout_secs: the provider raises a (non-trip-relevant)
+    ProviderError instead of blocking for the whole codex timeout, and never
+    launches codex exec."""
+    _patch_codex_settings(monkeypatch, tmp_path)
+    monkeypatch.setattr(summarizer.settings, "codex_lock_wait_timeout_secs", 0.2)
+
+    def fail_run(*args: Any, **kwargs: Any):  # noqa: ARG001
+        raise AssertionError("codex exec must not run while the lock is held")
+
+    monkeypatch.setattr(summary_providers.subprocess, "run", fail_run)
+
+    lock_path = tmp_path / "codex.lock"
+    holder_fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+    fcntl.flock(holder_fd, fcntl.LOCK_EX)
+    try:
+        before = _hist_count(metrics.codex_lock_wait_seconds)
+        started = time.monotonic()
+        with pytest.raises(ProviderError) as exc:
+            CodexProvider().summarize("prompt")
+        elapsed = time.monotonic() - started
+    finally:
+        fcntl.flock(holder_fd, fcntl.LOCK_UN)
+        os.close(holder_fd)
+
+    assert exc.value.reason == "codex_lock_timeout"
+    # Not a usage-limit / unavailable / timeout error, so it does not trip the
+    # codex circuit breaker — codex is healthy, just busy.
+    assert not isinstance(
+        exc.value,
+        (ProviderUsageLimitError, ProviderUnavailableError, ProviderTimeoutError),
+    )
+    # Bounded by the wait timeout, nowhere near codex_timeout_secs (600).
+    assert elapsed < 5.0
+    assert _hist_count(metrics.codex_lock_wait_seconds) == before + 1
+
+
+def test_concurrent_summary_falls_through_codex_lock_to_next_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Acceptance #2: while one worker holds the codex lock for its full exec,
+    a second worker does not serialise on it — the bounded wait elapses and the
+    fallback chain advances to a concurrent provider, so both jobs summarise."""
+    _patch_codex_settings(monkeypatch, tmp_path)
+    monkeypatch.setattr(summarizer.settings, "codex_lock_wait_timeout_secs", 0.2)
+
+    def fail_run(*args: Any, **kwargs: Any):  # noqa: ARG001
+        raise AssertionError("codex exec must not run while the lock is held")
+
+    monkeypatch.setattr(summary_providers.subprocess, "run", fail_run)
+
+    free = _ScriptedProvider("freellmapi", [_ok_summary()])
+    chain = [CodexProvider(), free]
+
+    lock_path = tmp_path / "codex.lock"
+    holder_fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+    fcntl.flock(holder_fd, fcntl.LOCK_EX)
+    try:
+        result = summarize_with_chain(chain, "prompt")
+    finally:
+        fcntl.flock(holder_fd, fcntl.LOCK_UN)
+        os.close(holder_fd)
+
+    assert isinstance(result, SummaryResult)
+    assert free.calls == 1
+    # Codex did not trip its breaker on lock contention.
+    assert summary_providers.get_breaker("codex").state == "closed"
 
 
 # ---------- ClaudeProvider ---------------------------------------------------

@@ -124,6 +124,18 @@ codex_token_revoked_total = Counter(
     "Times codex stderr matched an OAuth-token-revocation signature.",
 )
 
+# Seconds a summary worker spent waiting to acquire the single-codex flock
+# before either running `codex exec` or (on timeout) falling through to the
+# next provider. The lock spans the whole exec because ChatGPT OAuth refresh
+# tokens are single-use; this histogram makes the resulting contention between
+# concurrent workers observable. Observations near codex_lock_wait_timeout_secs
+# mean workers are serialising on codex and falling back instead of waiting.
+codex_lock_wait_seconds = Histogram(
+    "scribe_codex_lock_wait_seconds",
+    "Seconds a summary worker waited to acquire the single-codex lock.",
+    buckets=(0.01, 0.1, 1, 5, 15, 30, 60, 120, 300, 600),
+)
+
 # Webhook delivery — one increment per terminal-status push attempt.
 # outcome: ok (2xx), http_error (non-2xx), net_error (timeout / refused / DNS),
 # skipped (callback_url is NULL).
