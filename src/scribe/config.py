@@ -350,6 +350,11 @@ class Settings(BaseSettings):
     # the owner attribution code consumes them without exposing bearer secrets
     # through the mutable config API.
     machine_bearer_token: str = ""
+    # Grace window (seconds) during which the previous-generation machine
+    # bearer token is still accepted after a rotation (see
+    # scribe.api.tokens). 0 disables the grace window: a rotation rejects the
+    # old token on the very next request.
+    machine_bearer_grace_seconds: int = 300
     trusted_cidrs: str = "127.0.0.0/8,::1/128"
 
     # Path the scribe-backups sidecar writes after each successful run; surfaced

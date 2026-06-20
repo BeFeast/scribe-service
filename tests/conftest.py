@@ -20,6 +20,15 @@ def auth_policy_defaults(monkeypatch):
     monkeypatch.setattr(settings, "machine_bearer_token", "")
     monkeypatch.setattr(settings, "app_start_workers", False)
 
+    # The machine-bearer rotation state is cached in-process; bust it before
+    # every test so a prior test's rotation cannot leak into the next one.
+    try:
+        from scribe.api.tokens import bust_machine_bearer_cache
+
+        bust_machine_bearer_cache()
+    except Exception:
+        pass
+
 
 @pytest.fixture(scope="session")
 def test_database_url() -> str:

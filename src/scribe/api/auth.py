@@ -21,6 +21,7 @@ from jwt import InvalidTokenError, PyJWK
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from scribe.api.tokens import machine_bearer_matches
 from scribe.config import settings
 from scribe.db.models import ExtensionToken, Owner, User
 
@@ -79,11 +80,10 @@ def default_owner() -> OwnerIdentity | None:
     )
 
 
-def current_owner(request: Request) -> OwnerIdentity | None:
+def current_owner(request: Request, session: Session | None = None) -> OwnerIdentity | None:
     bearer = _bearer_token(request)
     if bearer:
-        machine_token = settings.machine_bearer_token.strip()
-        if machine_token and secrets.compare_digest(bearer, machine_token):
+        if machine_bearer_matches(bearer, session):
             return default_owner()
         clerk_owner = _owner_from_clerk_jwt(bearer, verify=False)
         if clerk_owner is not None:
@@ -94,11 +94,10 @@ def current_owner(request: Request) -> OwnerIdentity | None:
     return None
 
 
-def classify_auth(request: Request) -> AuthState:
+def classify_auth(request: Request, session: Session | None = None) -> AuthState:
     bearer = _bearer_token(request, strict=True)
     if bearer:
-        machine_token = settings.machine_bearer_token.strip()
-        if machine_token and secrets.compare_digest(bearer, machine_token):
+        if machine_bearer_matches(bearer, session):
             return AuthState.machine_bearer
         if _clerk_configured():
             _validate_clerk_user(bearer)
@@ -496,8 +495,7 @@ def current_actor(
         raise HTTPException(status_code=401, detail="invalid authorization header")
     if credentials is not None and credentials.scheme.lower() == "bearer":
         token = credentials.credentials
-        machine = settings.machine_bearer_token.strip()
-        if machine and secrets.compare_digest(token, machine):
+        if machine_bearer_matches(token, session):
             owner = default_owner()
             return Actor(
                 kind="machine",

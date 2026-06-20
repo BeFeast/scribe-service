@@ -58,6 +58,7 @@ from scribe.api.schemas import (
     JobView,
     LibraryResponse,
     LibraryRow,
+    MachineBearerRotateView,
     OpsSnapshot,
     PreflightResponse,
     PromptActiveWrite,
@@ -80,6 +81,7 @@ from scribe.api.schemas import (
     WorkerPoolSnapshot,
     validate_youtube_cookies,
 )
+from scribe.api.tokens import rotate_machine_bearer_token
 from scribe.config import (
     RUNTIME_CONFIG,
     parse_runtime_config_value,
@@ -614,10 +616,25 @@ def update_config(
     return _config_response(restart_required=restart_required)
 
 
-@router.post("/api/config/rotate-token", status_code=501)
-def rotate_token(_auth: AuthState = Depends(require_operator_auth)) -> None:
-    # TODO(PRD §4.6): implement once the auth surface owns bearer-token rotation.
-    raise HTTPException(status_code=501, detail="bearer-token rotation is not implemented yet")
+@router.post("/api/config/rotate-token", response_model=MachineBearerRotateView)
+def rotate_token(
+    session: Session = Depends(get_session),
+    _auth: AuthState = Depends(require_operator_auth),
+) -> MachineBearerRotateView:
+    """Rotate the machine bearer token without a restart.
+
+    The new plaintext token is returned exactly once; only its SHA-256 hash is
+    persisted in app_config. The previously active token is demoted into the
+    previous generation and stays accepted for machine_bearer_grace_seconds
+    so in-flight callers finish their request before the old token stops
+    working. After the grace window the old token is rejected on the next
+    request (see scribe.api.tokens).
+    """
+    new_token = rotate_machine_bearer_token(session)
+    return MachineBearerRotateView(
+        token=new_token,
+        grace_seconds=settings.machine_bearer_grace_seconds,
+    )
 
 
 def _user_view(user: User) -> UserAdminView:
@@ -825,7 +842,7 @@ def create_job(
         # touches the DB, the response, or the log buffer.
     video_id = initial_video_key(body.url)
 
-    owner = current_owner(request)
+    owner = current_owner(request, session)
     correlation_id = request_correlation_id(request)
     done = session.scalar(
         _actor_filter(
@@ -1201,7 +1218,7 @@ def api_jobs_recent_failures(
 ) -> RecentFailuresResponse:
     """Return the newest failed jobs for the Queue failure rail."""
     _no_store(response)
-    owner = current_owner(request)
+    owner = current_owner(request, session)
     jobs = session.scalars(
         _owner_filter(select(Job).where(Job.status == JobStatus.failed), Job, owner)
         .order_by(Job.updated_at.desc(), Job.id.desc())

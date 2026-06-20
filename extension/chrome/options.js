@@ -8,6 +8,7 @@ const status = document.querySelector("#status");
 const youtubeStatus = document.querySelector("#youtube-status");
 const grantYoutubeButton = document.querySelector("#grant-youtube");
 const revokeYoutubeButton = document.querySelector("#revoke-youtube");
+const lastAuthEl = document.querySelector("#last-auth");
 
 document.addEventListener("DOMContentLoaded", restoreOptions);
 document.addEventListener("DOMContentLoaded", refreshYoutubeStatus);
@@ -15,13 +16,36 @@ form.addEventListener("submit", saveOptions);
 grantYoutubeButton?.addEventListener("click", grantYoutubeCookies);
 revokeYoutubeButton?.addEventListener("click", revokeYoutubeCookies);
 
+// The bearer token is a credential, so it is stored in chrome.storage.local
+// (device-scoped, never cloud-synced). baseUrl is not secret and stays in
+// chrome.storage.sync for cross-device convenience.
 async function restoreOptions() {
-  const stored = await chrome.storage.sync.get({
-    baseUrl: DEFAULT_BASE_URL,
-    bearerToken: "",
-  });
-  baseUrlInput.value = stored.baseUrl;
-  bearerTokenInput.value = stored.bearerToken;
+  const [sync, local] = await Promise.all([
+    chrome.storage.sync.get({ baseUrl: DEFAULT_BASE_URL }),
+    chrome.storage.local.get({ bearerToken: "", lastAuthenticatedAt: "" }),
+  ]);
+  baseUrlInput.value = sync.baseUrl;
+  bearerTokenInput.value = local.bearerToken || "";
+  renderLastAuth(local.lastAuthenticatedAt || "");
+}
+
+function renderLastAuth(value) {
+  if (!lastAuthEl) {
+    return;
+  }
+  if (!value) {
+    lastAuthEl.textContent = "Never authenticated.";
+    lastAuthEl.style.color = "#5b6472";
+    return;
+  }
+  const when = new Date(value);
+  if (Number.isNaN(when.getTime())) {
+    lastAuthEl.textContent = "Last authenticated: unknown";
+    lastAuthEl.style.color = "#5b6472";
+    return;
+  }
+  lastAuthEl.textContent = `Last authenticated: ${when.toLocaleString()}`;
+  lastAuthEl.style.color = "#137333";
 }
 
 async function saveOptions(event) {
@@ -45,10 +69,8 @@ async function saveOptions(event) {
     return;
   }
 
-  await chrome.storage.sync.set({
-    baseUrl,
-    bearerToken: bearerTokenInput.value.trim(),
-  });
+  await chrome.storage.sync.set({ baseUrl });
+  await chrome.storage.local.set({ bearerToken: bearerTokenInput.value.trim() });
   status.style.color = "#137333";
   status.textContent = "Saved.";
 }

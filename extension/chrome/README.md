@@ -21,7 +21,12 @@ Open the extension options page and set:
   outside a trusted LAN.
 
 Saving the base URL asks Chrome for permission to reach that Scribe origin.
-The token is stored in Chrome sync storage and sent as `Authorization: Bearer ...` only when configured. No token is hardcoded in the extension.
+The token is stored in this device's local extension storage only (`chrome.storage.local`) — it
+is **not** written to `chrome.storage.sync`, so it is never uploaded to the Chrome cloud-sync account.
+The base URL is not secret and is kept in `chrome.storage.sync` for cross-device convenience.
+The options page also surfaces a **Last authenticated** timestamp, updated each time Scribe accepts
+the saved token (a successful `GET /preflight` or `POST /jobs`), so a silently-revoked token is
+visible without waiting for a 401. No token is hardcoded in the extension.
 
 ## Preflight & confirm (no blind submits)
 

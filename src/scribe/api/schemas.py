@@ -120,6 +120,14 @@ class ExtensionTokenView(BaseModel):
     token_type: str = "bearer"
 
 
+class MachineBearerRotateView(BaseModel):
+    # The freshly rotated token is returned exactly once; only its hash is
+    # persisted. The previous generation stays accepted for grace_seconds.
+    token: str
+    token_type: str = "bearer"
+    grace_seconds: int
+
+
 class TranscriptBrief(BaseModel):
     id: int
     video_id: str

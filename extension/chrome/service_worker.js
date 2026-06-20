@@ -74,6 +74,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const preflightResult = await helpers.fetchPreflight(config.baseUrl, url, {
     headers: authHeaders(config),
   });
+  if (preflightResult !== null) {
+    await recordAuthenticatedAt();
+  }
   const verdict = helpers.classifySubmit(url, baseHost, preflightResult);
   if (verdict !== "submit" && preflightResult !== null) {
     await notifyFailure(
@@ -130,6 +133,17 @@ function authHeaders(config) {
   return config.bearerToken ? { Authorization: `Bearer ${config.bearerToken}` } : {};
 }
 
+// Record the last time Scribe accepted our credentials (2xx). Surfaced on the
+// options page so an operator can see when the saved token last worked. The
+// timestamp is device-local and never synced.
+async function recordAuthenticatedAt() {
+  try {
+    await chrome.storage.local.set({ lastAuthenticatedAt: new Date().toISOString() });
+  } catch {
+    // Storage failures must not break the submit flow.
+  }
+}
+
 // The toolbar popup's submit flow (#339): preflight the active tab and only
 // auto-submit a single-media URL. Containers/generic/unsupported return a
 // confirm/refuse verdict the popup renders before any job is minted; `force`
@@ -172,6 +186,9 @@ async function submitActiveTab({ force = false } = {}) {
     const preflightResult = await helpers.fetchPreflight(config.baseUrl, url, {
       headers: authHeaders(config),
     });
+    if (preflightResult !== null) {
+      await recordAuthenticatedAt();
+    }
     const verdict = helpers.classifySubmit(url, baseHost, preflightResult);
     if (verdict === "confirm") {
       return { ok: false, confirm: true, message: helpers.verdictMessage(preflightResult) };
@@ -248,14 +265,17 @@ async function collectYoutubeCookies() {
 }
 
 async function getConfig() {
-  const stored = await chrome.storage.sync.get({
-    baseUrl: DEFAULT_BASE_URL,
-    bearerToken: "",
-  });
+  // The bearer token is a credential: keep it in chrome.storage.local, which
+  // is scoped to this device and never cloud-synced. baseUrl is not secret,
+  // so it stays in chrome.storage.sync for cross-device convenience.
+  const [sync, local] = await Promise.all([
+    chrome.storage.sync.get({ baseUrl: DEFAULT_BASE_URL }),
+    chrome.storage.local.get({ bearerToken: "" }),
+  ]);
 
   return {
-    baseUrl: normalizeBaseUrl(stored.baseUrl),
-    bearerToken: String(stored.bearerToken || "").trim(),
+    baseUrl: normalizeBaseUrl(sync.baseUrl),
+    bearerToken: String(local.bearerToken || "").trim(),
   };
 }
 
@@ -321,6 +341,7 @@ async function createJob(config, url) {
     throw new Error(formatHttpError(response.status, body, Boolean(config.bearerToken)));
   }
 
+  await recordAuthenticatedAt();
   return body || {};
 }
 
