@@ -1,10 +1,10 @@
 import React from "react";
 
+import { type PollFn, createPollLoop } from "./pollLoop";
+
 type PollOptions = {
 	enabled?: boolean;
 };
-
-type PollFn = (signal: AbortSignal) => void | Promise<void>;
 
 export function usePoll(
 	fn: PollFn,
@@ -23,61 +23,22 @@ export function usePoll(
 			return;
 		}
 
-		let timeout: number | undefined;
-		let controller: AbortController | undefined;
-		let stopped = false;
-		let running = false;
+		const loop = createPollLoop({
+			fn: (signal) => fnRef.current(signal),
+			interval,
+			isHidden: () => document.hidden,
+			setTimeout: (handler, ms) => window.setTimeout(handler, ms),
+			clearTimeout: (handle) => {
+				if (handle !== undefined) window.clearTimeout(handle);
+			},
+		});
 
-		const clearTimer = () => {
-			if (timeout !== undefined) {
-				window.clearTimeout(timeout);
-				timeout = undefined;
-			}
-		};
-
-		const schedule = () => {
-			clearTimer();
-			if (!stopped && !document.hidden) {
-				timeout = window.setTimeout(tick, interval);
-			}
-		};
-
-		const tick = () => {
-			if (stopped || running || document.hidden) {
-				schedule();
-				return;
-			}
-			running = true;
-			controller?.abort();
-			controller = new AbortController();
-			Promise.resolve(fnRef.current(controller.signal))
-				.catch((error) => {
-					if (!controller?.signal.aborted) {
-						console.error("poll failed", error);
-					}
-				})
-				.finally(() => {
-					running = false;
-					schedule();
-				});
-		};
-
-		const onVisibilityChange = () => {
-			if (document.hidden) {
-				clearTimer();
-				controller?.abort();
-				return;
-			}
-			void tick();
-		};
-
+		const onVisibilityChange = () => loop.onVisibilityChange();
 		document.addEventListener("visibilitychange", onVisibilityChange);
-		void tick();
+		loop.tick();
 
 		return () => {
-			stopped = true;
-			clearTimer();
-			controller?.abort();
+			loop.stop();
 			document.removeEventListener("visibilitychange", onVisibilityChange);
 		};
 	}, [enabled, interval]);
