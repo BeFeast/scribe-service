@@ -221,3 +221,44 @@ def _system_rollcall() -> list[dict]:
         _probe("Chhoto shortlinks", _probe_chhoto),
         _probe("codex CLI", _probe_codex),
     ]
+
+
+# ---------------------------------------------------------------- readiness
+# The four subsystems required for the deep readiness check (/readyz). Each
+# composes an existing rollcall probe so the deep check holds no duplicate
+# probe logic of its own — /readyz is just a different aggregation of the same
+# building blocks as /api/ops. The probe functions are resolved by name at call
+# time (via ``globals()``) so tests can monkeypatch ``ops._probe_*`` and have
+# the deep check pick up the stub without re-importing the module.
+_REQUIRED_SUBSYSTEMS: tuple[tuple[str, str, str], ...] = (
+    ("postgres", "Postgres", "_probe_postgres"),
+    ("vast", "Vast.ai", "_probe_vast"),
+    ("codex", "codex CLI", "_probe_codex"),
+)
+
+
+def readiness_subsystems() -> dict:
+    """Run the required readiness probes (Postgres, Vast, codex, backup) and
+    return a per-subsystem breakdown keyed by short name. Each value is
+    `{"label": str, "value": str, "status": "ok|warn|err"}` — the same shape as a
+    rollcall entry — plus the backup heartbeat payload for the backup row.
+
+    Reuses the rollcall probes; this function owns no probe logic of its own.
+    A subsystem is considered ready only when its status is `ok`; `warn`/`err`
+    both count as down so /readyz returns 503 when any required subsystem is
+    degraded or hard-down."""
+    resolved = globals()
+    subsystems: dict[str, dict] = {
+        key: _probe(label, resolved[name])  # type: ignore[call-overload]
+        for key, label, name in _REQUIRED_SUBSYSTEMS
+    }
+    hb = _backup_heartbeat()
+    stale = bool(hb.get("stale"))
+    last = hb.get("last_success_iso") or "unknown"
+    subsystems["backup"] = {
+        "label": "Backup",
+        "value": f"{'stale' if stale else 'fresh'} · last success {last}",
+        "status": "err" if stale else "ok",
+        "heartbeat": hb,
+    }
+    return subsystems
