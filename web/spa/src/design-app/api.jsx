@@ -195,8 +195,14 @@ export function useScribeRuntime(auth, route) {
 			return job;
 		},
 		deleteJob: async (id, signal) => {
+			// Only the DELETE awaits; a 204 resolves immediately so callers
+			// (Job detail → navigate("queue"), History → reload row list)
+			// acknowledge the dismiss even if a transient refresh error
+			// would otherwise mask it. refreshCore records its own error
+			// state and never rejects, so fire it best-effort in the
+			// background.
 			await deleteJob(auth, id, signal);
-			await refreshCore(new AbortController().signal);
+			void refreshCore(new AbortController().signal);
 		},
 		applyConfig: (config) => {
 			setCore((previous) => ({ ...previous, config: adaptConfig(config) }));

@@ -19,8 +19,8 @@ function makeAuth(response: Response) {
 	return { auth, calls, getAutoSignInCalls: () => autoSignInCalls };
 }
 
-describe("deleteJob (admin dismiss for failed jobs)", () => {
-	test("issues DELETE /admin/jobs/{id} and resolves on 204", async () => {
+describe("deleteJob (admin dismiss for terminal jobs — failed + done)", () => {
+	test("issues DELETE /admin/jobs/{id} and resolves on 204 for a terminal job", async () => {
 		const { auth, calls } = makeAuth(new Response(null, { status: 204 }));
 
 		await expect(deleteJob(auth, 42)).resolves.toBeUndefined();
@@ -31,9 +31,9 @@ describe("deleteJob (admin dismiss for failed jobs)", () => {
 		expect(calls[0].init.cache).toBe("no-store");
 	});
 
-	test("throws HttpError with status 409 when the job is not failed", async () => {
+	test("throws HttpError with status 409 when the job is still active (cancel first)", async () => {
 		const { auth } = makeAuth(
-			new Response(JSON.stringify({ detail: "job 7 is queued; only failed jobs can be dismissed." }), {
+			new Response(JSON.stringify({ detail: "job 7 is transcribing; cancel it first via POST /admin/jobs/{id}/cancel before deletion." }), {
 				status: 409,
 				headers: { "content-type": "application/json" },
 			}),
@@ -46,7 +46,7 @@ describe("deleteJob (admin dismiss for failed jobs)", () => {
 
 		expect(error).toBeInstanceOf(HttpError);
 		expect((error as HttpError).status).toBe(409);
-		expect((error as HttpError).message).toContain("only failed jobs can be dismissed");
+		expect((error as HttpError).message).toContain("cancel it first");
 	});
 
 	test("triggers maybeAutoSignIn and throws HttpError on 403 (non-admin)", async () => {
