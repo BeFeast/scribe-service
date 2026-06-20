@@ -38,7 +38,7 @@ from scribe.config import settings
 from scribe.db.models import Job, JobStatus, Transcript
 from scribe.db.session import SessionLocal
 from scribe.obs import metrics
-from scribe.pipeline import downloader, ffmpeg, summarizer, whisper_client
+from scribe.pipeline import downloader, ffmpeg, summarizer, transcribe_providers, whisper_client
 from scribe.pipeline.frontmatter_inject import inject_author_frontmatter
 from scribe.worker import vast_budget
 
@@ -443,10 +443,7 @@ def process_job(session, job: Job) -> None:
                     expire_on_commit=False,
                 )
                 with _time_stage("whisper"):
-                    tr = whisper_client.transcribe(
-                        wav,
-                        title=dl.title,
-                        source_url=job.url,
+                    chain = transcribe_providers.build_provider_chain(
                         on_instance_created=lambda instance_id: _record_vast_instance_created(
                             job_id, instance_id, vast_session_factory
                         ),
@@ -458,13 +455,30 @@ def process_job(session, job: Job) -> None:
                         ),
                         check_monthly_cap=lambda: _enforce_monthly_cap(vast_session_factory),
                     )
+                    tr = transcribe_providers.transcribe_with_chain(
+                        chain,
+                        transcribe_providers.TranscribeRequest(
+                            wav=wav,
+                            title=dl.title,
+                            source_url=job.url,
+                            duration_seconds=dl.duration_seconds,
+                        ),
+                    )
                 # The ops rollcall reads this gauge to flag Vast.ai as `warn`
-                # after 24h with no launches.
-                metrics.last_vast_launch_timestamp.set(time.time())
+                # after 24h with no launches — only a real Vast launch counts.
+                if tr.provider == "vast":
+                    metrics.last_vast_launch_timestamp.set(time.time())
+                    if tr.vast_cost:
+                        metrics.vast_spend_usd_total.inc(tr.vast_cost)
+                # Per-provider spend line (Vast + any hosted fallback). Lets the
+                # spend caps / dashboards see each backend's cost separately.
                 if tr.vast_cost:
-                    metrics.vast_spend_usd_total.inc(tr.vast_cost)
+                    metrics.transcribe_provider_spend_usd_total.labels(
+                        provider=tr.provider
+                    ).inc(tr.vast_cost)
                 job_log.info("whisper done", extra={
                     "stage": "whisper",
+                    "provider": tr.provider,
                     "lang": tr.detected_language,
                     "vast_cost": tr.vast_cost,
                     "duration_seconds": tr.duration_seconds,
@@ -483,7 +497,11 @@ def process_job(session, job: Job) -> None:
                     tags=None,
                     duration_seconds=int(duration) if duration else None,
                     lang=tr.detected_language,
-                    vast_cost=tr.vast_cost if tr.vast_cost is not None else None,
+                    # vast_cost feeds the Vast-only daily-spend cap, so only the
+                    # Vast path populates it; a hosted fallback's cost lives in
+                    # transcribe_provider_spend_usd_total instead.
+                    vast_cost=tr.vast_cost if tr.provider == "vast" else None,
+                    transcribe_provider=tr.provider,
                     author_name=dl.author_name,
                     author_handle=dl.author_handle,
                     author_url=dl.author_url,

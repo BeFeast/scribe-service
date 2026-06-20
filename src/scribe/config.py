@@ -14,6 +14,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from scribe.runtime_config import RuntimeConfigError, load_infisical_settings, redact_values
 
 _DEFAULT_SUMMARY_PROVIDERS: tuple[str, ...] = ("codex", "freellmapi")
+# Transcription provider chain. Default is Vast-only so behaviour is unchanged
+# until an operator opts a fallback in via SCRIBE_TRANSCRIBE_PROVIDERS (see
+# scribe.pipeline.transcribe_providers).
+_DEFAULT_TRANSCRIBE_PROVIDERS: tuple[str, ...] = ("vast",)
 
 ConfigKind = Literal[
     "bool",
@@ -186,6 +190,43 @@ class Settings(BaseSettings):
     # raises WhisperError instead of submitting a new ask.
     vast_monthly_cap_usd: float = 15.0
 
+    # Transcription provider chain (see scribe.pipeline.transcribe_providers).
+    # Vast.ai GPU whisper is the primary; optional fallbacks ("openai" hosted
+    # API, "local-whisper" CPU faster-whisper) are opt-in, cost-capped, and
+    # tried in order when an earlier provider fails. Default is "vast" only —
+    # behaviour is unchanged until an operator adds a fallback. Sourced from
+    # SCRIBE_TRANSCRIBE_PROVIDERS as a comma-separated, case-insensitive list.
+    transcribe_providers: list[str] = list(_DEFAULT_TRANSCRIBE_PROVIDERS)
+
+    # Per-provider transcription circuit breaker. Mirrors the summary breaker
+    # but trips faster: a Vast "failure" already represents a whole job's
+    # offer loop (up to vast_offer_attempts) giving up, so two consecutive
+    # trip-relevant failures within the window are enough to skip Vast and go
+    # straight to the fallback for the cooldown window.
+    transcribe_breaker_window_secs: int = 900
+    transcribe_breaker_threshold: int = 2
+    transcribe_breaker_cooldown_secs: int = 600
+
+    # OpenAI hosted transcription fallback ("openai" provider). Opt-in: empty
+    # api key leaves the provider permanently unavailable so it never bills
+    # silently. Cost-capped per job from the audio duration (whisper-1 is
+    # billed per minute); a job whose estimate exceeds the cap is rejected
+    # before the upload. Never paste the key into source — supply it via
+    # Infisical / SCRIBE_OPENAI_TRANSCRIBE_API_KEY.
+    openai_transcribe_api_key: str = ""
+    openai_transcribe_base_url: str = "https://api.openai.com/v1"
+    openai_transcribe_model: str = "whisper-1"
+    openai_transcribe_timeout_secs: int = 600
+    openai_transcribe_cost_per_minute_usd: float = 0.006
+    openai_transcribe_max_job_cost_usd: float = 0.50
+
+    # Local CPU faster-whisper fallback ("local-whisper" provider). Slow but
+    # always available — no GPU, no network. faster-whisper is an optional
+    # dependency; if it is not importable the provider reports unavailable and
+    # the chain advances. A small model keeps CPU transcription tractable.
+    local_whisper_model_size: str = "base"
+    local_whisper_compute_type: str = "int8"
+
     # Summary fallback-chain circuit breaker (see
     # scribe.pipeline.summary_providers.CircuitBreaker). Per-provider in-process
     # state: if the last `threshold` outcomes within `window_secs` are all
@@ -335,6 +376,22 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return [str(p).strip().lower() for p in value if str(p).strip()]
         raise ValueError("summary_providers must be a list or comma-separated string")
+
+    @field_validator("transcribe_providers", mode="before")
+    @classmethod
+    def _parse_transcribe_providers(cls, value: Any) -> list[str]:
+        """Accept a comma-separated env string or a list. Names are lowercased
+        and stripped; unknown names are kept (the chain builder rejects them at
+        build time with a clear error). Empty input restores the Vast-only
+        default so a blanked env var cannot silently disable transcription."""
+        if value is None or value == "":
+            return list(_DEFAULT_TRANSCRIBE_PROVIDERS)
+        if isinstance(value, str):
+            parts = [p.strip().lower() for p in value.split(",")]
+            return [p for p in parts if p]
+        if isinstance(value, list):
+            return [str(p).strip().lower() for p in value if str(p).strip()]
+        raise ValueError("transcribe_providers must be a list or comma-separated string")
 
     @field_validator("trusted_cidrs")
     @classmethod
