@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import shutil
 import tempfile
 import threading
@@ -48,7 +49,23 @@ _POLL_INTERVAL = 5.0
 # Loop tick in milliseconds — surfaced by the ops rollcall ("loop tick {LOOP_TICK_MS}ms").
 LOOP_TICK_MS = int(_POLL_INTERVAL * 1000)
 _WEBHOOK_TIMEOUT_S = 10.0
+# Base backoff schedule for webhook retries (3 retries, then give up).
+# A ±10% jitter band is applied to each interval before sleeping so that
+# concurrent deliveries to a slow-recovering callback don't synchronize into
+# a thundering herd. The jitter is symmetric around the base value, so the
+# expected total retry budget stays roughly equivalent to the fixed schedule
+# (mean 1.0 + 4.0 + 16.0 = 21.0s; jitter only spreads it across deliveries).
 _WEBHOOK_RETRY_BACKOFFS_S = (1.0, 4.0, 16.0)
+_WEBHOOK_RETRY_JITTER = 0.10
+
+
+def _jittered_backoff(base_s: float) -> float:
+    """Return base_s with a symmetric ±_WEBHOOK_RETRY_JITTER random offset.
+
+    Clamped to >= 0 so a base of 0 still sleeps nothing. The default band is
+    ±10%, e.g. a 4.0s base sleeps in [3.6, 4.4]."""
+    spread = base_s * _WEBHOOK_RETRY_JITTER
+    return max(0.0, base_s + random.uniform(-spread, spread))
 _INTERRUPTED_ON_STARTUP = (
     JobStatus.downloading,
     JobStatus.transcribing,
@@ -113,7 +130,7 @@ def _deliver_webhook(session, job: Job) -> None:
             if backoff_s is None:
                 _count_webhook_delivery("http_error")
                 return
-            time.sleep(backoff_s)
+            time.sleep(_jittered_backoff(backoff_s))
             continue
         except ValueError as exc:
             _count_webhook_attempt("net_error")
@@ -142,7 +159,7 @@ def _deliver_webhook(session, job: Job) -> None:
             if backoff_s is None:
                 _count_webhook_delivery("net_error")
                 return
-            time.sleep(backoff_s)
+            time.sleep(_jittered_backoff(backoff_s))
 
 
 @contextmanager

@@ -7,16 +7,19 @@ echo '=== Project Test Suite ==='
 python -m pytest
 
 echo '=== Requirement Verification ==='
-echo 'Requirement 1: Document the release scheme in `AGENTS.md` (and/or `CONTRIBUTING`/README): the `...'
-echo 'WARN: Run tests in tests/test_source_links.py'
-
-echo 'Requirement 2: State that merge to `main` triggers, continuously and per-merge, a version bump ...'
+echo 'Requirement 1: `src/scribe/worker/loop.py:51` — `_WEBHOOK_RETRY_BACKOFFS_S = (1.0, 4.0, 16.0)...'
 python -m pytest
 
-echo 'Requirement 3: A documented section explains the `semver:*` label taxonomy, the default-`patch`...'
+echo 'Requirement 2: Apply full/partial jitter (e.g. ±10% or AWS full-jitter) to each backoff interv...'
 python -m pytest
 
-echo 'Requirement 4: The three `semver:*` labels exist in the repo (already created).'
+echo 'Requirement 3: Keep total retry budget roughly equivalent.'
+echo 'WARN: Run tests in tests/test_vast_budget.py'
+
+echo 'Requirement 4: Retry sleeps are randomized within a documented jitter band.'
 python -m pytest
+
+echo 'Requirement 5: Existing webhook retry tests updated to tolerate jitter (assert bounds, not exac...'
+echo 'WARN: Run tests in .codex-work/pr25/tests/test_worker_webhook.py'
 
 echo 'All verifications passed.'

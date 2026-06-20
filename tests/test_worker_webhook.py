@@ -15,6 +15,12 @@ from scribe.obs import metrics
 from scribe.worker import loop as loop_module
 
 
+def sleep_within_jitter(actual: float, base: float) -> bool:
+    """True when `actual` lies inside the ±10% jitter band around `base`."""
+    spread = base * loop_module._WEBHOOK_RETRY_JITTER
+    return base - spread <= actual <= base + spread
+
+
 def _fake_session() -> SimpleNamespace:
     """A session that the route's render_job_view doesn't actually need
     because we monkeypatch render_job_view directly."""
@@ -235,7 +241,10 @@ def test_webhook_latency_not_observed_on_net_error(monkeypatch):
 
 
 def test_deliver_webhook_retries_then_succeeds(monkeypatch):
-    """A transient delivery failure is counted, backed off, and retried."""
+    """A transient delivery failure is counted, backed off, and retried.
+
+    Backoff intervals carry a ±10% jitter band, so assert the sleep falls
+    inside [base*0.9, base*1.1] rather than an exact value."""
     counts = _patch_webhook_counters(monkeypatch)
     sleeps: list[float] = []
     calls = 0
@@ -256,7 +265,8 @@ def test_deliver_webhook_retries_then_succeeds(monkeypatch):
     loop_module._deliver_webhook(_fake_session(), _fake_job("https://example.com/hook"))
 
     assert calls == 2
-    assert sleeps == [1.0]
+    assert len(sleeps) == 1
+    assert sleep_within_jitter(sleeps[0], 1.0)
     assert counts == {
         "deliveries": {"ok": 1},
         "attempts": {"net_error": 1, "ok": 1},
@@ -264,7 +274,10 @@ def test_deliver_webhook_retries_then_succeeds(monkeypatch):
 
 
 def test_deliver_webhook_retries_then_gives_up(monkeypatch):
-    """Persistent HTTP failures stop after the 1s/4s/16s retry backoff."""
+    """Persistent HTTP failures stop after the 1s/4s/16s retry backoff.
+
+    Jitter is applied per attempt, so assert each sleep lands inside its
+    ±10% band and the schedule order is preserved."""
     counts = _patch_webhook_counters(monkeypatch)
     sleeps: list[float] = []
     calls = 0
@@ -288,11 +301,31 @@ def test_deliver_webhook_retries_then_gives_up(monkeypatch):
     loop_module._deliver_webhook(_fake_session(), _fake_job("https://example.com/hook"))
 
     assert calls == 4
-    assert sleeps == [1.0, 4.0, 16.0]
+    assert len(sleeps) == 3
+    for base, actual in zip(loop_module._WEBHOOK_RETRY_BACKOFFS_S, sleeps, strict=True):
+        assert sleep_within_jitter(actual, base)
+    # Backoff schedule must still be monotonically increasing.
+    assert sleeps == sorted(sleeps)
     assert counts == {
         "deliveries": {"http_error": 1},
         "attempts": {"http_error": 4},
     }
+
+
+def test_jittered_backoff_stays_within_band():
+    """_jittered_backoff always returns a value within ±10% of the base."""
+    for base in loop_module._WEBHOOK_RETRY_BACKOFFS_S:
+        samples = [loop_module._jittered_backoff(base) for _ in range(200)]
+        for sample in samples:
+            assert sleep_within_jitter(sample, base)
+        # Jitter must actually vary the interval (no thundering herd).
+        assert len(set(round(s, 6) for s in samples)) > 1
+
+
+def test_jittered_backoff_zero_base_is_zero():
+    """A 0s base must never go negative after jitter (clamped to >= 0)."""
+    for _ in range(50):
+        assert loop_module._jittered_backoff(0.0) == 0.0
 
 
 def test_deliver_webhook_does_not_retry_non_transient_4xx(monkeypatch):
