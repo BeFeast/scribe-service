@@ -29,7 +29,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import sessionmaker
 
 from scribe.api import cookie_jar
@@ -323,22 +323,52 @@ def _find_done_transcript(
 
 def _summarize_and_finalize(session, job: Job, transcript: Transcript, title: str, *, promoted: bool) -> None:
     """Run summarizer against an already-persisted transcript_md, update the
-    row with summary + tags, mark the job done."""
+    row with summary + tags, mark the job done.
+
+    The summary write is a **compare-and-set** guarded on ``summary_md IS
+    NULL`` (scr-549 / #353). Two workers can resume the *same* partial
+    transcript: ``_find_partial_transcript()`` takes no row lock, and the
+    natural ``FOR UPDATE`` candidate would not help here because the job's
+    ``summarizing`` transition commits — releasing any lock — before the
+    summary is written. A blind ``UPDATE`` would let the slower worker
+    overwrite a summary the faster worker already committed (silent data
+    loss). The guarded UPDATE only writes while the row is still partial; if
+    it matches no row, another worker won the race and we adopt its result
+    instead of clobbering it.
+    """
     _set_job_status(session, job, JobStatus.summarizing)
     with _time_stage("summary"):
         summary = summarizer.summarize(transcript.transcript_md, title=title)
-    transcript.summary_md = inject_author_frontmatter(
+    summary_md = inject_author_frontmatter(
         summary.summary_md,
         author_name=transcript.author_name,
         author_handle=transcript.author_handle,
         author_url=transcript.author_url,
         source_platform=transcript.source_platform,
     )
-    transcript.short_description = summary.short_description
-    transcript.tags = summary.tags or None
+    won = session.execute(
+        update(Transcript)
+        .where(Transcript.id == transcript.id, Transcript.summary_md.is_(None))
+        .values(
+            summary_md=summary_md,
+            short_description=summary.short_description,
+            tags=summary.tags or None,
+        )
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    session.refresh(transcript)
     session.refresh(job)
     _set_job_status(session, job, JobStatus.done)
-    metrics.transcripts_total.labels(kind="promoted" if promoted else "full").inc()
+    if won:
+        metrics.transcripts_total.labels(kind="promoted" if promoted else "full").inc()
+    else:
+        # Lost the resume race: a concurrent worker finished this summary
+        # between our partial lookup and write. The completed result above is
+        # preserved; this job still reports done against it.
+        log.warning(
+            "partial-resume race: summary already completed, adopting existing result",
+            extra={"job_id": job.id, "video_id": job.video_id, "transcript_id": transcript.id},
+        )
     metrics.last_success_timestamp.set(time.time())
     _deliver_webhook(session, job)
 
