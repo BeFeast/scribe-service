@@ -11,13 +11,14 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
 
 from scribe import __version__
 from scribe.api.routes import router as api_router
 from scribe.config import settings
+from scribe.obs import ops as ops_helpers
 from scribe.obs.correlation import HEADER, request_correlation_id
 from scribe.obs.logging import configure as configure_logging
 from scribe.web.views import router as web_router
@@ -106,4 +107,26 @@ async def correlation_id_middleware(request: Request, call_next):  # noqa: D401,
 
 @app.get("/healthz", tags=["ops"])
 def healthz() -> dict:
+    """Fast liveness probe — the process is up and serving. Unconditional `ok`
+    so orchestrators only restart on crash/restart, not on a flaky dependency.
+    Use `/readyz` for the deep readiness check that verifies subsystems."""
     return {"status": "ok", "service": "scribe", "version": app.version}
+
+
+@app.get("/readyz", tags=["ops"])
+def readyz(response: Response) -> dict:
+    """Deep readiness probe — verifies the critical subsystems (Postgres,
+    Vast, codex, backup heartbeat) by reusing the `obs/ops.py` probes.
+
+    Returns 200 only when every required subsystem reports `ok`; 503 with a
+    per-subsystem breakdown otherwise. The fast `/healthz` liveness behaviour
+    is preserved — this endpoint holds no probe logic of its own."""
+    subsystems = ops_helpers.readiness_subsystems()
+    ok = all(item["status"] == "ok" for item in subsystems.values())
+    response.status_code = 200 if ok else 503
+    return {
+        "status": "ok" if ok else "degraded",
+        "service": "scribe",
+        "version": app.version,
+        "subsystems": subsystems,
+    }
