@@ -160,9 +160,24 @@ class Settings(BaseSettings):
     transcribe_timeout_secs: int = 1800
     vast_orphan_reaper_max_age_minutes: int = 60
     vast_orphan_reaper_interval_seconds: int = 300
+    # Cost-aware reaping (#355). An instance whose live $/hr exceeds
+    # `baseline * cost_multiplier` is reaped regardless of age, and a
+    # scribe instance stuck in a non-running billable state (loading/starting)
+    # past `stuck_minutes` is reaped before max_age. A cost_multiplier <= 0
+    # disables cost reaping; a stuck_minutes <= 0 disables stuck reaping.
+    vast_orphan_reaper_cost_multiplier: float = 10.0
+    vast_orphan_reaper_stuck_minutes: int = 15
     vast_budget_baseline_usd_per_hour: float = 0.05
     vast_budget_alert_multiplier: float = 5.0
     vast_budget_check_interval_seconds: int = 3600
+    # Predictive burn alert (#355). When the live burn rate is projected to
+    # breach the rolling monthly cap within this horizon (days), emit a
+    # Telegram alert + a Prometheus gauge with the projected breach time.
+    # `predictive_alert_cooldown_minutes` adds hysteresis so a sustained
+    # breach raises at most one alert per cooldown window instead of firing
+    # every budget-check cycle.
+    vast_budget_predictive_alert_horizon_days: int = 30
+    vast_budget_predictive_alert_cooldown_minutes: int = 360
 
     # Offer-selection tunables. Defaults intentionally permissive so a thin
     # Vast market does not instantly fail jobs (see #254). All overridable
