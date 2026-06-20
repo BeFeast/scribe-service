@@ -124,6 +124,30 @@ def test_preflight_module_is_pure_and_exports_gate() -> None:
     assert "module.exports" in source
 
 
+def test_options_page_surfaces_last_authenticated_timestamp() -> None:
+    html = read("options.html")
+    source = read("options.js")
+
+    # The options page surfaces when Scribe last accepted the saved token so an
+    # operator can spot a silently-revoked token (#354).
+    assert 'id="last-auth"' in html
+    assert "renderLastAuth" in source
+    assert "lastAuthenticatedAt" in source
+    assert "Never authenticated." in source
+
+
+def test_service_worker_records_last_authenticated_timestamp_on_success() -> None:
+    source = read("service_worker.js")
+
+    # Every successful Scribe 2xx (preflight or job create) records a device-
+    # local timestamp the options page renders.
+    assert "async function recordAuthenticatedAt" in source
+    assert "chrome.storage.local.set({ lastAuthenticatedAt: new Date().toISOString() })" in source
+    assert "await recordAuthenticatedAt()" in source
+    # The timestamp is local-only — never synced to the cloud.
+    assert "chrome.storage.sync.set({ lastAuthenticatedAt" not in source
+
+
 def test_extension_docs_describe_preflight_confirm() -> None:
     docs = read("README.md")
 
@@ -153,10 +177,15 @@ def test_service_worker_reports_success_dedup_and_errors() -> None:
 def test_service_worker_sends_authorization_header_only_when_token_configured() -> None:
     source = read("service_worker.js")
 
-    assert 'bearerToken: String(stored.bearerToken || "").trim()' in source
+    # The bearer token is a credential stored in device-local storage (never
+    # cloud-synced); baseUrl is not secret and stays in sync.
+    assert "chrome.storage.sync.get({ baseUrl: DEFAULT_BASE_URL })" in source
+    assert 'chrome.storage.local.get({ bearerToken: "" })' in source
     assert "if (config.bearerToken) {" in source
     assert "headers.Authorization = `Bearer ${config.bearerToken}`;" in source
-    assert 'bearerToken: "",' in source
+    assert 'bearerToken: ""' in source
+    # The token must never be read from or written to chrome.storage.sync.
+    assert "chrome.storage.sync.set" not in source
 
 
 def test_service_worker_formats_401_and_403_auth_errors_for_notifications() -> None:
@@ -182,12 +211,18 @@ def test_options_store_base_url_and_optional_bearer_token_without_hardcoded_secr
     assert 'type="password"' in html
     assert "Create a Chrome extension token in Scribe Settings" in html
     assert 'const DEFAULT_BASE_URL = "https://scribe.oklabs.uk";' in source
+    # baseUrl is not secret and stays in sync; the bearer token is a
+    # credential and lives in device-local storage only (#354).
     assert "chrome.storage.sync.get" in source
     assert "chrome.storage.sync.set" in source
+    assert 'chrome.storage.local.get({ bearerToken: "", lastAuthenticatedAt: "" })' in source
+    assert "chrome.storage.local.set({ bearerToken: bearerTokenInput.value.trim() })" in source
     assert "chrome.permissions.request" in source
     assert "bearerToken: bearerTokenInput.value.trim()" in source
     assert "sk-" not in source
     assert "ghp_" not in source
+    # The token must never be persisted to chrome.storage.sync from options.
+    assert "chrome.storage.sync.set({\n    baseUrl,\n    bearerToken" not in source
 
 
 def test_extension_docs_include_install_and_manual_verification_checklist() -> None:

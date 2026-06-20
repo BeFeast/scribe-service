@@ -524,11 +524,12 @@ def test_settings_rejects_invalid_trusted_cidr():
         raise AssertionError("accepted malformed trusted CIDR config")
 
 
-def test_rotate_token_stub_returns_501():
-    settings.trusted_cidrs = "127.0.0.0/8"
-    client = TestClient(app, headers={"Authorization": f"Bearer {TEST_TOKEN}"})
-    resp = client.post("/api/config/rotate-token")
-    assert resp.status_code == 501
+def test_rotate_token_endpoint_requires_operator_auth_from_external_ip(monkeypatch):
+    monkeypatch.setattr(settings, "trusted_cidrs", "10.10.0.0/16")
+    monkeypatch.setattr(settings, "machine_bearer_token", MACHINE_TOKEN)
+    client = TestClient(app, client=("203.0.113.10", 50000))
+    resp = client.post("/api/config/rotate-token", headers={"Authorization": "Bearer wrong"})
+    assert resp.status_code == 401
 
 
 def test_openapi_includes_config_endpoints():

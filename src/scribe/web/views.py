@@ -186,7 +186,7 @@ def classic_index(
     tag: str | None = Query(None, description="Exact tag match"),
 ) -> HTMLResponse:
     stmt = _build_filter(select(Transcript), q=q, tag=tag).order_by(Transcript.id.desc()).limit(_LIST_LIMIT)
-    owner = current_owner(request)
+    owner = current_owner(request, session)
     if owner is not None:
         stmt = stmt.where(Transcript.owner_subject == owner.subject)
     rows = session.scalars(stmt).all()
@@ -223,7 +223,7 @@ def feed(
     tag: str | None = Query(None, description="Optional tag filter"),
 ) -> Response:
     stmt = _build_filter(select(Transcript), q=None, tag=tag).order_by(Transcript.id.desc()).limit(_FEED_LIMIT)
-    owner = current_owner(request)
+    owner = current_owner(request, session)
     if owner is not None:
         stmt = stmt.where(Transcript.owner_subject == owner.subject)
     rows = session.scalars(stmt).all()

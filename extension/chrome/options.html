@@ -19,8 +19,11 @@
           <span class="help">
             Create a Chrome extension token in Scribe Settings, then paste it here.
             It is required for protected Scribe URLs outside trusted LAN.
+            The token is stored in this device's local extension storage only —
+            it is never cloud-synced.
           </span>
         </label>
+        <p id="last-auth" class="help">Never authenticated.</p>
         <div class="actions">
           <button type="submit">Save</button>
           <span id="status" role="status" aria-live="polite"></span>
