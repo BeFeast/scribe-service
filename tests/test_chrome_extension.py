@@ -34,8 +34,13 @@ def test_manifest_v3_extension_contract() -> None:
     # Default install must remain lean — youtube host permission is opt-in.
     assert "https://*.youtube.com/*" not in manifest["host_permissions"]
     assert "https://www.youtube.com/*" not in manifest["host_permissions"]
+    # Optional host permissions are narrowed to YouTube origins only (#350); the
+    # Scribe base-URL origin is requested dynamically from the options page.
+    # No all-sites wildcard may be requested up front.
+    assert "http://*/*" not in manifest["optional_host_permissions"]
+    assert "https://*/*" not in manifest["optional_host_permissions"]
     assert "https://*.youtube.com/*" in manifest["optional_host_permissions"]
-    assert "https://*/*" in manifest["optional_host_permissions"]
+    assert "https://youtu.be/*" in manifest["optional_host_permissions"]
     assert manifest["icons"]["16"] == "icons/scribe-16.png"
     assert manifest["icons"]["48"] == "icons/scribe-48.png"
     assert manifest["icons"]["128"] == "icons/scribe-128.png"
@@ -109,6 +114,39 @@ def test_popup_is_receipt_and_confirm_surface() -> None:
     assert "/#/jobs/" in js
     # No cookie/value leakage to devtools from popup logic either.
     assert "console.log" not in js
+
+
+def test_extension_pages_have_csp_and_no_inline_script_style() -> None:
+    # #350: extension HTML pages ship a Content-Security-Policy meta that
+    # restricts script-src and style-src to 'self', so a compromised page
+    # cannot load remote scripts or apply inline script/style.
+    popup = read("popup.html")
+    options = read("options.html")
+
+    csp = 'http-equiv="Content-Security-Policy"'
+    csp_policy = "script-src 'self'; style-src 'self'"
+    assert csp in popup
+    assert csp_policy in popup
+    assert csp in options
+    assert csp_policy in options
+
+    # No inline <script> blocks (scripts must be external, script-src 'self').
+    assert "<script>" not in popup
+    assert "<script>" not in options
+    # No inline <style> blocks — popup styles live in popup.css (#350).
+    assert "<style" not in popup
+    assert "<style" not in options
+    # No inline event handlers (onclick=, onload=, …) which would violate CSP.
+    for html in (popup, options):
+        assert not any(
+            f"on{evt}=" in html
+            for evt in ("click", "load", "submit", "change", "input", "keydown")
+        )
+    # Popup styles were moved out to an external stylesheet.
+    assert 'href="popup.css"' in popup
+    assert (EXTENSION / "popup.css").is_file()
+    assert 'href="options.css"' in options
+    assert (EXTENSION / "options.css").is_file()
 
 
 def test_preflight_module_is_pure_and_exports_gate() -> None:
