@@ -169,6 +169,67 @@ def test_post_jobs_accepts_x_url_into_queue(client, db_session):
     assert job.video_id == body["video_id"]
 
 
+def test_post_jobs_persists_default_toggles(client, db_session):
+    """Omitting the #296 toggles persists the legacy defaults on the Job row:
+    summarize on, notify on, no prompt override."""
+    resp = client.post("/jobs", json={"url": "https://youtu.be/deftoggle01"})
+    assert resp.status_code == 201, resp.text
+    job = db_session.get(Job, resp.json()["job_id"])
+    assert job.summarize is True
+    assert job.notify is True
+    assert job.summary_prompt is None
+
+
+def test_post_jobs_persists_custom_toggles(client, db_session):
+    """summarize/notify/summary_prompt from the request are persisted verbatim."""
+    resp = client.post(
+        "/jobs",
+        json={
+            "url": "https://youtu.be/custtoggle1",
+            "summarize": False,
+            "notify": False,
+            "summary_prompt": "Just the TL;DR, three bullets max.",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    job = db_session.get(Job, resp.json()["job_id"])
+    assert job.summarize is False
+    assert job.notify is False
+    assert job.summary_prompt == "Just the TL;DR, three bullets max."
+
+
+def test_post_jobs_blank_summary_prompt_persists_as_null(client, db_session):
+    """A whitespace-only prompt is normalized to NULL so the worker falls back
+    to the active template instead of an empty override."""
+    resp = client.post(
+        "/jobs",
+        json={"url": "https://youtu.be/blankprompt", "summary_prompt": "   "},
+    )
+    assert resp.status_code == 201, resp.text
+    job = db_session.get(Job, resp.json()["job_id"])
+    assert job.summary_prompt is None
+
+
+def test_post_jobs_partial_retry_carries_toggles(client, db_session):
+    """A partial-dedup resume Job must carry the new submission's toggles so a
+    summarize=false re-submit does not force a summary on the resume path."""
+    _seed_partial_transcript(db_session, video_id="partialtog1")
+    resp = client.post(
+        "/jobs",
+        json={
+            "url": "https://youtu.be/partialtog1",
+            "summarize": False,
+            "summary_prompt": "Custom resume prompt.",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["deduplicated"] is True
+    retry = db_session.get(Job, body["job_id"])
+    assert retry.summarize is False
+    assert retry.summary_prompt == "Custom resume prompt."
+
+
 def test_post_jobs_dedup_partial_links_existing_and_enqueues_retry(client, db_session):
     """Re-submitting a video with a partial transcript (whisper done, summary
     failed) must dedup to the existing Transcript and enqueue a summary-only

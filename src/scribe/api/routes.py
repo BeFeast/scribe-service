@@ -842,6 +842,11 @@ def create_job(
         # touches the DB, the response, or the log buffer.
     video_id = initial_video_key(body.url)
 
+    # Per-job toggles (#296). A blank/whitespace-only prompt is treated as
+    # "use the active template" so the Capture sheet's empty textarea does not
+    # override the prompt with nothing.
+    summary_prompt = (body.summary_prompt or "").strip() or None
+
     owner = current_owner(request, session)
     correlation_id = request_correlation_id(request)
     done = session.scalar(
@@ -890,6 +895,9 @@ def create_job(
             source=body.source,
             callback_url=str(body.callback_url) if body.callback_url else None,
             correlation_id=correlation_id,
+            summarize=body.summarize,
+            notify=body.notify,
+            summary_prompt=summary_prompt,
             owner_subject=owner.subject if owner else None,
             owner_email=owner.email if owner else None,
             owner_display_name=owner.display_name if owner else None,
@@ -937,6 +945,9 @@ def create_job(
         source=body.source,
         callback_url=str(body.callback_url) if body.callback_url else None,
         correlation_id=correlation_id,
+        summarize=body.summarize,
+        notify=body.notify,
+        summary_prompt=summary_prompt,
         owner_subject=owner.subject if owner else None,
         owner_email=owner.email if owner else None,
         owner_display_name=owner.display_name if owner else None,

@@ -8,7 +8,7 @@
 // onto the same path.
 //
 // Source mapping:
-//   command-palette.jsx submitUrl()  →  submitJob(auth, url) below.
+//   command-palette.jsx submitUrl()  →  submitJob(auth, url, opts) below.
 //
 // Contract:
 //   - `auth` is the value returned from useAuth(); the only field we touch is
@@ -17,6 +17,12 @@
 //   - `url` must be a string that already passed `parseVideoUrl(url) != null`;
 //     the helper does NOT re-validate the YouTube URL shape — that is the
 //     caller's responsibility (mirrors the existing palette behaviour).
+//   - `opts` carries the optional per-job Capture toggles (#296):
+//       { summarize?: boolean, notify?: boolean, summaryPrompt?: string }
+//     Each field is forwarded only when the caller set it, so the legacy
+//     submitJob(auth, url) call stays byte-identical on the wire and POST /jobs
+//     applies its server-side defaults (summarize/notify default true, active
+//     prompt template) for anything omitted.
 //
 // Returns the parsed JobView ({job_id, video_id, status}) on success.
 // Throws an Error on any HTTP/parse failure; the caller surfaces the message
@@ -24,11 +30,18 @@
 
 import { isJobView } from "./command-utils.js";
 
-export async function submitJob(auth, url) {
+export async function submitJob(auth, url, opts = {}) {
+	const payload = { url, source: "manual" };
+	if (typeof opts.summarize === "boolean") payload.summarize = opts.summarize;
+	if (typeof opts.notify === "boolean") payload.notify = opts.notify;
+	const summaryPrompt =
+		typeof opts.summaryPrompt === "string" ? opts.summaryPrompt.trim() : "";
+	if (summaryPrompt) payload.summary_prompt = summaryPrompt;
+
 	const response = await auth.protectedFetch("/jobs", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ url, source: "manual" }),
+		body: JSON.stringify(payload),
 	});
 	const body = await response.json().catch(() => null);
 	if (!response.ok || !isJobView(body)) {
