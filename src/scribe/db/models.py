@@ -135,6 +135,10 @@ class Job(Base):
     # Optional webhook target — scribe POSTs the final JobView JSON to
     # this URL on terminal status (done|failed). NULL = poll-only client.
     callback_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Correlation ID propagated from API ingress (inbound X-Request-ID or
+    # generated) so every pipeline stage log line + webhook delivery can be
+    # traced back to the originating request (#357).
+    correlation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner_subject: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     owner_email: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner_display_name: Mapped[str | None] = mapped_column(Text, nullable=True)

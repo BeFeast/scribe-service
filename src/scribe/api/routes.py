@@ -102,6 +102,7 @@ from scribe.db.query import escape_like
 from scribe.db.session import SessionLocal
 from scribe.obs import metrics
 from scribe.obs import ops as ops_helpers
+from scribe.obs.correlation import request_correlation_id
 from scribe.obs.live_logs import job_log_buffer
 from scribe.pipeline import prompts, summarizer
 from scribe.pipeline.downloader import initial_video_key
@@ -425,6 +426,7 @@ def render_job_view(session: Session, job: Job) -> JobView:
         title=job.title or (transcript.title if transcript else None),
         **_source_fields(job.url),
         error=job.error, callback_url=job.callback_url,
+        correlation_id=job.correlation_id,
         transcript=_brief(transcript) if transcript else None,
         started_at=events.get(JobStatus.queued.value, None).started_at
         if JobStatus.queued.value in events
@@ -824,6 +826,7 @@ def create_job(
     video_id = initial_video_key(body.url)
 
     owner = current_owner(request)
+    correlation_id = request_correlation_id(request)
     done = session.scalar(
         _actor_filter(
             select(Transcript).where(Transcript.video_id == video_id, Transcript.summary_md.is_not(None)),
@@ -848,7 +851,8 @@ def create_job(
         # dedup-active also bypasses: the in-flight job is already spending its budget
         return JobView(job_id=active.id, url=active.url, video_id=video_id,
                        **_source_fields(active.url),
-                       status=active.status.value, deduplicated=True)
+                       status=active.status.value, deduplicated=True,
+                       correlation_id=active.correlation_id)
 
     # Partial dedup + resume: a prior run produced the transcript but summary
     # failed (e.g. summary-provider outage). Queue a fresh Job whose worker will
@@ -868,6 +872,7 @@ def create_job(
             url=body.url, video_id=video_id, status=JobStatus.queued,
             source=body.source,
             callback_url=str(body.callback_url) if body.callback_url else None,
+            correlation_id=correlation_id,
             owner_subject=owner.subject if owner else None,
             owner_email=owner.email if owner else None,
             owner_display_name=owner.display_name if owner else None,
@@ -891,6 +896,7 @@ def create_job(
             status=retry.status.value, deduplicated=True,
             transcript=_brief(partial),
             callback_url=retry.callback_url,
+            correlation_id=correlation_id,
         )
 
     # Only fresh, non-resume submissions trigger the rolling spend cap.
@@ -913,6 +919,7 @@ def create_job(
         url=body.url, video_id=video_id, status=JobStatus.queued,
         source=body.source,
         callback_url=str(body.callback_url) if body.callback_url else None,
+        correlation_id=correlation_id,
         owner_subject=owner.subject if owner else None,
         owner_email=owner.email if owner else None,
         owner_display_name=owner.display_name if owner else None,
@@ -934,6 +941,7 @@ def create_job(
         job_id=job.id, url=job.url, video_id=video_id, status=job.status.value,
         **_source_fields(job.url),
         callback_url=job.callback_url,
+        correlation_id=correlation_id,
     )
 
 

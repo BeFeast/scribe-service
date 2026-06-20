@@ -76,11 +76,14 @@ def _deliver_webhook(session, job: Job) -> None:
         return
     body = render_job_view(session, job).model_dump(mode="json")
     data = json.dumps(body).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if job.correlation_id:
+        headers["X-Request-ID"] = job.correlation_id
     for attempt, backoff_s in enumerate((*_WEBHOOK_RETRY_BACKOFFS_S, None), start=1):
         try:
             req = urllib.request.Request(
                 job.callback_url, data=data,
-                headers={"Content-Type": "application/json"}, method="POST",
+                headers=headers, method="POST",
             )
             start = time.monotonic()
             with urllib.request.urlopen(req, timeout=_WEBHOOK_TIMEOUT_S) as resp:
@@ -267,6 +270,7 @@ def recover_interrupted_jobs(session) -> int:
                     "job_id": job.id,
                     "video_id": job.video_id,
                     "vast_instance_id": job.vast_instance_id,
+                    "correlation_id": job.correlation_id,
                 },
             )
             transition_job_status(session, job, JobStatus.failed)
@@ -277,6 +281,7 @@ def recover_interrupted_jobs(session) -> int:
                 "job_id": job.id,
                 "video_id": job.video_id,
                 "from_status": old_status.value,
+                "correlation_id": job.correlation_id,
             },
         )
         transition_job_status(session, job, JobStatus.queued)
@@ -341,7 +346,10 @@ def _summarize_and_finalize(session, job: Job, transcript: Transcript, title: st
 def process_job(session, job: Job) -> None:
     """Run the full pipeline for a claimed job (already status=downloading)."""
     job_id = job.id
-    job_log = logging.LoggerAdapter(log, {"job_id": job_id, "video_id": job.video_id})
+    job_log = logging.LoggerAdapter(
+        log,
+        {"job_id": job_id, "video_id": job.video_id, "correlation_id": job.correlation_id},
+    )
     # Track busy-worker count for the ops dashboard. Bracketed with try/finally
     # so even unexpected exits (BaseException, abrupt thread shutdown) restore
     # the gauge — otherwise it would drift upward over the process lifetime.
@@ -385,7 +393,10 @@ def process_job(session, job: Job) -> None:
                 job.title = dl.title
                 if job.video_id != dl.video_id:
                     job.video_id = dl.video_id
-                    job_log = logging.LoggerAdapter(log, {"job_id": job_id, "video_id": job.video_id})
+                    job_log = logging.LoggerAdapter(
+                        log,
+                        {"job_id": job_id, "video_id": job.video_id, "correlation_id": job.correlation_id},
+                    )
                 session.commit()
                 job_log.info("download done", extra={"title": dl.title, "stage": "download"})
 
@@ -517,7 +528,7 @@ def run_worker(stop: threading.Event) -> None:
             if job is None:
                 stop.wait(_POLL_INTERVAL)
                 continue
-            log.info("claimed job", extra={"job_id": job.id, "url": job.url, "stage": "claim"})
+            log.info("claimed job", extra={"job_id": job.id, "url": job.url, "stage": "claim", "correlation_id": job.correlation_id})
             process_job(session, job)
         except Exception:
             log.exception("worker loop error")

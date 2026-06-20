@@ -11,13 +11,14 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
 
 from scribe import __version__
 from scribe.api.routes import router as api_router
 from scribe.config import settings
+from scribe.obs.correlation import HEADER, request_correlation_id
 from scribe.obs.logging import configure as configure_logging
 from scribe.web.views import router as web_router
 from scribe.worker.download_canary import run_download_canary_loop
@@ -88,6 +89,19 @@ app.mount(
 )
 app.include_router(api_router)
 app.include_router(web_router)
+
+
+@app.middleware("http")
+async def correlation_id_middleware(request: Request, call_next):  # noqa: D401, ANN001
+    """Stamp every request with a correlation ID and echo it in the response.
+
+    Honours inbound ``X-Request-ID`` (otherwise generates one); stores the
+    value on ``request.state`` for routes to read and sets it on the response
+    header so callers can correlate (#357)."""
+    correlation_id = request_correlation_id(request)
+    response = await call_next(request)
+    response.headers[HEADER] = correlation_id
+    return response
 
 
 @app.get("/healthz", tags=["ops"])
