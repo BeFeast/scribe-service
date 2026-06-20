@@ -276,3 +276,49 @@ def test_strips_unclosed_leading_fence_before_frontmatter():
     # exactly one frontmatter block (one opening + one closing fence)
     assert result.summary_md.count("---") == 2
     assert result.summary_md.startswith("---\ntype: summary")
+
+
+# ---------- size cap (#349) ---------------------------------------------------
+
+
+def _valid_summary_md(body_chars: int) -> str:
+    body = "x" * body_chars
+    return (
+        "---\n"
+        "tags: [ai]\n"
+        'short_description: "ok"\n'
+        "---\n\n"
+        "## Body\n\n"
+        f"{body}\n"
+    )
+
+
+def test_oversized_summary_rejected_as_too_large() -> None:
+    md = _valid_summary_md(body_chars=2000)
+    with pytest.raises(ProviderError) as exc_info:
+        validate_and_canonicalize(md, max_chars=1000)
+    assert exc_info.value.reason == "summary_too_large"
+    assert "exceeds cap" in exc_info.value.details
+
+
+def test_normal_summary_unaffected_by_cap() -> None:
+    md = _valid_summary_md(body_chars=500)
+    result = validate_and_canonicalize(md, max_chars=1000)
+    assert result.tags == ["ai"]
+    assert result.short_description == "ok"
+    assert "## Body" in result.summary_md
+
+
+def test_cap_at_boundary_accepted() -> None:
+    # Exactly at the cap (== cap) is accepted; one char over is rejected.
+    md = _valid_summary_md(body_chars=10)
+    assert validate_and_canonicalize(md, max_chars=len(md)).tags == ["ai"]
+    with pytest.raises(ProviderError, match="summary_too_large"):
+        validate_and_canonicalize(md, max_chars=len(md) - 1)
+
+
+def test_disabled_cap_allows_oversized() -> None:
+    md = _valid_summary_md(body_chars=5000)
+    # max_chars=0 disables the cap entirely.
+    result = validate_and_canonicalize(md, max_chars=0)
+    assert result.tags == ["ai"]

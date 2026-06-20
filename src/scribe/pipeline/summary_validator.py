@@ -22,12 +22,19 @@ This module:
 Scope: structural validation only. Tag taxonomy / content normalisation
 (transliteration, slug rules, rejected-tag filtering) is the caller's
 responsibility — see `scribe.pipeline.summarizer._normalize_tags`.
+
+A configurable hard ceiling (`settings.max_summary_chars`, default ~100k)
+rejects pathological / prompt-injected LLM output before it is parsed, so a
+runaway response is treated as a validation failure (`summary_too_large`)
+and the chain advances instead of a multi-MB blob being persisted.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 from typing import Any
+
+from scribe.config import settings as _settings
 
 _SHORT_DESCRIPTION_MAX = 200
 
@@ -75,15 +82,27 @@ class SummaryResult:
     short_description: str | None = None
 
 
-def validate_and_canonicalize(markdown: str) -> SummaryResult:
+def validate_and_canonicalize(markdown: str, *, max_chars: int | None = None) -> SummaryResult:
     """Validate and canonicalise raw provider markdown.
 
     Returns a `SummaryResult` with the canonical `summary_md` (leading
     frontmatter, level-2 section headers) plus extracted `tags` and
     `short_description`. Raises `ProviderError(shape_invalid)` if the
-    response cannot be made canonical.
+    response cannot be made canonical, or `ProviderError(summary_too_large)`
+    if the raw output exceeds the configured character ceiling
+    (`max_chars` or `settings.max_summary_chars`). The overflow case is a
+    validation failure — the chain advances / the job is marked
+    summary-failed rather than silently truncating — so retries and fallbacks
+    behave as for any other provider failure.
     """
-    md = _strip_outer_code_fence((markdown or "").strip())
+    raw = (markdown or "")
+    cap = max_chars if max_chars is not None else _settings.max_summary_chars
+    if cap and len(raw) > cap:
+        raise ProviderError(
+            reason="summary_too_large",
+            details=f"summary output {len(raw)} chars exceeds cap {cap}",
+        )
+    md = _strip_outer_code_fence(raw.strip())
     if not md:
         raise ProviderError(reason="shape_invalid", details="empty response")
 

@@ -250,6 +250,15 @@ class Settings(BaseSettings):
     summary_breaker_threshold: int = 3
     summary_breaker_cooldown_secs: int = 600
 
+    # Hard ceiling on accepted summary output size in characters. Pathological
+    # LLM output (infinite repetition, prompt-injection) can produce multi-MB
+    # summaries that bloat Postgres and slow the SPA. A response exceeding the
+    # cap is rejected by `validate_and_canonicalize` with reason
+    # `summary_too_large` so the chain advances / the job is marked
+    # summary-failed instead of persisting an oversized blob. Default ~100k
+    # chars; 0 disables the cap (not recommended).
+    max_summary_chars: int = 100_000
+
     # Summary backend — codex CLI (MVP)
     codex_bin: str = "codex"
     # empty = use the codex config.toml model (gpt-5.x family). gpt-5.4-nano/mini
