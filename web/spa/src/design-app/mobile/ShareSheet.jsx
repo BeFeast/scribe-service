@@ -18,12 +18,13 @@
 //     those apps. Shipping fake UI labelled like real OS apps = fake
 //     telemetry. Replaced with a single "Share via system" row that calls
 //     the real Web Share API where available.
-//   - HIDDEN: `summary_shortlink` / `transcript_shortlink` rows are gated
-//     on a backend gap on `/transcripts/:id` and are commented out below
-//     with TODO refs (Issue: backend exposing shortlinks on the detail
-//     payload). Re-enable when the API ships them.
+//   - CONDITIONAL: `summary_shortlink` / `transcript_shortlink` rows render
+//     only when GET /transcripts/:id returns the field (Issue #295 closed the
+//     backend gap). Null stays hidden — no fabricated links.
 //   - SHIPPED actions:
 //       * Web Share (navigator.share)
+//       * Copy summary link (clipboard, when shortlink present)
+//       * Copy transcript link (clipboard, when shortlink present)
 //       * Copy summary as Markdown (clipboard)
 //       * Add to RSS feed (clipboard)
 //       * Copy URL (clipboard)
@@ -174,10 +175,6 @@ export function ShareSheet({ transcript, onClose }) {
 								<span className="sl-val" />
 							</button>
 						) : null}
-						{/* TODO(api-gap): re-enable when /transcripts/:id exposes
-						    `summary_shortlink`. Issue: backend shortlink API gap
-						    blocks the redesigned share-list. */}
-						{/*
 						{transcript.summary_shortlink ? (
 							<button
 								type="button"
@@ -186,28 +183,33 @@ export function ShareSheet({ transcript, onClose }) {
 									onCopy(transcript.summary_shortlink, "Summary link copied")
 								}
 							>
-								<span className="sl-ic"><IconLink size={18} /></span>
+								<span className="sl-ic">
+									<IconLink size={18} />
+								</span>
 								<span className="sl-label">Copy summary link</span>
 								<span className="sl-val">{transcript.summary_shortlink}</span>
 							</button>
 						) : null}
-						*/}
-						{/* TODO(api-gap): same as above for `transcript_shortlink`. */}
-						{/*
 						{transcript.transcript_shortlink ? (
 							<button
 								type="button"
 								className="share-li"
 								onClick={() =>
-									onCopy(transcript.transcript_shortlink, "Transcript link copied")
+									onCopy(
+										transcript.transcript_shortlink,
+										"Transcript link copied",
+									)
 								}
 							>
-								<span className="sl-ic"><IconLink size={18} /></span>
+								<span className="sl-ic">
+									<IconLink size={18} />
+								</span>
 								<span className="sl-label">Copy transcript link</span>
-								<span className="sl-val">{transcript.transcript_shortlink}</span>
+								<span className="sl-val">
+									{transcript.transcript_shortlink}
+								</span>
 							</button>
 						) : null}
-						*/}
 						<button
 							type="button"
 							className="share-li"
