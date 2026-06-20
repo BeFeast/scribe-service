@@ -11,6 +11,7 @@ import pytest
 from scribe.pipeline import downloader
 from scribe.pipeline.downloader import (
     REASON_BOTWALL_TRANSIENT,
+    REASON_DOWNLOAD_TIMEOUT,
     REASON_NEEDS_COOKIES,
     REASON_OTHER,
     REASON_UNAVAILABLE,
@@ -83,7 +84,7 @@ def test_download_audio_uses_ytdlp_extractor_key_for_non_youtube(tmp_path, monke
     media = tmp_path / "audio.m4a"
     media.write_text("audio", encoding="utf-8")
 
-    def fake_run(args):
+    def fake_run(args, **kwargs):
         if "--dump-single-json" in args:
             return subprocess.CompletedProcess(
                 args,
@@ -111,7 +112,7 @@ def test_download_audio_uses_ytdlp_extractor_key_for_non_youtube(tmp_path, monke
 
 
 def _fake_ytdlp_success(media_path):
-    def run(args):
+    def run(args, **kwargs):
         if "--dump-single-json" in args:
             return subprocess.CompletedProcess(
                 args,
@@ -138,7 +139,7 @@ def test_download_audio_without_pot_base_url_omits_bgutil_extractor_arg(tmp_path
 
     fake = _fake_ytdlp_success(media)
 
-    def capture(args):
+    def capture(args, **kwargs):
         seen.append(list(args))
         return fake(args)
 
@@ -159,7 +160,7 @@ def test_download_audio_with_pot_base_url_passes_bgutil_extractor_arg(tmp_path, 
 
     fake = _fake_ytdlp_success(media)
 
-    def capture(args):
+    def capture(args, **kwargs):
         seen.append(list(args))
         return fake(args)
 
@@ -191,7 +192,7 @@ def test_download_audio_without_cookies_omits_cookies_flag(tmp_path, monkeypatch
 
     fake = _fake_ytdlp_success(media)
 
-    def capture(args):
+    def capture(args, **kwargs):
         seen.append(list(args))
         return fake(args)
 
@@ -211,7 +212,7 @@ def test_download_audio_with_cookies_writes_0600_temp_and_passes_flag(tmp_path, 
 
     fake = _fake_ytdlp_success(media)
 
-    def capture(args):
+    def capture(args, **kwargs):
         # Capture the cookies arg and snapshot its mode/contents *during*
         # the download — both yt-dlp calls must see the same path.
         idx = args.index("--cookies")
@@ -389,7 +390,7 @@ def test_run_ytdlp_backoff_respects_total_cap(monkeypatch) -> None:
 def test_download_audio_with_cookies_cleans_up_on_failure(tmp_path, monkeypatch) -> None:
     seen_path: dict[str, str] = {}
 
-    def failing(args):
+    def failing(args, **kwargs):
         idx = args.index("--cookies")
         seen_path["p"] = args[idx + 1]
         # Sanity: the temp exists during the call.
@@ -405,3 +406,123 @@ def test_download_audio_with_cookies_cleans_up_on_failure(tmp_path, monkeypatch)
 
     assert "p" in seen_path
     assert not os.path.exists(seen_path["p"])
+
+
+# --- per-stage download timeout (#346) --------------------------------------
+def test_invoke_ytdlp_deadline_expired_raises_download_timeout(monkeypatch, tmp_path):
+    """A yt-dlp invocation that outlives the deadline raises a typed
+    DownloadError(reason=download_timeout) and SIGKILLs the process group."""
+    import time as _time
+
+    deadline = _time.monotonic() + 0.05
+    with pytest.raises(DownloadError) as exc_info:
+        downloader._invoke_ytdlp(["sleep", "30"], deadline)
+    assert exc_info.value.reason == REASON_DOWNLOAD_TIMEOUT
+
+
+def test_invoke_ytdlp_kills_process_group_on_timeout():
+    """The yt-dlp process group is SIGKILLed on deadline, so the helper
+    returns promptly instead of waiting the full subprocess duration."""
+    import time as _time
+
+    start = _time.monotonic()
+    deadline = start + 0.05
+    with pytest.raises(DownloadError):
+        downloader._invoke_ytdlp(["sleep", "30"], deadline)
+    elapsed = _time.monotonic() - start
+    # If the process group were not killed, the fallback communicate(timeout=5)
+    # would push elapsed toward ~5s. Sub-3s proves the SIGKILL landed and no
+    # orphaned sleep keeps the worker pinned.
+    assert elapsed < 3.0
+
+
+def test_run_ytdlp_timeout_does_not_retry(monkeypatch):
+    """A download timeout must not be retried as if it were a transient
+    bot-wall hit — the deadline is gone, so retrying would only stall."""
+    from scribe.config import settings
+
+    monkeypatch.setattr(settings, "download_timeout_s", 0.05)
+
+    calls = {"n": 0}
+
+    def fake_invoke(args, deadline):
+        calls["n"] += 1
+        # Simulate a hang that blows past the deadline.
+        raise DownloadError("download timed out", reason=REASON_DOWNLOAD_TIMEOUT)
+
+    monkeypatch.setattr(downloader, "_invoke_ytdlp", fake_invoke)
+    monkeypatch.setattr(downloader.time, "sleep", lambda _d: pytest.fail("must not sleep"))
+
+    with pytest.raises(DownloadError) as exc_info:
+        downloader._run_ytdlp(["yt-dlp", "x"], deadline=_time_deadline())
+
+    assert exc_info.value.reason == REASON_DOWNLOAD_TIMEOUT
+    assert calls["n"] == 1
+
+
+def _time_deadline() -> float:
+    import time as _time
+
+    return _time.monotonic() + 1.0
+
+
+def test_download_audio_timeout_raises_download_timeout_and_kills_ytdlp(monkeypatch, tmp_path):
+    """End-to-end: download_audio with a tight timeout_seconds and a yt-dlp
+    invocation that hangs must fail with reason=download_timeout and leave no
+    orphaned yt-dlp subprocess."""
+    from scribe.config import settings
+
+    monkeypatch.setattr(settings, "download_timeout_s", 600)  # ensure default is sane
+
+    seen_args: list[list[str]] = []
+
+    # Force the yt-dlp invocation to hang by making _base_args emit a shell
+    # sleep; the trailing yt-dlp flags become positional args to `sh -c` and
+    # are ignored, so the subprocess really blocks for 30s. The real deadline
+    # comes from timeout_seconds below.
+    monkeypatch.setattr(
+        downloader,
+        "_base_args",
+        lambda *_a, **_kw: ["sh", "-c", "sleep 30"],
+    )
+
+    # Wrap _invoke_ytdlp so the test fails loudly if patching is wrong.
+    real_invoke = downloader._invoke_ytdlp
+
+    def spying_invoke(args, deadline):
+        seen_args.append(list(args))
+        return real_invoke(args, deadline)
+
+    monkeypatch.setattr(downloader, "_invoke_ytdlp", spying_invoke)
+
+    with pytest.raises(DownloadError) as exc_info:
+        downloader.download_audio(
+            "https://youtu.be/jNQXAC9IVRw",
+            tmp_path,
+            timeout_seconds=0.1,
+        )
+    assert exc_info.value.reason == REASON_DOWNLOAD_TIMEOUT
+    assert seen_args, "download_audio must have invoked yt-dlp at least once"
+
+
+def test_download_audio_timeout_zero_disables_timeout(monkeypatch, tmp_path):
+    """timeout_seconds=0 keeps the legacy unbounded behaviour (canary/tests)."""
+    media = tmp_path / "audio.m4a"
+    media.write_text("audio", encoding="utf-8")
+
+    def fake_run(args, **kwargs):
+        if "--dump-single-json" in args:
+            return subprocess.CompletedProcess(
+                args, 0,
+                stdout=json.dumps({"extractor_key": "Youtube", "id": "jNQXAC9IVRw",
+                                    "title": "ok", "duration": 10}),
+                stderr="",
+            )
+        return subprocess.CompletedProcess(args, 0, stdout=f"{media}\n", stderr="")
+
+    monkeypatch.setattr(downloader, "_run_ytdlp", fake_run)
+
+    result = downloader.download_audio(
+        "https://youtu.be/jNQXAC9IVRw", tmp_path, timeout_seconds=0
+    )
+    assert result.video_id == "jNQXAC9IVRw"

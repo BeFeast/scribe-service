@@ -30,12 +30,15 @@ import json
 import os
 import random
 import re
+import signal
 import subprocess
 import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+from scribe.config import settings
 
 # yt-dlp tries these clients in order. android_vr is the token-free workhorse;
 # the web clients use EJS + deno for JS-challenge solving.
@@ -89,6 +92,10 @@ REASON_BOTWALL_TRANSIENT = "botwall_transient"
 REASON_NEEDS_COOKIES = "needs_cookies"
 REASON_UNAVAILABLE = "unavailable"
 REASON_OTHER = "other"
+# Wall-clock timeout on the download stage (#346). Distinct from the
+# retryable bot-wall path: a timeout means yt-dlp is stuck on a network read,
+# so the process group is killed and the job fails immediately.
+REASON_DOWNLOAD_TIMEOUT = "download_timeout"
 
 
 class DownloadError(RuntimeError):
@@ -242,16 +249,81 @@ def _backoff_delay(attempt: int) -> float:
     return max(0.0, base * jitter)
 
 
-def _run_ytdlp(args: list[str]) -> subprocess.CompletedProcess:
+def _terminate_process_group(proc: subprocess.Popen) -> None:
+    """SIGKILL the yt-dlp process group so deno/EJS/ffmpeg children it spawned
+    cannot outlive a timeout (#346). ``start_new_session=True`` makes yt-dlp a
+    session/process-group leader, so ``os.killpg`` reaches the whole tree.
+    Falls back to killing just the child if the group lookup fails (the
+    process already exited) or we lack permission.
+    """
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+
+
+def _invoke_ytdlp(
+    args: list[str], deadline: float | None
+) -> subprocess.CompletedProcess:
+    """Run one yt-dlp invocation bounded by ``deadline`` (monotonic seconds).
+
+    When ``deadline`` is ``None`` the call is unbounded (used by tests that
+    monkeypatch this helper and by the no-timeout path). On deadline expiry the
+    yt-dlp process group is SIGKILLed to avoid orphaned deno/ffmpeg children and
+    a :class:`DownloadError` with ``reason=download_timeout`` is raised.
+    """
+    if deadline is None:
+        return subprocess.run(args, capture_output=True, text=True)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise DownloadError(
+            f"download timed out after {settings.download_timeout_s}s "
+            f"(reason={REASON_DOWNLOAD_TIMEOUT})",
+            reason=REASON_DOWNLOAD_TIMEOUT,
+        )
+    proc = subprocess.Popen(
+        args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        out, err = proc.communicate(timeout=remaining)
+    except subprocess.TimeoutExpired:
+        _terminate_process_group(proc)
+        try:
+            out, err = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            out, err = "", ""
+        raise DownloadError(
+            f"download timed out after {settings.download_timeout_s}s "
+            f"(reason={REASON_DOWNLOAD_TIMEOUT})",
+            reason=REASON_DOWNLOAD_TIMEOUT,
+        ) from None
+    return subprocess.CompletedProcess(args, proc.returncode, stdout=out, stderr=err)
+
+
+def _run_ytdlp(
+    args: list[str], *, deadline: float | None = None
+) -> subprocess.CompletedProcess:
     """Run yt-dlp; retry on the YouTube bot-wall signature with jittered
     exponential backoff, capped by ``MAX_TOTAL_BACKOFF_SECONDS`` of
     cumulative sleep. Non-bot-wall failures bail immediately and surface
     a typed ``DownloadError.reason``.
+
+    ``deadline`` (monotonic seconds) is a wall-clock budget for the whole
+    download stage; a hung yt-dlp subprocess is killed and surfaced as
+    ``reason=download_timeout``. Backoff sleeps are skipped once the deadline
+    is close so the timeout is honoured even inside the bot-wall retry loop.
     """
     last: subprocess.CompletedProcess | None = None
     total_slept = 0.0
     for attempt in range(1, MAX_TRIES + 1):
-        last = subprocess.run(args, capture_output=True, text=True)
+        last = _invoke_ytdlp(args, deadline)
         if last.returncode == 0:
             return last
         stderr = last.stderr or ""
@@ -260,6 +332,13 @@ def _run_ytdlp(args: list[str]) -> subprocess.CompletedProcess:
             break
         delay = _backoff_delay(attempt)
         if total_slept + delay > MAX_TOTAL_BACKOFF_SECONDS:
+            break
+        # Don't sleep past the wall-clock deadline; a timeout must fire even
+        # mid-backoff. If the next attempt could not start before the deadline,
+        # stop retrying and let the loop below raise the typed reason (or, when
+        # the deadline already elapsed, the next _invoke_ytdlp raises
+        # download_timeout).
+        if deadline is not None and time.monotonic() + delay >= deadline:
             break
         time.sleep(delay)
         total_slept += delay
@@ -309,6 +388,7 @@ def download_audio(
     deno_path: str = "deno",
     cookies: str | None = None,
     pot_base_url: str | None = None,
+    timeout_seconds: float | None = None,
 ) -> DownloadResult:
     """Download the audio stream of `url` into `dest_dir`, return metadata + path.
 
@@ -321,14 +401,27 @@ def download_audio(
     (#309) as ``--extractor-args "youtubepot-bgutilhttp:base_url=…"``. When
     empty/``None`` the integration is silently disabled and yt-dlp behaves
     as it did before the plugin was installed.
+
+    ``timeout_seconds`` bounds the *whole* download stage wall-clock time
+    (#346). ``None`` falls back to ``settings.download_timeout_s``; a value
+    <= 0 disables the timeout (used only by tests/canary paths that need the
+    legacy unbounded behaviour). On expiry the yt-dlp process group is
+    SIGKILLed (no orphan) and ``DownloadError(reason=download_timeout)`` is
+    raised so the job error + metrics surface it like any other download
+    failure.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
+    if timeout_seconds is None:
+        timeout_seconds = float(settings.download_timeout_s)
+    deadline = (
+        time.monotonic() + timeout_seconds if timeout_seconds and timeout_seconds > 0 else None
+    )
     base = _base_args(deno_path, pot_base_url=pot_base_url)
 
     with _cookies_tempfile(cookies) as cookies_path:
         cookie_args = ["--cookies", cookies_path] if cookies_path is not None else []
 
-        meta = _run_ytdlp([*base, *cookie_args, "--skip-download", "--dump-single-json", url])
+        meta = _run_ytdlp([*base, *cookie_args, "--skip-download", "--dump-single-json", url], deadline=deadline)
         try:
             info = json.loads(meta.stdout.strip().splitlines()[-1])
         except (IndexError, json.JSONDecodeError) as exc:
@@ -346,7 +439,7 @@ def download_audio(
         dl = _run_ytdlp([
             *base, *cookie_args, "-f", "ba/best[height<=360]/18",
             "-o", out_tmpl, "--print", "after_move:filepath", url,
-        ])
+        ], deadline=deadline)
         audio_path = Path(dl.stdout.strip().splitlines()[-1])
         if not audio_path.is_file():
             raise DownloadError(f"yt-dlp reported {audio_path} but the file is missing")

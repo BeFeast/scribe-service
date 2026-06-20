@@ -73,7 +73,7 @@ def test_download_audio_populates_author_fields(tmp_path, monkeypatch):
     media = tmp_path / "audio.m4a"
     media.write_text("audio", encoding="utf-8")
 
-    def fake_run(args):
+    def fake_run(args, **kwargs):
         if "--dump-single-json" in args:
             return subprocess.CompletedProcess(
                 args, 0,
