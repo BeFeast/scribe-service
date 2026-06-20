@@ -20,13 +20,31 @@ Open the extension options page and set:
   A bearer token is required when the configured Scribe URL is protected, especially when using it
   outside a trusted LAN.
 
-Saving the base URL asks Chrome for permission to reach that Scribe origin.
-The token is stored in this device's local extension storage only (`chrome.storage.local`) — it
+Saving the base URL asks Chrome for permission to reach that Scribe origin (an optional
+host permission requested dynamically — the extension never asks for all-sites access up
+front). The token is stored in this device's local extension storage only (`chrome.storage.local`) — it
 is **not** written to `chrome.storage.sync`, so it is never uploaded to the Chrome cloud-sync account.
 The base URL is not secret and is kept in `chrome.storage.sync` for cross-device convenience.
 The options page also surfaces a **Last authenticated** timestamp, updated each time Scribe accepts
 the saved token (a successful `GET /preflight` or `POST /jobs`), so a silently-revoked token is
 visible without waiting for a 401. No token is hardcoded in the extension.
+
+## Permissions
+
+The extension requests only the host origins it actually needs:
+
+- `https://scribe.oklabs.uk/*` as a required `host_permissions` entry (the default
+  Scribe origin).
+- YouTube origins (`https://*.youtube.com/*` and `https://youtu.be/*`) as
+  **optional** `optional_host_permissions`, granted on demand when you enable
+  YouTube cookies.
+- The user-configured Scribe base URL origin is requested dynamically as an
+  optional permission from the options page when you save a non-default base URL.
+
+No `http://*/*` / `https://*/*` all-sites wildcard is requested. Extension HTML
+pages (popup and options) ship a `Content-Security-Policy` meta restricting
+`script-src` and `style-src` to `'self'`; styles live in external stylesheets
+(`popup.css`, `options.css`) and there are no inline scripts.
 
 ## Preflight & confirm (no blind submits)
 
