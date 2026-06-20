@@ -155,6 +155,15 @@ class Settings(BaseSettings):
     # Transient audio scratch — NFS mount of TrueNAS in prod (see design doc)
     temp_dir: str = "/data/tmp"
 
+    # Wall-clock budget for the yt-dlp download stage (#346). yt-dlp can hang
+    # indefinitely on a stuck stream/network read and pin a worker thread for
+    # hours; this bounds a single download_audio call. On expiry the yt-dlp
+    # process group is SIGKILLed (no orphan) and the job fails with a typed
+    # DownloadError(reason=download_timeout). 0 disables the timeout (not
+    # recommended — see MAX_TOTAL_BACKOFF_SECONDS only bounds backoff sleeps,
+    # not a hung subprocess read).
+    download_timeout_s: int = 600
+
     # Vast.ai — whisper only
     vast_api_key: str = ""
     transcribe_timeout_secs: int = 1800
