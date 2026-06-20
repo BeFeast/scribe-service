@@ -191,6 +191,7 @@ class JobView(BaseModel):
     error: str | None = None
     deduplicated: bool = False
     callback_url: str | None = None
+    correlation_id: str | None = None
     transcript: TranscriptBrief | None = None
     started_at: dt.datetime | None = None
     elapsed_s: int | None = None

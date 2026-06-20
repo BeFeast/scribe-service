@@ -21,8 +21,8 @@ def _fake_session() -> SimpleNamespace:
     return SimpleNamespace()
 
 
-def _fake_job(callback_url: str | None) -> SimpleNamespace:
-    return SimpleNamespace(id=42, callback_url=callback_url)
+def _fake_job(callback_url: str | None, correlation_id: str | None = None) -> SimpleNamespace:
+    return SimpleNamespace(id=42, callback_url=callback_url, correlation_id=correlation_id)
 
 
 def _fake_jobview() -> JobView:
@@ -73,6 +73,57 @@ def test_deliver_webhook_skipped_when_no_callback(monkeypatch):
     counts = _patch_webhook_counters(monkeypatch)
     loop_module._deliver_webhook(_fake_session(), _fake_job(None))
     assert counts == {"deliveries": {"skipped": 1}, "attempts": {}}
+
+
+def test_deliver_webhook_sends_correlation_id_header(monkeypatch):
+    """A job with a correlation_id must surface it as X-Request-ID on the
+    webhook POST so the receiver can stitch the trace (#357)."""
+    monkeypatch.setattr(loop_module, "render_job_view",
+                        lambda session, job: _fake_jobview())
+    captured: dict[str, str] = {}
+
+    class FakeResp:
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return None
+        def read(self):
+            return b""
+
+    def fake_urlopen(req, timeout):
+        captured.update(req.headers)
+        return FakeResp()
+
+    monkeypatch.setattr(loop_module.urllib.request, "urlopen", fake_urlopen)
+    loop_module._deliver_webhook(
+        _fake_session(), _fake_job("https://example.com/hook", correlation_id="req-xyz")
+    )
+    assert captured.get("X-request-id") == "req-xyz"
+
+
+def test_deliver_webhook_omits_correlation_id_header_when_unset(monkeypatch):
+    """No correlation_id on the job → no X-Request-ID header on the POST."""
+    monkeypatch.setattr(loop_module, "render_job_view",
+                        lambda session, job: _fake_jobview())
+    captured: dict[str, str] = {}
+
+    class FakeResp:
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return None
+        def read(self):
+            return b""
+
+    def fake_urlopen(req, timeout):
+        captured.update(req.headers)
+        return FakeResp()
+
+    monkeypatch.setattr(loop_module.urllib.request, "urlopen", fake_urlopen)
+    loop_module._deliver_webhook(
+        _fake_session(), _fake_job("https://example.com/hook", correlation_id=None)
+    )
+    assert "X-request-id" not in captured
 
 
 def test_deliver_webhook_malformed_url_does_not_raise(monkeypatch):
