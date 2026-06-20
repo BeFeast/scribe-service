@@ -323,19 +323,45 @@ def _find_done_transcript(
 
 def _summarize_and_finalize(session, job: Job, transcript: Transcript, title: str, *, promoted: bool) -> None:
     """Run summarizer against an already-persisted transcript_md, update the
-    row with summary + tags, mark the job done."""
+    row with summary + tags, mark the job done.
+
+    The write-back is guarded by a compare-and-set. ``_find_partial_transcript``
+    selects the partial with no row lock, so two jobs for the same video (e.g.
+    a dedup TOCTOU enqueuing a second resume) can both pick up the same row.
+    Before landing the summary we re-read the row under ``SELECT ... FOR UPDATE``
+    and, if a concurrent worker already filled ``summary_md``, we adopt that
+    finished summary instead of clobbering it with our (older) result — silent
+    data loss otherwise (scr-549 / #353). The intermediate ``summarizing``
+    commit releases any lock held at lookup time and the summary step is slow,
+    so the lock has to be (re)taken here, right before the write."""
     _set_job_status(session, job, JobStatus.summarizing)
     with _time_stage("summary"):
         summary = summarizer.summarize(transcript.transcript_md, title=title)
-    transcript.summary_md = inject_author_frontmatter(
+    summary_md = inject_author_frontmatter(
         summary.summary_md,
         author_name=transcript.author_name,
         author_handle=transcript.author_handle,
         author_url=transcript.author_url,
         source_platform=transcript.source_platform,
     )
-    transcript.short_description = summary.short_description
-    transcript.tags = summary.tags or None
+    # Lock the row and re-read summary_md from the DB (our in-memory copy may be
+    # stale: expire_on_commit is off, so the summarizing commit above did not
+    # refresh it). If another resume already completed, keep its summary.
+    session.refresh(transcript, with_for_update=True)
+    if transcript.summary_md is not None:
+        log.warning(
+            "partial already summarized by a concurrent worker; keeping existing summary",
+            extra={
+                "job_id": job.id,
+                "transcript_id": transcript.id,
+                "video_id": transcript.video_id,
+                "correlation_id": job.correlation_id,
+            },
+        )
+    else:
+        transcript.summary_md = summary_md
+        transcript.short_description = summary.short_description
+        transcript.tags = summary.tags or None
     session.refresh(job)
     _set_job_status(session, job, JobStatus.done)
     metrics.transcripts_total.labels(kind="promoted" if promoted else "full").inc()
