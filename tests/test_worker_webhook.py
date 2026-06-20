@@ -68,6 +68,12 @@ class _FakeResponse:
         return b""
 
 
+def _within_jitter_band(actual: float, base_s: float) -> bool:
+    """Assert a webhook retry sleep fell within the documented ±10% jitter band."""
+    spread = base_s * loop_module._WEBHOOK_RETRY_JITTER
+    return base_s - spread <= actual <= base_s + spread
+
+
 def test_deliver_webhook_skipped_when_no_callback(monkeypatch):
     """Empty/None callback_url → counter('skipped'), never touches the net."""
     counts = _patch_webhook_counters(monkeypatch)
@@ -256,7 +262,9 @@ def test_deliver_webhook_retries_then_succeeds(monkeypatch):
     loop_module._deliver_webhook(_fake_session(), _fake_job("https://example.com/hook"))
 
     assert calls == 2
-    assert sleeps == [1.0]
+    # Backoff is jittered within ±10% of the 1.0s base.
+    assert len(sleeps) == 1
+    assert _within_jitter_band(sleeps[0], 1.0)
     assert counts == {
         "deliveries": {"ok": 1},
         "attempts": {"net_error": 1, "ok": 1},
@@ -288,7 +296,11 @@ def test_deliver_webhook_retries_then_gives_up(monkeypatch):
     loop_module._deliver_webhook(_fake_session(), _fake_job("https://example.com/hook"))
 
     assert calls == 4
-    assert sleeps == [1.0, 4.0, 16.0]
+    # Each retry sleep is jittered within ±10% of its base (1.0/4.0/16.0).
+    assert len(sleeps) == 3
+    assert _within_jitter_band(sleeps[0], 1.0)
+    assert _within_jitter_band(sleeps[1], 4.0)
+    assert _within_jitter_band(sleeps[2], 16.0)
     assert counts == {
         "deliveries": {"http_error": 1},
         "attempts": {"http_error": 4},
@@ -325,3 +337,25 @@ def test_deliver_webhook_does_not_retry_non_transient_4xx(monkeypatch):
         "deliveries": {"http_error": 1},
         "attempts": {"http_error": 1},
     }
+
+
+def test_jittered_backoff_stays_within_documented_band():
+    """_jittered_backoff must stay within ±10% of the base and actually vary
+    so concurrent deliveries decorrelate (issue #351)."""
+    import random
+
+    base = 4.0
+    samples = [loop_module._jittered_backoff(base) for _ in range(200)]
+    for s in samples:
+        assert _within_jitter_band(s, base)
+    # Jitter must produce more than one distinct value across a healthy sample.
+    assert len(set(round(s, 6) for s in samples)) > 1
+    # The mean of a symmetric ±10% band should sit close to the base, keeping
+    # the total retry budget roughly equivalent to the fixed schedule.
+    assert abs(sum(samples) / len(samples) - base) < base * 0.05
+    # Deterministic seeding must still be possible for reproducible runs.
+    random.seed(1234)
+    a = loop_module._jittered_backoff(base)
+    random.seed(1234)
+    b = loop_module._jittered_backoff(base)
+    assert a == b

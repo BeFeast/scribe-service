@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import shutil
 import tempfile
 import threading
@@ -48,7 +49,24 @@ _POLL_INTERVAL = 5.0
 # Loop tick in milliseconds — surfaced by the ops rollcall ("loop tick {LOOP_TICK_MS}ms").
 LOOP_TICK_MS = int(_POLL_INTERVAL * 1000)
 _WEBHOOK_TIMEOUT_S = 10.0
+# Base retry schedule for webhook delivery. Each interval is randomized with
+# ±10% partial jitter before sleeping, so concurrent deliveries to a
+# slow-recovering callback do not synchronize into a thundering herd. The band
+# is symmetric around the base, so the expected total retry budget is unchanged
+# (mean == sum of bases); only the per-attempt spread is randomized.
 _WEBHOOK_RETRY_BACKOFFS_S = (1.0, 4.0, 16.0)
+_WEBHOOK_RETRY_JITTER = 0.10
+
+
+def _jittered_backoff(base_s: float) -> float:
+    """Return ``base_s`` with ±10% partial jitter applied.
+
+    The result stays within ``[base_s * (1 - JITTER), base_s * (1 + JITTER)]``
+    and is uniform over that band. Using a symmetric partial band (rather than
+    AWS full jitter) keeps the total expected retry budget equivalent to the
+    fixed schedule while still decorrelating concurrent retry streams."""
+    spread = base_s * _WEBHOOK_RETRY_JITTER
+    return random.uniform(base_s - spread, base_s + spread)
 _INTERRUPTED_ON_STARTUP = (
     JobStatus.downloading,
     JobStatus.transcribing,
@@ -113,7 +131,7 @@ def _deliver_webhook(session, job: Job) -> None:
             if backoff_s is None:
                 _count_webhook_delivery("http_error")
                 return
-            time.sleep(backoff_s)
+            time.sleep(_jittered_backoff(backoff_s))
             continue
         except ValueError as exc:
             _count_webhook_attempt("net_error")
@@ -142,7 +160,7 @@ def _deliver_webhook(session, job: Job) -> None:
             if backoff_s is None:
                 _count_webhook_delivery("net_error")
                 return
-            time.sleep(backoff_s)
+            time.sleep(_jittered_backoff(backoff_s))
 
 
 @contextmanager
