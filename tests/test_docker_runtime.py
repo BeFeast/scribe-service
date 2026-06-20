@@ -25,6 +25,29 @@ def test_service_container_runs_migrations_before_uvicorn() -> None:
     assert "set -eu" in entrypoint
 
 
+def test_dockerfile_runs_as_non_root() -> None:
+    """#348: the image must drop privileges to a non-root user before the CMD."""
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    # App user is created with a stable UID/GID for volume ownership.
+    assert "--gid 1001 scribe" in dockerfile
+    assert "--uid 1001" in dockerfile
+    # Writable paths are chowned to the app user before dropping privileges.
+    assert "chown -R scribe:scribe /app /home/scribe /data/tmp" in dockerfile
+    # USER directive appears after the chown and before EXPOSE.
+    chown_step = dockerfile.index("chown -R scribe:scribe")
+    user_step = dockerfile.index("USER scribe")
+    expose_step = dockerfile.index("EXPOSE 8000")
+    assert chown_step < user_step < expose_step
+
+
+def test_dockerfile_codex_auth_path_matches_non_root_home() -> None:
+    """#348: codex auth volume now mounts under the non-root user's home."""
+    compose = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    assert "/home/scribe/.codex" in compose
+    assert "/root/.codex" not in compose
+
+
 def test_compose_persists_scribe_logs_in_journald() -> None:
     compose = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
 

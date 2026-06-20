@@ -18,6 +18,36 @@ _STD_RECORD_ATTRS = frozenset(
     }
 )
 
+# Minimum length for a value to be treated as a redactable secret. Avoids
+# redacting short common substrings that happen to match empty/short config.
+_MIN_SECRET_LEN = 6
+_redaction_secrets: set[str] = set()
+
+
+def configure_redaction(secrets: Any) -> None:
+    """Register known secret values to scrub from every emitted log payload.
+
+    Called once at startup from ``scribe.obs.logging.configure`` with the
+    loaded Settings secret fields. Only non-empty values at least
+    ``_MIN_SECRET_LEN`` long are registered so a blank config or a trivial
+    string cannot cause spurious redactions. Pass an empty iterable to clear.
+    """
+    _redaction_secrets.clear()
+    for value in secrets:
+        if isinstance(value, str) and len(value) >= _MIN_SECRET_LEN:
+            _redaction_secrets.add(value)
+
+
+def redact_text(value: str) -> str:
+    """Replace every registered secret occurrence in ``value`` with ``[redacted]``."""
+    if not value or not _redaction_secrets:
+        return value
+    redacted = value
+    for secret in _redaction_secrets:
+        if secret and secret in redacted:
+            redacted = redacted.replace(secret, "[redacted]")
+    return redacted
+
 
 class JobLogBuffer:
     def __init__(self, *, max_lines: int = _MAX_LINES_PER_JOB) -> None:
@@ -69,7 +99,7 @@ job_log_buffer = JobLogBuffer()
 
 def payload_from_record(record: logging.LogRecord) -> dict[str, Any]:
     copied = copy(record)
-    message = copied.getMessage()
+    message = redact_text(copied.getMessage())
     payload: dict[str, Any] = {
         "ts": dt.datetime.fromtimestamp(copied.created, dt.UTC).astimezone().isoformat(timespec="milliseconds"),
         "lvl": copied.levelname,
@@ -77,10 +107,12 @@ def payload_from_record(record: logging.LogRecord) -> dict[str, Any]:
         "msg": message,
     }
     if copied.exc_info:
-        payload["exc"] = logging.Formatter().formatException(copied.exc_info)
+        payload["exc"] = redact_text(logging.Formatter().formatException(copied.exc_info))
     for key, value in copied.__dict__.items():
         if key in _STD_RECORD_ATTRS or key.startswith("_"):
             continue
+        if isinstance(value, str):
+            value = redact_text(value)
         payload[key] = value
     return payload
 

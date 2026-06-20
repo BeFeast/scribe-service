@@ -17,6 +17,7 @@ def auth_policy_defaults(monkeypatch):
     from scribe.config import settings
 
     monkeypatch.setattr(settings, "trusted_cidrs", "127.0.0.0/8,::1/128")
+    monkeypatch.setattr(settings, "trusted_proxies", "")
     monkeypatch.setattr(settings, "machine_bearer_token", "")
     monkeypatch.setattr(settings, "app_start_workers", False)
 

@@ -18,10 +18,11 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/usr/local/bin:/root/.deno/bin:${PATH}" \
+    PATH="/usr/local/bin:${PATH}" \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     SCRIBE_TEMP_DIR=/data/tmp \
+    HOME=/home/scribe \
     SCRIBE_CODEX_BIN=codex
 
 # System deps:
@@ -61,6 +62,18 @@ RUN uv sync --frozen 2>/dev/null || uv sync
 # scribe expects SCRIBE_TEMP_DIR (default /data/tmp) to exist. The compose
 # file mounts a volume here so big audio files don't fill the container fs.
 RUN mkdir -p /data/tmp && chmod +x /app/docker/entrypoint.sh
+
+# Non-root runtime (#348): create a fixed-UID system user and chown the
+# writable paths so a compromised app cannot run as root inside the
+# container. UID/GID 1001 is stable so host volume mounts (codex auth,
+# scratch) can be chowned consistently on the deploy host.
+RUN groupadd --system --gid 1001 scribe \
+    && useradd --system --uid 1001 --gid scribe --no-create-home \
+        --home-dir /home/scribe --shell /usr/sbin/nologin scribe \
+    && mkdir -p /home/scribe/.codex \
+    && chown -R scribe:scribe /app /home/scribe /data/tmp
+
+USER scribe
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
