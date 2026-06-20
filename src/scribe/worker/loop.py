@@ -92,6 +92,12 @@ def _deliver_webhook(session, job: Job) -> None:
     if not job.callback_url:
         _count_webhook_delivery("skipped")
         return
+    # notify=False (#296) suppresses delivery even when a callback_url is set —
+    # the caller opted out of the terminal-status push. getattr keeps the
+    # contract honoured for Job-like objects that predate the column.
+    if not getattr(job, "notify", True):
+        _count_webhook_delivery("skipped")
+        return
     body = render_job_view(session, job).model_dump(mode="json")
     data = json.dumps(body).encode("utf-8")
     headers = {"Content-Type": "application/json"}
@@ -352,9 +358,21 @@ def _summarize_and_finalize(session, job: Job, transcript: Transcript, title: st
     data loss otherwise (scr-549 / #353). The intermediate ``summarizing``
     commit releases any lock held at lookup time and the summary step is slow,
     so the lock has to be (re)taken here, right before the write."""
+    if not job.summarize:
+        # summarize=False (#296): skip the codex step entirely. The transcript
+        # stays partial (summary_md=NULL) so the caller gets a transcript-only
+        # result with no summary-provider spend. A later submit (summarize
+        # default True) can resume the partial and fill in the summary.
+        session.refresh(job)
+        _set_job_status(session, job, JobStatus.done)
+        metrics.last_success_timestamp.set(time.time())
+        _deliver_webhook(session, job)
+        return
     _set_job_status(session, job, JobStatus.summarizing)
     with _time_stage("summary"):
-        summary = summarizer.summarize(transcript.transcript_md, title=title)
+        summary = summarizer.summarize(
+            transcript.transcript_md, title=title, prompt_body=job.summary_prompt
+        )
     summary_md = inject_author_frontmatter(
         summary.summary_md,
         author_name=transcript.author_name,

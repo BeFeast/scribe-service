@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -130,6 +130,19 @@ class Job(Base):
     source: Mapped[str | None] = mapped_column(Text, nullable=True)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Per-job pipeline toggles (#296, mobile Capture sheet). Defaults match the
+    # pre-#296 behavior — always summarize, always deliver the webhook — so
+    # existing rows backfilled by the migration and callers that omit the
+    # fields are unaffected.
+    summarize: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    notify: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    # Optional per-job override of the active summarizer prompt template; NULL
+    # means "use the configured active prompt".
+    summary_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     vast_instance_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     destroy_failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Optional webhook target — scribe POSTs the final JobView JSON to

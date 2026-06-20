@@ -35,6 +35,71 @@ def test_post_jobs_invalid_callback_url_returns_422():
         app.dependency_overrides.pop(routes_module.get_session, None)
 
 
+def test_job_create_defaults_preserve_legacy_behavior():
+    """Omitting the #296 toggles must keep today's defaults so existing
+    {url, source} callers are byte-compatible: summarize/notify on, no prompt."""
+    from scribe.api.schemas import JobCreate
+
+    body = JobCreate(url="https://youtu.be/dQw4w9WgXcQ")
+    assert body.summarize is True
+    assert body.notify is True
+    assert body.summary_prompt is None
+
+
+def test_job_create_accepts_optional_toggles():
+    """JobCreate parses the three optional #296 fields."""
+    from scribe.api.schemas import JobCreate
+
+    body = JobCreate(
+        url="https://youtu.be/dQw4w9WgXcQ",
+        summarize=False,
+        notify=False,
+        summary_prompt="One-line gist only.",
+    )
+    assert body.summarize is False
+    assert body.notify is False
+    assert body.summary_prompt == "One-line gist only."
+
+
+def test_post_jobs_rejects_non_bool_summarize_returns_422():
+    """A non-boolean summarize is rejected at the API boundary before the
+    route touches the DB."""
+    app.dependency_overrides[routes_module.get_session] = _no_db_session
+    try:
+        client = TestClient(app)
+        resp = client.post(
+            "/jobs",
+            json={"url": "https://youtu.be/dQw4w9WgXcQ", "summarize": "maybe"},
+        )
+        assert resp.status_code == 422
+        body = resp.json()
+        assert any("summarize" in loc for err in body["detail"] for loc in err["loc"])
+    finally:
+        app.dependency_overrides.pop(routes_module.get_session, None)
+
+
+def test_post_jobs_rejects_oversize_summary_prompt_returns_422():
+    """summary_prompt is capped at SUMMARY_PROMPT_MAX_CHARS so a runaway prompt
+    is rejected at the boundary, not silently forwarded to the summarizer."""
+    from scribe.api.schemas import SUMMARY_PROMPT_MAX_CHARS
+
+    app.dependency_overrides[routes_module.get_session] = _no_db_session
+    try:
+        client = TestClient(app)
+        resp = client.post(
+            "/jobs",
+            json={
+                "url": "https://youtu.be/dQw4w9WgXcQ",
+                "summary_prompt": "x" * (SUMMARY_PROMPT_MAX_CHARS + 1),
+            },
+        )
+        assert resp.status_code == 422
+        body = resp.json()
+        assert any("summary_prompt" in loc for err in body["detail"] for loc in err["loc"])
+    finally:
+        app.dependency_overrides.pop(routes_module.get_session, None)
+
+
 def test_system_snapshot_formats_vast_spend_in_display_currency(monkeypatch):
     monkeypatch.setattr(routes_module.settings, "display_currency", "ILS")
     rows = routes_module._system_snapshot(

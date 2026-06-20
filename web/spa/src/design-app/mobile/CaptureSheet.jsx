@@ -11,14 +11,13 @@
 //   ~1243 .sheet-hd                → header row (Cancel / "New transcript" / Add)
 //   ~1248 .url-field + #cap-url   → <label className="url-field"><input/></label>
 //   ~1249 #cap-detect             → <div className="detected"> echo
-//   ~1250 .opt-row Summarize/...  → DROPPED in v1: POST /jobs only accepts
-//                                    {url, source} today. The toggle rows
-//                                    are not rendered. (Out-of-scope, will
-//                                    be re-added when API supports
-//                                    notify/summary/prompt — tracked
-//                                    separately.)
+//   ~1250 .opt-row Summarize/...  → RE-ENABLED (#296): POST /jobs now accepts
+//                                    optional {summarize, notify,
+//                                    summary_prompt}. The three opt rows drive
+//                                    submitJob(auth, url, opts); the custom
+//                                    prompt row reveals a textarea when on.
 //   ~1253 #cap-go .bigbtn         → primary submit button
-//   ~1280 submit() prototype mock → real submitJob(auth, url) → POST /jobs
+//   ~1280 submit() prototype mock → real submitJob(auth, url, opts) → POST /jobs
 //
 // Real-data wiring (HARD):
 //   - Submit calls auth.protectedFetch("/jobs", POST {url, source:"manual"}).
@@ -46,11 +45,31 @@ import { submitJob } from "../api-jobs.js";
 import { parseVideoUrl } from "../command-utils.js";
 import { IconCheck, IconLink, IconPlus, IconWave } from "../icons.jsx";
 
+// iOS-style switch (port of the `.toggle` recipe used by the mobile settings
+// rows). Drives the boolean Capture toggles below.
+function Toggle({ on, onClick, ariaLabel }) {
+	return (
+		<button
+			type="button"
+			className={on ? "toggle on" : "toggle"}
+			aria-pressed={on}
+			aria-label={ariaLabel}
+			onClick={onClick}
+		/>
+	);
+}
+
 export function CaptureSheet({ open, onClose, auth, navigateDesign }) {
 	const [url, setUrl] = React.useState("");
 	const [submitting, setSubmitting] = React.useState(false);
 	const [error, setError] = React.useState(null);
 	const [toast, setToast] = React.useState(null);
+	// Per-job Capture toggles (#296). Defaults mirror POST /jobs defaults:
+	// summarize on, notify on, no custom prompt.
+	const [summarize, setSummarize] = React.useState(true);
+	const [notify, setNotify] = React.useState(true);
+	const [promptOn, setPromptOn] = React.useState(false);
+	const [summaryPrompt, setSummaryPrompt] = React.useState("");
 	const inputRef = React.useRef(null);
 	const toastTimerRef = React.useRef(null);
 
@@ -69,6 +88,10 @@ export function CaptureSheet({ open, onClose, auth, navigateDesign }) {
 		setUrl("");
 		setError(null);
 		setSubmitting(false);
+		setSummarize(true);
+		setNotify(true);
+		setPromptOn(false);
+		setSummaryPrompt("");
 		const raf = requestAnimationFrame(() => setShown(true));
 		const focusTimer = setTimeout(() => {
 			if (inputRef.current) inputRef.current.focus();
@@ -106,7 +129,13 @@ export function CaptureSheet({ open, onClose, auth, navigateDesign }) {
 		setSubmitting(true);
 		setError(null);
 		try {
-			const result = await submitJob(auth, parsed.url);
+			const result = await submitJob(auth, parsed.url, {
+				summarize,
+				notify,
+				// Only send the custom prompt when the row is toggled on; an
+				// empty/whitespace string falls back to the active template.
+				summaryPrompt: promptOn ? summaryPrompt : "",
+			});
 			close();
 			// Navigate after the sheet finishes sliding out so the page
 			// transition runs against a settled chrome (mirrors the
@@ -119,7 +148,18 @@ export function CaptureSheet({ open, onClose, auth, navigateDesign }) {
 			setSubmitting(false);
 			setError(err instanceof Error ? err.message : String(err));
 		}
-	}, [valid, parsed, auth, navigateDesign, close, flashToast]);
+	}, [
+		valid,
+		parsed,
+		auth,
+		navigateDesign,
+		close,
+		flashToast,
+		summarize,
+		notify,
+		promptOn,
+		summaryPrompt,
+	]);
 
 	function onKey(event) {
 		if (event.key === "Escape") {
@@ -208,6 +248,52 @@ export function CaptureSheet({ open, onClose, auth, navigateDesign }) {
 										<div className="d-meta">source=manual</div>
 									</div>
 								</div>
+							) : null}
+
+							<div className="opt-row">
+								<span className="o-label">
+									Summarize
+									<small>AI summary after transcription</small>
+								</span>
+								<Toggle
+									on={summarize}
+									onClick={() => setSummarize((value) => !value)}
+									ariaLabel="Toggle AI summary"
+								/>
+							</div>
+
+							<div className="opt-row">
+								<span className="o-label">
+									Notify when done
+									<small>Push the result to your callback on done/failed</small>
+								</span>
+								<Toggle
+									on={notify}
+									onClick={() => setNotify((value) => !value)}
+									ariaLabel="Toggle notify when done"
+								/>
+							</div>
+
+							<div className="opt-row">
+								<span className="o-label">
+									Custom summary prompt
+									<small>Override the default prompt for this job</small>
+								</span>
+								<Toggle
+									on={promptOn}
+									onClick={() => setPromptOn((value) => !value)}
+									ariaLabel="Toggle custom summary prompt"
+								/>
+							</div>
+
+							{promptOn ? (
+								<textarea
+									className="cap-prompt"
+									placeholder="Summarize the key points as concise bullets…"
+									value={summaryPrompt}
+									onChange={(event) => setSummaryPrompt(event.target.value)}
+									rows={4}
+								/>
 							) : null}
 
 							{error ? (

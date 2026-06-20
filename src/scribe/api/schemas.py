@@ -3,13 +3,19 @@ from __future__ import annotations
 
 import datetime as dt
 
-from pydantic import AnyHttpUrl, AwareDatetime, BaseModel
+from pydantic import AnyHttpUrl, AwareDatetime, BaseModel, Field
 
 # Per-job YouTube cookies blob ceiling. A real Netscape cookies.txt for
 # youtube.com sits around 8–20 KB; 256 KB is a generous cap that still
 # blocks accidental log-file uploads. Kept here (not in settings) because
 # this is an API-contract constant, not an operator knob.
 YOUTUBE_COOKIES_MAX_BYTES = 256 * 1024
+
+# Per-job summary-prompt override ceiling (#296). Mirrors the on-disk prompt
+# template limit (scribe.pipeline.prompts.MAX_PROMPT_CHARS = 16 KiB) so a
+# custom Capture-sheet prompt can be at most as large as a stored template.
+# pydantic rejects anything longer at the API boundary (422).
+SUMMARY_PROMPT_MAX_CHARS = 16 * 1024
 
 
 class CookieValidationError(ValueError):
@@ -61,6 +67,19 @@ class JobCreate(BaseModel):
     # (pydantic's RequestValidationError includes the offending input).
     # The value is never persisted to the DB and never logged.
     youtube_cookies: str | None = None
+    # Per-job pipeline toggles for the mobile Capture sheet (#296). All optional
+    # and default to today's behavior, so existing callers ({url, source, ...})
+    # are unaffected:
+    #   summarize=False      → skip the codex summary step; the job finishes
+    #                          with a transcript-only (partial) result and no
+    #                          summary-provider spend.
+    #   notify=False         → suppress the terminal-status webhook delivery
+    #                          even when callback_url is set.
+    #   summary_prompt=<str> → override the active prompt template for this job
+    #                          only (blank/whitespace is treated as omitted).
+    summarize: bool = True
+    notify: bool = True
+    summary_prompt: str | None = Field(default=None, max_length=SUMMARY_PROMPT_MAX_CHARS)
 
 
 class PreflightResponse(BaseModel):

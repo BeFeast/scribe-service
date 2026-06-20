@@ -7,34 +7,28 @@ echo '=== Project Test Suite ==='
 python -m pytest
 
 echo '=== Requirement Verification ==='
-echo 'Requirement 1: "Copy summary link" → `transcript.summary_shortlink`'
-echo 'WARN: Run tests in tests/test_source_links.py'
-
-echo 'Requirement 2: "Copy transcript link" → `transcript.transcript_shortlink`'
-echo 'WARN: Run tests in tests/test_source_links.py'
-
-echo 'Requirement 3: `GET /transcripts/:id` returns `summary_shortlink` and `transcript_shortlink` (n...'
+echo 'Requirement 1: Extend `POST /jobs` to accept optional `{ summarize?: bool, notify?: bool, summa...'
 python -m pytest
 
-echo 'Requirement 4: `adaptTranscript()` passes both fields through.'
+echo 'Requirement 2: Persist/honor them in the job pipeline (summarize toggle gates the codex summary...'
+echo 'WARN: Run tests in .codex-work/pr19/test_migrations.py'
+
+echo 'Requirement 3: Re-enable the three opt rows in `CaptureSheet.jsx` and wire them into the `submi...'
+echo 'WARN: Run tests in web/spa/tests/CommandPalette.test.ts'
+
+echo 'Requirement 4: `POST /jobs` accepts and honors the three optional fields; omitting them preserv...'
 python -m pytest
 
-echo 'Requirement 5: Remove the TODO guards in `ShareSheet.jsx` so the two rows render when the field...'
+echo 'Requirement 5: `submitJob(auth, url, opts)` forwards them; CaptureSheet toggles drive `opts`.'
 python -m pytest
 
-echo 'Requirement 6: `GET /transcripts/:id` includes `summary_shortlink` / `transcript_shortlink` (st...'
-python -m pytest
+echo 'Requirement 6: A real submit with `summarize:false` skips the summary step (verified end-to-end...'
+echo 'WARN: Run tests in tests/test_summary_circuit_breaker.py'
 
-echo 'Requirement 7: `adaptTranscript()` forwards both.'
-python -m pytest
-
-echo 'Requirement 8: Mobile Share sheet shows the two link rows for a transcript that has shortlinks;...'
-echo 'WARN: Run tests in tests/test_source_links.py'
-
-echo 'Requirement 9: No fabricated/placeholder links — null stays hidden.'
-echo 'WARN: Run tests in tests/test_source_links.py'
-
-echo 'Requirement 10: `uv run pytest -q` + SPA `bun run build` green.'
+echo 'Requirement 7: `uv run pytest -q` covers the new request shape; SPA `bun run build` green.'
 echo 'WARN: Run tests in tests/test_api_spa_endpoints.py'
+
+echo 'Requirement 8: No mock/placeholder — every toggle maps to real pipeline behavior.'
+python -m pytest
 
 echo 'All verifications passed.'

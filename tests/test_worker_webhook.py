@@ -81,6 +81,16 @@ def test_deliver_webhook_skipped_when_no_callback(monkeypatch):
     assert counts == {"deliveries": {"skipped": 1}, "attempts": {}}
 
 
+def test_deliver_webhook_skipped_when_notify_false(monkeypatch):
+    """notify=False (#296) suppresses delivery even with a callback_url set —
+    counted as 'skipped', never touches the net."""
+    counts = _patch_webhook_counters(monkeypatch)
+    job = _fake_job("https://example.com/hook")
+    job.notify = False
+    loop_module._deliver_webhook(_fake_session(), job)
+    assert counts == {"deliveries": {"skipped": 1}, "attempts": {}}
+
+
 def test_deliver_webhook_sends_correlation_id_header(monkeypatch):
     """A job with a correlation_id must surface it as X-Request-ID on the
     webhook POST so the receiver can stitch the trace (#357)."""
