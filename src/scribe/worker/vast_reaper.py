@@ -1,4 +1,4 @@
-"""Age-based Vast.ai orphan reaper for scribe-labelled whisper instances."""
+"""Age/cost-based Vast.ai orphan reaper for scribe-labelled whisper instances."""
 from __future__ import annotations
 
 import asyncio
@@ -13,12 +13,18 @@ from typing import Any
 from scribe.config import settings
 from scribe.obs import metrics
 from scribe.pipeline.whisper_client import VAST_API
+from scribe.worker.vast_budget import instance_burn
 
 log = logging.getLogger("scribe.worker.vast_reaper")
 
 SCRIBE_LABEL_MARKER = "-scribe-whisper-"
 _LABEL_TS_RE = re.compile(r"-scribe-whisper-(?P<ts>\d{8}T\d{6}Z)")
+# Billable Vast states that accrue cost even when not actively running.
 _BILLABLE_STATUSES = frozenset({"running", "loading", "starting", "restarting", "stopped"})
+# Non-running states that indicate the instance is stuck initializing and
+# may never reach `running` (see #355). These are billable but never produce
+# transcription output, so they are reaped aggressively.
+_STUCK_STATUSES = frozenset({"loading", "starting", "restarting"})
 
 
 class VastReaperError(RuntimeError):
@@ -105,6 +111,37 @@ def _instance_id(instance: dict[str, Any]) -> int | None:
         return None
 
 
+def _instance_usd_per_hour(instance: dict[str, Any]) -> float:
+    """Total live $/hr (compute + storage) for an instance."""
+    return instance_burn(instance).total_usd_per_hour
+
+
+def _instance_status(instance: dict[str, Any]) -> str:
+    return (
+        str(instance.get("actual_status") or instance.get("cur_state") or instance.get("status") or "")
+        .strip()
+        .lower()
+    )
+
+
+def _is_stuck_non_running(instance: dict[str, Any]) -> bool:
+    """True for scribe instances billable but never reached `running`."""
+    return _instance_status(instance) in _STUCK_STATUSES
+
+
+def _is_cost_runaway(
+    instance: dict[str, Any],
+    *,
+    baseline_usd_per_hour: float,
+    cost_multiplier: float,
+) -> bool:
+    """True when live $/hr exceeds `baseline * cost_multiplier` (>0)."""
+    if baseline_usd_per_hour <= 0 or cost_multiplier <= 0:
+        return False
+    threshold = baseline_usd_per_hour * cost_multiplier
+    return _instance_usd_per_hour(instance) > threshold
+
+
 def _is_stale_scribe_instance(
     instance: dict[str, Any],
     *,
@@ -119,13 +156,45 @@ def _is_stale_scribe_instance(
     return now - started_at > max_age
 
 
+def reap_reason_for(
+    instance: dict[str, Any],
+    *,
+    now: dt.datetime,
+    max_age: dt.timedelta,
+    baseline_usd_per_hour: float,
+    cost_multiplier: float,
+    stuck_threshold: dt.timedelta,
+) -> str | None:
+    """Return a reap reason slug ("age" | "cost" | "stuck") or None.
+
+    Pure predicate so tests can exercise the cost/stuck paths without a
+    Vast API round-trip. `cost` and `stuck` fire before max_age so a
+    runaway/misconfigured offer or a stuck-initializing instance is reaped
+    quickly (see #355). A `cost_multiplier` <= 0 disables cost reaping and a
+    `stuck_threshold` <= 0 disables stuck reaping; in both cases a still-old
+    instance falls through to `age`.
+    """
+    if not _is_scribe_instance(instance) or not _is_billable_status(instance):
+        return None
+    if _is_cost_runaway(instance, baseline_usd_per_hour=baseline_usd_per_hour, cost_multiplier=cost_multiplier):
+        return "cost"
+    if stuck_threshold > dt.timedelta(0) and _is_stuck_non_running(instance):
+        started_at = _instance_started_at(instance)
+        if started_at is not None and now - started_at > stuck_threshold:
+            return "stuck"
+    if _is_stale_scribe_instance(instance, now=now, max_age=max_age):
+        return "age"
+    return None
+
+
 def reap_vast_orphans(
     *,
     api_key: str | None = None,
     max_age_minutes: int | None = None,
     now: dt.datetime | None = None,
 ) -> int:
-    """Destroy stale scribe-labelled Vast instances and return attempts made."""
+    """Destroy stale/cost-runaway/stuck scribe-labelled Vast instances and
+    return attempts made."""
     api_key = (api_key if api_key is not None else settings.vast_api_key).strip()
     if not api_key:
         log.debug("vast orphan reaper skipped: missing API key")
@@ -133,6 +202,9 @@ def reap_vast_orphans(
 
     threshold_minutes = max_age_minutes if max_age_minutes is not None else settings.vast_orphan_reaper_max_age_minutes
     max_age = dt.timedelta(minutes=max(1, threshold_minutes))
+    stuck_threshold = dt.timedelta(minutes=max(1, settings.vast_orphan_reaper_stuck_minutes))
+    baseline = float(settings.vast_budget_baseline_usd_per_hour)
+    cost_multiplier = float(settings.vast_orphan_reaper_cost_multiplier)
     current = (now or dt.datetime.now(dt.UTC)).astimezone(dt.UTC)
     instances = _vast(api_key, "GET", "/instances/", timeout=45).get("instances", [])
 
@@ -140,7 +212,15 @@ def reap_vast_orphans(
     for instance in instances:
         if not isinstance(instance, dict):
             continue
-        if not _is_stale_scribe_instance(instance, now=current, max_age=max_age):
+        reason = reap_reason_for(
+            instance,
+            now=current,
+            max_age=max_age,
+            baseline_usd_per_hour=baseline,
+            cost_multiplier=cost_multiplier,
+            stuck_threshold=stuck_threshold,
+        )
+        if reason is None:
             continue
         instance_id = _instance_id(instance)
         if instance_id is None:
@@ -148,6 +228,7 @@ def reap_vast_orphans(
         label = _instance_label(instance)
         started_at = _instance_started_at(instance)
         age_seconds = int((current - started_at).total_seconds()) if started_at else None
+        usd_per_hour = round(_instance_usd_per_hour(instance), 6)
         metrics.vast_orphans_destroyed_total.inc()
         reaped += 1
         log.warning(
@@ -155,10 +236,15 @@ def reap_vast_orphans(
             extra={
                 "vast_instance_id": instance_id,
                 "vast_label": label,
+                "reap_reason": reason,
                 "actual_status": instance.get("actual_status"),
                 "cur_state": instance.get("cur_state"),
                 "age_seconds": age_seconds,
                 "max_age_minutes": threshold_minutes,
+                "usd_per_hour": usd_per_hour,
+                "baseline_usd_per_hour": round(baseline, 6),
+                "cost_multiplier": cost_multiplier,
+                "stuck_threshold_minutes": settings.vast_orphan_reaper_stuck_minutes,
             },
         )
         try:
@@ -169,6 +255,7 @@ def reap_vast_orphans(
                 extra={
                     "vast_instance_id": instance_id,
                     "vast_label": label,
+                    "reap_reason": reason,
                     "error": str(exc),
                 },
             )

@@ -89,6 +89,9 @@ def test_check_vast_budget_sets_gauge_logs_and_sends_alert(monkeypatch) -> None:
         ],
     )
     monkeypatch.setattr(vast_budget, "send_admin_alert", alerts.append)
+    # Isolate the anomaly path from the predictive-breach projection added
+    # in #355 (which opens a DB session and may emit its own alert).
+    monkeypatch.setattr(vast_budget, "_check_predictive_breach", lambda *_a, **_k: None)
     # scribe.obs.logging.configure() wipes root handlers on import, breaking
     # caplog in mixed suite runs. Capture log calls directly.
     warnings: list[tuple[str, dict]] = []
@@ -265,3 +268,177 @@ def test_fetch_instances_calls_v0_instances_endpoint(monkeypatch) -> None:
     assert requests[0].full_url == "https://console.vast.ai/api/v0/instances/"
     assert requests[0].get_method() == "GET"
     assert requests[0].headers["Authorization"] == "Bearer fixture-key"
+
+
+# --- Predictive burn-rate projection (#355) ---
+
+
+def test_project_monthly_breach_flags_breach_within_horizon() -> None:
+    now = dt.datetime(2026, 6, 20, 12, 0, tzinfo=dt.UTC)
+    # 12 USD left, burning 0.5/hr -> 24h to breach; horizon 30d -> breach.
+    projection = vast_budget.project_monthly_breach(
+        spent_usd=3.0,
+        cap_usd=15.0,
+        burn_rate_usd_per_hour=0.5,
+        horizon_hours=30 * 24,
+        now=now,
+    )
+    assert projection.will_breach is True
+    assert round(projection.remaining_usd, 4) == 12.0
+    assert round(projection.hours_to_breach, 4) == 24.0
+    assert projection.projected_breach_at == now + dt.timedelta(hours=24.0)
+
+
+def test_project_monthly_breach_no_breach_outside_horizon() -> None:
+    now = dt.datetime(2026, 6, 20, 12, 0, tzinfo=dt.UTC)
+    # 12 USD left, burning 0.01/hr -> 1200h to breach; horizon 24h -> no breach.
+    projection = vast_budget.project_monthly_breach(
+        spent_usd=3.0,
+        cap_usd=15.0,
+        burn_rate_usd_per_hour=0.01,
+        horizon_hours=24.0,
+        now=now,
+    )
+    assert projection.will_breach is False
+    assert round(projection.hours_to_breach, 2) == 1200.0
+    assert projection.projected_breach_at is not None
+
+
+def test_project_monthly_breach_disabled_when_cap_zero() -> None:
+    now = dt.datetime(2026, 6, 20, 12, 0, tzinfo=dt.UTC)
+    projection = vast_budget.project_monthly_breach(
+        spent_usd=3.0,
+        cap_usd=0.0,
+        burn_rate_usd_per_hour=0.5,
+        horizon_hours=24.0,
+        now=now,
+    )
+    assert projection.will_breach is False
+    assert projection.hours_to_breach is None
+    assert projection.projected_breach_at is None
+
+
+def test_project_monthly_breach_no_breach_when_cap_already_reached() -> None:
+    now = dt.datetime(2026, 6, 20, 12, 0, tzinfo=dt.UTC)
+    projection = vast_budget.project_monthly_breach(
+        spent_usd=15.0,
+        cap_usd=15.0,
+        burn_rate_usd_per_hour=0.5,
+        horizon_hours=24.0,
+        now=now,
+    )
+    # Hard cap reached -> no predictive alert (enforce_monthly_cap handles it).
+    assert projection.will_breach is False
+    assert projection.hours_to_breach is None
+    assert projection.projected_breach_at is None
+
+
+class _FakeSession:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return None
+
+
+def _wire_predictive_projection(monkeypatch, *, spent_usd: float) -> None:
+    monkeypatch.setattr(vast_budget.settings, "vast_monthly_cap_usd", 15.0)
+    monkeypatch.setattr(vast_budget.settings, "vast_budget_predictive_alert_horizon_days", 30)
+    monkeypatch.setattr(vast_budget.settings, "vast_budget_predictive_alert_cooldown_minutes", 360)
+    monkeypatch.setattr(vast_budget, "SessionLocal", lambda: _FakeSession())
+    monkeypatch.setattr(vast_budget, "monthly_vast_spend_usd", lambda session, **_kw: spent_usd)
+
+
+def test_check_predictive_breach_sets_gauge_and_sends_alert(monkeypatch) -> None:
+    """Wiring test: projection flows to the Prometheus gauge + Telegram."""
+    vast_budget.reset_predictive_alert_state()
+    _wire_predictive_projection(monkeypatch, spent_usd=3.0)
+    alerts: list[str] = []
+    monkeypatch.setattr(vast_budget, "send_admin_alert", alerts.append)
+
+    projection = vast_budget._check_predictive_breach(0.5)
+
+    assert projection is not None
+    assert projection.will_breach is True
+    assert round(metrics.gauge_value(metrics.vast_burn_hours_to_cap), 4) == 24.0
+    assert metrics.gauge_value(metrics.vast_burn_projected_breach_timestamp_seconds) > 0
+    assert len(alerts) == 1
+    assert "burn-rate breach projected" in alerts[0]
+    assert "Projected breach:" in alerts[0]
+
+
+def test_check_predictive_breach_no_alert_when_not_projected(monkeypatch) -> None:
+    vast_budget.reset_predictive_alert_state()
+    monkeypatch.setattr(vast_budget.settings, "vast_monthly_cap_usd", 15.0)
+    monkeypatch.setattr(vast_budget.settings, "vast_budget_predictive_alert_horizon_days", 1)
+    monkeypatch.setattr(vast_budget, "SessionLocal", lambda: _FakeSession())
+    monkeypatch.setattr(vast_budget, "monthly_vast_spend_usd", lambda session, **_kw: 3.0)
+    alerts: list[str] = []
+    monkeypatch.setattr(vast_budget, "send_admin_alert", alerts.append)
+
+    # 12 USD left, burning 0.01/hr -> 1200h to breach; horizon 24h -> no breach.
+    projection = vast_budget._check_predictive_breach(0.01)
+
+    assert projection is not None
+    assert projection.will_breach is False
+    assert alerts == []
+    assert metrics.gauge_value(metrics.vast_burn_hours_to_cap) == 1200.0
+
+
+def test_check_predictive_breach_skipped_when_cap_disabled(monkeypatch) -> None:
+    vast_budget.reset_predictive_alert_state()
+    monkeypatch.setattr(vast_budget.settings, "vast_monthly_cap_usd", 0.0)
+    monkeypatch.setattr(vast_budget, "SessionLocal", lambda: pytest.fail("must not open a session"))
+    assert vast_budget._check_predictive_breach(0.5) is None
+    assert metrics.gauge_value(metrics.vast_burn_projected_breach_timestamp_seconds) == -1
+    assert metrics.gauge_value(metrics.vast_burn_hours_to_cap) == -1
+
+
+def test_check_predictive_breach_cooldown_suppresses_repeat_alerts(monkeypatch) -> None:
+    """A sustained breach raises at most one alert per cooldown window (#355
+    review: no per-cycle spam)."""
+    vast_budget.reset_predictive_alert_state()
+    _wire_predictive_projection(monkeypatch, spent_usd=3.0)
+    alerts: list[str] = []
+    monkeypatch.setattr(vast_budget, "send_admin_alert", alerts.append)
+
+    first = vast_budget._check_predictive_breach(0.5)
+    second = vast_budget._check_predictive_breach(0.5)
+
+    assert first is not None and first.will_breach is True
+    assert second is not None and second.will_breach is True
+    # Same cycle, same projection -> only the transition alert fires.
+    assert len(alerts) == 1
+
+    # After the cooldown elapses, a still-breaching projection re-alerts.
+    vast_budget._predictive_alert_state["last_alerted_at"] = (
+        dt.datetime.now(dt.UTC) - dt.timedelta(minutes=361)
+    )
+    third = vast_budget._check_predictive_breach(0.5)
+    assert third is not None and third.will_breach is True
+    assert len(alerts) == 2
+
+
+def test_check_predictive_breach_resets_when_projection_clears(monkeypatch) -> None:
+    """Once the projection clears, hysteresis resets so the next breach
+    raises a fresh alert immediately (not gated by the old cooldown)."""
+    vast_budget.reset_predictive_alert_state()
+    _wire_predictive_projection(monkeypatch, spent_usd=3.0)
+    alerts: list[str] = []
+    monkeypatch.setattr(vast_budget, "send_admin_alert", alerts.append)
+
+    assert vast_budget._check_predictive_breach(0.5).will_breach is True
+    assert len(alerts) == 1
+
+    # Drop the burn rate so the projection clears (1200h > 24h horizon) by
+    # shrinking the horizon to 1 day.
+    monkeypatch.setattr(vast_budget.settings, "vast_budget_predictive_alert_horizon_days", 1)
+    cleared = vast_budget._check_predictive_breach(0.01)
+    assert cleared is not None and cleared.will_breach is False
+    assert len(alerts) == 1  # clearing does not alert
+
+    # A fresh breach within the old cooldown window raises immediately.
+    monkeypatch.setattr(vast_budget.settings, "vast_budget_predictive_alert_horizon_days", 30)
+    again = vast_budget._check_predictive_breach(0.5)
+    assert again is not None and again.will_breach is True
+    assert len(alerts) == 2
