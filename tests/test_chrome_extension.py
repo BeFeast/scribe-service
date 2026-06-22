@@ -69,6 +69,8 @@ def test_service_worker_uses_existing_jobs_api_and_video_flows() -> None:
     assert "chrome.contextMenus.onClicked.addListener" in source
     assert 'id: "submit-page"' in source
     assert 'id: "submit-link"' in source
+    assert 'id: "open-scribe"' in source
+    assert "contexts: [\"action\"]" in source
     assert "info.linkUrl || info.pageUrl" in source
 
 
@@ -97,6 +99,9 @@ def test_manifest_opens_popup_and_bumps_version() -> None:
     # Version must be bumped past the pre-fix 0.1.0.
     parts = tuple(int(p) for p in str(manifest["version"]).split("."))
     assert parts > (0, 1, 0)
+    # #378: the "Open Scribe queue" context-menu item bumped the extension
+    # version past the pre-feature 0.2.0.
+    assert parts >= (0, 3, 0)
     assert (EXTENSION / "popup.html").is_file()
     assert (EXTENSION / "popup.js").is_file()
     assert (EXTENSION / "preflight.js").is_file()
@@ -193,6 +198,30 @@ def test_extension_docs_describe_preflight_confirm() -> None:
     assert "Submit anyway" in docs
     assert "https://www.youtube.com/" in docs
     assert "single" in docs.lower() and "video" in docs.lower()
+
+
+def test_service_worker_has_open_scribe_queue_context_menu() -> None:
+    # #378: right-clicking the toolbar action shows "Open Scribe queue", which
+    # opens the configured baseUrl in a new tab. It is an early branch in the
+    # contextMenus.onClicked handler and never enters the submit/preflight path.
+    source = read("service_worker.js")
+
+    assert 'id: "open-scribe"' in source
+    assert 'title: "Open Scribe queue"' in source
+    assert 'contexts: ["action"]' in source
+    # The handler short-circuits before touching submit/preflight.
+    assert 'if (info.menuItemId === "open-scribe") {' in source
+    assert 'await chrome.tabs.create({ url: config.baseUrl });' in source
+    # "Open Scribe queue" must not be wired into the page/link submit paths.
+    assert source.count('id: "open-scribe"') == 1
+
+
+def test_extension_docs_describe_open_scribe_queue_menu() -> None:
+    docs = read("README.md")
+
+    assert "Open Scribe queue" in docs
+    assert 'contexts: ["action"]' in docs
+    assert "baseUrl" in docs
 
 
 def test_service_worker_reports_success_dedup_and_errors() -> None:

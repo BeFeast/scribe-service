@@ -27,6 +27,16 @@ chrome.runtime.onInstalled.addListener(() => {
       title: "Submit video link to Scribe",
       contexts: ["link"],
     });
+
+    // #378: a dedicated "open the web app" entry on the toolbar action's
+    // context menu, so an operator can jump straight to the Scribe queue
+    // without typing the base URL. Uses `action` context only — it never
+    // clutters page/link menus.
+    chrome.contextMenus.create({
+      id: "open-scribe",
+      title: "Open Scribe queue",
+      contexts: ["action"],
+    });
   });
 });
 
@@ -48,6 +58,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  // #378: "Open Scribe queue" jumps straight to the configured service in a
+  // new tab. Early branch — it never touches the submit/preflight path and
+  // does not need a tab URL.
+  if (info.menuItemId === "open-scribe") {
+    const config = await getConfig();
+    await chrome.tabs.create({ url: config.baseUrl });
+    return;
+  }
+
   const url = info.linkUrl || info.pageUrl || tab?.url || "";
 
   let config;

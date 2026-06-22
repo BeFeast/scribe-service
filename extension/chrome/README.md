@@ -85,6 +85,14 @@ submissions still go through — Scribe just falls back to the public download
 path. Click **Disable** on the options page to revoke the permission at any
 time.
 
+## Open Scribe queue
+
+Right-clicking the toolbar action shows an **Open Scribe queue** item (#378).
+Clicking it opens the configured Scribe `baseUrl` in a new tab — the fastest
+way back to the web app when a job fails or you just want to look at the
+queue. It lives on the action's context menu (`contexts: ["action"]`), so
+it never clutters the page/link right-click menus used for submitting videos.
+
 ## Manual Verification
 
 1. Load the unpacked extension and keep the default Scribe base URL or set a local/runtime Scribe URL.
@@ -97,6 +105,7 @@ time.
 8. Set an invalid bearer token for a protected Scribe URL and submit again; confirm the notification explains that the token is invalid or unauthorized.
 9. Set the base URL to an unreachable host and submit again; confirm the popup includes a useful connectivity error from the unreachable host.
 10. Submit a non-http(s) toolbar page; confirm the extension reports that an http(s) video page is required.
+11. Right-click the toolbar action and choose **Open Scribe queue**; confirm the configured `baseUrl` opens in a new tab.
 
 The extension posts to Scribe's existing `POST /jobs` API with:
 
