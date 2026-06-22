@@ -405,6 +405,34 @@ def _summarize_and_finalize(session, job: Job, transcript: Transcript, title: st
     _deliver_webhook(session, job)
 
 
+def _make_job_tmpdir(temp_dir: str, job_log: logging.LoggerAdapter) -> Path:
+    """Create a per-job scratch dir under ``temp_dir``, degrading to the system
+    temp dir when ``temp_dir`` is missing or not writable (issue #379).
+
+    ``temp_dir`` can exist yet be non-writable (e.g. wrong ownership on
+    ``/data/tmp``): ``mkdir(parents=True, exist_ok=True)`` then succeeds but
+    ``mkdtemp(dir=temp_dir)`` raises, so both calls live inside one guard. We
+    catch ``OSError`` (covers ``PermissionError``, ``FileNotFoundError``,
+    ``NotADirectoryError``, …) and log a warning naming the original dir.
+    """
+    temp_root = Path(temp_dir)
+    try:
+        temp_root.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix="scribe-job-", dir=temp_root))
+    except OSError as exc:
+        # Original temp_dir is embedded in the message: the structured LoggerAdapter
+        # drops call-site ``extra`` keys, so the message text is what reaches the log.
+        system_temp = tempfile.gettempdir()
+        job_log.warning(
+            "temp_dir %s unusable (%s); falling back to system temp %s",
+            temp_root,
+            exc,
+            system_temp,
+            extra={"stage": "download"},
+        )
+        return Path(tempfile.mkdtemp(prefix="scribe-job-", dir=system_temp))
+
+
 def process_job(session, job: Job) -> None:
     """Run the full pipeline for a claimed job (already status=downloading)."""
     job_id = job.id
@@ -432,12 +460,7 @@ def process_job(session, job: Job) -> None:
                 job_log.info("job done (resumed)", extra={"transcript_id": partial.id, "stage": "done"})
                 return
 
-            temp_root = Path(settings.temp_dir)
-            try:
-                temp_root.mkdir(parents=True, exist_ok=True)
-            except PermissionError:
-                temp_root = Path(tempfile.gettempdir())
-            tmpdir = Path(tempfile.mkdtemp(prefix="scribe-job-", dir=temp_root))
+            tmpdir = _make_job_tmpdir(settings.temp_dir, job_log)
             try:
                 # Per-job YouTube cookies (#313): the API handler stashed
                 # the validated blob keyed by job_id; take it once and let
