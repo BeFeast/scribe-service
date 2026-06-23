@@ -48,6 +48,68 @@ def test_dockerfile_codex_auth_path_matches_non_root_home() -> None:
     assert "/root/.codex" not in compose
 
 
+def test_compose_codex_mount_uses_prod_codex_dir() -> None:
+    """#383: reconcile repo compose with prod — codex auth is bind-mounted from
+    ./codex (host-owned UID 1001), not the stale ./data/codex-auth path."""
+    compose = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    assert "./codex:/home/scribe/.codex" in compose
+    assert "./data/codex-auth" not in compose
+
+
+def test_compose_tmp_uses_named_volume_not_dead_nfs_bind() -> None:
+    """#383: /data/tmp is a named volume (scribe-tmp) matching prod. The dead
+    NFS bind-mount (/mnt/nfs/scribe-tmp) is gone, with the abandoned-NFS
+    decision documented as a TODO(task#12) note."""
+    compose = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    assert "scribe-tmp:/data/tmp" in compose
+    # The dead NFS bind-mount line is gone; the abandoned-NFS decision is kept
+    # only as an explicit TODO(task#12) comment, not a live mount.
+    assert "/mnt/nfs/scribe-tmp:/data/tmp" not in compose
+    assert "TODO(task#12)" in compose
+
+
+def test_compose_runs_infisical_agent_sidecar() -> None:
+    """#383: the prod stack runs the Infisical Agent sidecar (#261) that renders
+    boot secrets into the scribe-secrets volume; the repo reference compose
+    mirrors that so it is the source of truth."""
+    compose = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    assert "infisical-agent:" in compose
+    assert "infisical/cli:latest" in compose
+    assert "scribe-secrets:/secrets:ro" in compose
+    assert "scribe-secrets:/secrets" in compose
+
+
+def test_compose_pins_project_subnet_and_external_db_dev_net() -> None:
+    """#383/#300: the implicit project network subnet is pinned (so the
+    scribe-backups sidecar stays inside SCRIBE_TRUSTED_CIDRS) and the external
+    db-dev-net is declared so the infisical-agent reaches Infisical."""
+    compose = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    assert "172.29.0.0/16" in compose
+    assert "db-dev-net:" in compose
+    assert "external: true" in compose
+
+
+def test_env_example_documents_codex_model_and_prompt_dir() -> None:
+    """#383: prod .env sets SCRIBE_CODEX_MODEL=gpt-5.5 (ChatGPT-account codex
+    can't reach the default) and SCRIBE_PROMPT_DIR=/data/prompts; the repo
+    .env.example documents both with a default + comment."""
+    env_example = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "SCRIBE_CODEX_MODEL=" in env_example
+    assert "gpt-5.5" in env_example
+    assert "SCRIBE_PROMPT_DIR=/data/prompts" in env_example
+
+
+def test_non_root_volume_ownership_runbook_exists() -> None:
+    """#383: the expected ownership of every mounted path under the non-root
+    (UID 1001) runtime is documented in docs/runbooks/."""
+    runbook = (REPO_ROOT / "docs/runbooks/non-root-volume-ownership.md").read_text(encoding="utf-8")
+    assert "UID 1001" in runbook
+    assert "1001:1001" in runbook
+    assert "/home/scribe/.codex" in runbook
+    assert "scribe-tmp" in runbook
+    assert "infisical-agent" in runbook.lower() or "Dockhand" in runbook
+
+
 def test_compose_persists_scribe_logs_in_journald() -> None:
     compose = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
 
