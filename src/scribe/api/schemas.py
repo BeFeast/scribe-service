@@ -167,7 +167,10 @@ class TranscriptBrief(BaseModel):
 
 class TranscriptFull(TranscriptBrief):
     job_id: int
-    transcript_md: str
+    # Short, download-only preview of the transcript body (#384). The full text
+    # is fetched on demand via GET /transcripts/:id/transcript.md so the detail
+    # payload stays light regardless of transcript length.
+    transcript_excerpt: str
     summary_md: str | None
     vast_cost: float | None = None
 

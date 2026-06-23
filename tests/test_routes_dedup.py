@@ -555,7 +555,9 @@ def test_transcript_detail_default_returns_json(client, db_session):
     assert body["id"] == transcript.id
     assert body["job_id"] == transcript.job_id
     assert body["summary_md"] == "world"
-    assert body["transcript_md"] == "hello"
+    # Issue #384: detail JSON carries only the excerpt, not the full body.
+    assert "transcript_md" not in body
+    assert body["transcript_excerpt"] == "hello"
 
 
 def test_transcript_detail_json_uses_provider_aware_source_label_for_x(client, db_session):
