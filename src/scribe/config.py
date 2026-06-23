@@ -227,8 +227,19 @@ class Settings(BaseSettings):
     # Vast.ai GPU whisper is the primary; optional fallbacks ("openai" hosted
     # API, "local-whisper" CPU faster-whisper) are opt-in, cost-capped, and
     # tried in order when an earlier provider fails. Default is "vast" only —
-    # behaviour is unchanged until an operator adds a fallback. Sourced from
-    # SCRIBE_TRANSCRIBE_PROVIDERS as a comma-separated, case-insensitive list.
+    # behaviour is unchanged until an operator adds a fallback.
+    #
+    # Canonical configuration path is Infisical (env `prod`, path
+    # `/scribe-service`) via the in-process overlay (`build_settings` passes
+    # the value as a kwarg into `Settings(...)`, which hits the
+    # `field_validator(mode="before")` directly): there the value is a
+    # comma-separated, case-insensitive list, e.g. `vast,openai,local-whisper`.
+    #
+    # Via raw env (`SCRIBE_TRANSCRIBE_PROVIDERS`) pydantic-settings' env source
+    # JSON-decodes list-type fields BEFORE the validator runs, so a bare
+    # comma-separated string (`vast,openai`) fails JSON parsing and raises
+    # `SettingsError` at boot. Raw env MUST be a JSON array, e.g.
+    # `["vast","openai","local-whisper"]`.
     transcribe_providers: list[str] = list(_DEFAULT_TRANSCRIBE_PROVIDERS)
 
     # Per-provider transcription circuit breaker. Mirrors the summary breaker
@@ -316,14 +327,27 @@ class Settings(BaseSettings):
     # all summary work. Contention is observable via `scribe_codex_lock_wait_seconds`.
     codex_lock_wait_timeout_secs: int = 120
 
-    # Summary fallback chain tried in order. Sourced from SCRIBE_SUMMARY_PROVIDERS
-    # as a comma-separated list of `provider:model` entries (#388), e.g.
-    # "ollama-cloud:glm-5.2,ollama-cloud:gemma4:31b,freellmapi:gemini-2.5-flash".
-    # Each entry is split on the FIRST ':' — provider name (case-insensitive) and
-    # model (verbatim, so tags like `gemma4:31b` survive). A bare provider name
-    # with no ':' uses that provider's default model (backward compatible with the
-    # old name-only format). Unknown provider names are rejected at chain-build
-    # time so a typo surfaces loudly.
+    # Summary fallback chain tried in order. Each entry is a `provider:model`
+    # pair (#388), e.g. `ollama-cloud:glm-5.2,ollama-cloud:gemma4:31b,
+    # freellmapi:gemini-2.5-flash,codex`. Each entry is split on the FIRST ':'
+    # — provider name (case-insensitive) and model (verbatim, so tags like
+    # `gemma4:31b` survive). A bare provider name with no ':' uses that
+    # provider's default model (backward compatible with the old name-only
+    # format). Unknown provider names are rejected at chain-build time so a
+    # typo surfaces loudly.
+    #
+    # Canonical configuration path is Infisical (env `prod`, path
+    # `/scribe-service`) via the in-process overlay (`build_settings` passes
+    # the value as a kwarg into `Settings(...)`, which hits the
+    # `field_validator(mode="before")` directly): there the value is a
+    # comma-separated list as shown above.
+    #
+    # Via raw env (`SCRIBE_SUMMARY_PROVIDERS`) pydantic-settings' env source
+    # JSON-decodes list-type fields BEFORE the validator runs, so a bare
+    # comma-separated string (`ollama-cloud:glm-5.2,codex`) fails JSON parsing
+    # and raises `SettingsError: error parsing value for field summary_providers`
+    # at boot. Raw env MUST be a JSON array, e.g.
+    # `["ollama-cloud:glm-5.2","codex"]`.
     summary_providers: list[str] = list(_DEFAULT_SUMMARY_PROVIDERS)
 
     # Claude CLI fallback. `claude_bin` resolves via PATH inside the container.
@@ -461,12 +485,25 @@ class Settings(BaseSettings):
     @field_validator("summary_providers", mode="before")
     @classmethod
     def _parse_summary_providers(cls, value: Any) -> list[str]:
-        """Accept a comma-separated env string or a list of `provider:model`
-        entries. Entries are stripped but kept verbatim — the entry is NOT
-        lowercased here because the model part is case-sensitive (e.g.
-        `gemma4:31b`). The provider name is lowercased case-insensitively at
-        chain-build time, which also rejects unknown providers with a clear
-        error."""
+        """Normalise a `provider:model` entries value into a list.
+
+        Accepts a comma-separated string OR a list. This validator runs in
+        `mode="before"` and is reached via TWO different paths with different
+        input shapes:
+
+        - Infisical overlay (`build_settings` passes the value as a kwarg into
+          `Settings(...)`): the raw secret string reaches here verbatim, so a
+          comma-separated value like `ollama-cloud:glm-5.2,codex` works.
+        - Raw env (`SCRIBE_SUMMARY_PROVIDERS`): pydantic-settings' env source
+          JSON-decodes list-type fields BEFORE this validator runs, so the env
+          value MUST be a JSON array (`["ollama-cloud:glm-5.2","codex"]`); a
+          bare comma-separated string fails JSON parsing and crash-loops boot
+          with `SettingsError`.
+
+        Entries are stripped but kept verbatim — the entry is NOT lowercased
+        here because the model part is case-sensitive (e.g. `gemma4:31b`). The
+        provider name is lowercased case-insensitively at chain-build time,
+        which also rejects unknown providers with a clear error."""
         if value is None or value == "":
             return list(_DEFAULT_SUMMARY_PROVIDERS)
         if isinstance(value, str):
@@ -479,10 +516,25 @@ class Settings(BaseSettings):
     @field_validator("transcribe_providers", mode="before")
     @classmethod
     def _parse_transcribe_providers(cls, value: Any) -> list[str]:
-        """Accept a comma-separated env string or a list. Names are lowercased
-        and stripped; unknown names are kept (the chain builder rejects them at
-        build time with a clear error). Empty input restores the Vast-only
-        default so a blanked env var cannot silently disable transcription."""
+        """Normalise a transcription provider chain value into a list.
+
+        Accepts a comma-separated string OR a list. This validator runs in
+        `mode="before"` and is reached via TWO different paths with different
+        input shapes:
+
+        - Infisical overlay (`build_settings` passes the value as a kwarg into
+          `Settings(...)`): the raw secret string reaches here verbatim, so a
+          comma-separated value like `vast,openai` works.
+        - Raw env (`SCRIBE_TRANSCRIBE_PROVIDERS`): pydantic-settings' env
+          source JSON-decodes list-type fields BEFORE this validator runs, so
+          the env value MUST be a JSON array (`["vast","openai"]`); a bare
+          comma-separated string fails JSON parsing and crash-loops boot with
+          `SettingsError`.
+
+        Names are lowercased and stripped; unknown names are kept (the chain
+        builder rejects them at build time with a clear error). Empty input
+        restores the Vast-only default so a blanked env var cannot silently
+        disable transcription."""
         if value is None or value == "":
             return list(_DEFAULT_TRANSCRIBE_PROVIDERS)
         if isinstance(value, str):

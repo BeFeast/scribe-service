@@ -109,3 +109,27 @@ fetch at container-DNS as a belt-and-braces measure:
 ```bash
 SCRIBE_INFISICAL_API_URL=http://infisical-app:8080
 ```
+
+## List-type fields: Infisical (comma-separated) vs raw env (JSON array)
+
+The `summary_providers` and `transcribe_providers` Settings fields are
+`list[str]`. They are configured through two distinct paths whose value
+formats differ — mixing them up crash-loops scribe at import:
+
+- **Infisical in-process overlay (canonical).** `build_settings()` passes
+  each Infisical secret as a kwarg into `Settings(...)`, so the raw string
+  reaches the `field_validator(mode="before")` directly (no env-source
+  JSON decode). Comma-separated values work here, e.g.
+  `SCRIBE_SUMMARY_PROVIDERS=ollama-cloud:glm-5.2,ollama-cloud:gemma4:31b,freellmapi:gemini-2.5-flash,codex`
+  or `SCRIBE_TRANSCRIBE_PROVIDERS=vast,openai,local-whisper`.
+- **Raw env (`SCRIBE_*` shell/`.env`).** pydantic-settings' env source
+  JSON-decodes `list[str]` fields BEFORE the validator runs, so a bare
+  comma-separated string fails JSON parsing and raises
+  `SettingsError: error parsing value for field summary_providers` at
+  boot. Raw env MUST be a JSON array, e.g.
+  `SCRIBE_SUMMARY_PROVIDERS=["ollama-cloud:glm-5.2","codex"]`.
+
+The Infisical Agent sidecar env-file template (`scribe.env.tpl`) only
+renders scalar boot secrets for this reason; the provider chains are
+loaded via the in-process Infisical fetch so the comma-separated form is
+the operator-facing canonical format.
