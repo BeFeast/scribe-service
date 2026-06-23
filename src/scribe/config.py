@@ -268,6 +268,22 @@ class Settings(BaseSettings):
     # chars; 0 disables the cap (not recommended).
     max_summary_chars: int = 100_000
 
+    # Map-reduce chunking for oversized summary inputs (#382). When the built
+    # prompt (template + transcript) exceeds `summary_map_reduce_chars`, the
+    # chain summarises the transcript in chunks (map) and merges the partials
+    # in a final pass (reduce) instead of POSTing the whole body at once — this
+    # keeps payload-limited backends (freellmapi returns 413
+    # PayloadTooLargeError) producing a valid summary on long videos. The
+    # default threshold leaves headroom under the freellmapi limit; short
+    # transcripts stay on the single-pass path with no extra calls. 0 disables
+    # map-reduce entirely (always single pass). `chunk_chars` caps the
+    # transcript characters fed to each map call; `overlap_chars` repeats a
+    # little context across chunk boundaries so a thought split across a
+    # boundary is not lost.
+    summary_map_reduce_chars: int = 80_000
+    summary_map_reduce_chunk_chars: int = 60_000
+    summary_map_reduce_overlap_chars: int = 500
+
     # Summary backend — codex CLI (MVP)
     codex_bin: str = "codex"
     # empty = use the codex config.toml model (gpt-5.x family). gpt-5.4-nano/mini

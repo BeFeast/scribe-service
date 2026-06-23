@@ -42,6 +42,7 @@ import httpx
 from scribe.config import Settings
 from scribe.config import settings as default_settings
 from scribe.obs import metrics
+from scribe.pipeline.summary_map_reduce import map_reduce_summarize
 from scribe.pipeline.summary_validator import (
     ProviderError,
     ProviderTimeoutError,
@@ -99,12 +100,17 @@ def _classify_error(exc: ProviderError) -> tuple[str, bool]:
 class SummaryProvider(Protocol):
     """A provider must expose a stable `name` for telemetry plus `summarize`.
 
-    `summarize` must call `validate_and_canonicalize` on the raw LLM output
-    before returning, and raise `ProviderError` for any unrecoverable
-    response shape.
+    `complete` performs the raw backend call and returns the unvalidated LLM
+    output (raising `ProviderError` for transport / HTTP / empty failures).
+    `summarize` is `validate_and_canonicalize(self.complete(prompt))` and
+    raises `ProviderError` for any unrecoverable response shape. Map-reduce
+    (`scribe.pipeline.summary_map_reduce`) drives `complete` directly so an
+    intermediate chunk summary is not forced through frontmatter validation.
     """
 
     name: str
+
+    def complete(self, prompt: str) -> str: ...
 
     def summarize(self, prompt: str) -> SummaryResult: ...
 
@@ -250,6 +256,8 @@ def summarize_with_chain(
     prompt: str,
     *,
     attempts: list[tuple[str, str]] | None = None,
+    instructions: str | None = None,
+    transcript: str | None = None,
 ) -> SummaryResult:
     """Try each provider in order, consulting its circuit breaker first.
 
@@ -259,6 +267,14 @@ def summarize_with_chain(
     `ProviderTimeoutError`) and the generic `ProviderError` are caught and the
     chain advances; any other exception (auth, runtime error) propagates
     immediately.
+
+    When `transcript` is supplied and the built `prompt` exceeds
+    `settings.summary_map_reduce_chars`, each provider is driven via map-reduce
+    (`scribe.pipeline.summary_map_reduce`) instead of a single call, so a
+    payload-limited backend summarises the transcript in chunks rather than
+    returning 413 (#382). `instructions` is the rendered prompt template (no
+    transcript) reused for the reduce pass. Short prompts — or callers that do
+    not pass `transcript` — keep the unchanged single-pass behaviour.
 
     `attempts`, if supplied, is appended in-place with `(provider_name,
     outcome_description)` per attempted provider so the caller can build a
@@ -276,6 +292,12 @@ def summarize_with_chain(
 
     last_error: ProviderError | None = None
     had_fallback: bool = False
+
+    use_map_reduce = (
+        transcript is not None
+        and default_settings.summary_map_reduce_chars > 0
+        and len(prompt) > default_settings.summary_map_reduce_chars
+    )
 
     for provider in providers:
         name = getattr(provider, "name", type(provider).__name__)
@@ -296,7 +318,14 @@ def summarize_with_chain(
             continue
 
         try:
-            result = provider.summarize(prompt)
+            if use_map_reduce:
+                result = map_reduce_summarize(
+                    provider,
+                    instructions=instructions or "",
+                    transcript=transcript or "",
+                )
+            else:
+                result = provider.summarize(prompt)
         except ProviderError as exc:
             outcome, _ = _classify_error(exc)
             metrics.summary_provider_calls_total.labels(
@@ -440,6 +469,9 @@ class CodexProvider:
         self.last_token_revoked_stderr: str | None = None
 
     def summarize(self, prompt: str) -> SummaryResult:
+        return validate_and_canonicalize(self.complete(prompt))
+
+    def complete(self, prompt: str) -> str:
         s = self._settings
         lock_path = Path(s.codex_lock_path)
         lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -519,7 +551,7 @@ class CodexProvider:
         if not summary_md:
             raise ProviderError(reason="empty_response", details="codex produced empty output")
         metrics.last_codex_success_timestamp.set(time.time())
-        return validate_and_canonicalize(summary_md)
+        return summary_md
 
 
 class ClaudeProvider:
@@ -534,6 +566,9 @@ class ClaudeProvider:
         self._settings = settings_obj or default_settings
 
     def summarize(self, prompt: str) -> SummaryResult:
+        return validate_and_canonicalize(self.complete(prompt))
+
+    def complete(self, prompt: str) -> str:
         s = self._settings
         # Pass the prompt via stdin (-p enables non-interactive print mode and
         # reads from stdin when no positional prompt is given). Avoids hitting
@@ -594,7 +629,7 @@ class ClaudeProvider:
                 reason="empty_response",
                 details="claude produced empty output",
             )
-        return validate_and_canonicalize(summary_md)
+        return summary_md
 
 
 class FreeLLMAPIProvider:
@@ -612,6 +647,9 @@ class FreeLLMAPIProvider:
         self._settings = settings_obj or default_settings
 
     def summarize(self, prompt: str) -> SummaryResult:
+        return validate_and_canonicalize(self.complete(prompt))
+
+    def complete(self, prompt: str) -> str:
         s = self._settings
         if not s.freellmapi_api_key.strip():
             raise ProviderUnavailableError(
@@ -678,7 +716,7 @@ class FreeLLMAPIProvider:
                 reason="empty_response",
                 details="freellmapi returned empty content",
             )
-        return validate_and_canonicalize(summary_md)
+        return summary_md
 
 
 PROVIDER_REGISTRY: dict[str, type[SummaryProvider]] = {
