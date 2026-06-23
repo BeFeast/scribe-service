@@ -9,6 +9,7 @@ translates `ProviderError(chain_exhausted)` into `SummarizeError` /
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import subprocess
 import time
@@ -24,12 +25,15 @@ from scribe.pipeline.summary_providers import (
     ClaudeProvider,
     CodexProvider,
     FreeLLMAPIProvider,
+    OllamaCloudProvider,
+    OpenAICompatibleProvider,
     ProviderError,
     ProviderTimeoutError,
     ProviderUnavailableError,
     ProviderUsageLimitError,
     SummaryResult,
     build_provider_chain,
+    parse_provider_entry,
     summarize_with_chain,
 )
 
@@ -464,6 +468,157 @@ def test_freellmapi_provider_missing_api_key_raises_unavailable(
     assert exc.value.reason == "freellmapi_no_api_key"
 
 
+# ---------- OpenAICompatibleProvider (generic) -------------------------------
+
+
+def test_openai_compatible_provider_posts_chat_completions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The generic primitive POSTs to {base_url}/chat/completions with bearer
+    auth and the configured model, returning the first choice's content."""
+    calls = _stub_httpx_post(
+        monkeypatch,
+        status_code=200,
+        json_body={"choices": [{"message": {"content": _OK_MARKDOWN}}]},
+    )
+    provider = OpenAICompatibleProvider(
+        name="ollama-cloud",
+        base_url="http://ollama:11434/v1/",
+        api_key="sk-test",
+        model="glm-5.2",
+        timeout=30,
+    )
+    result = provider.summarize("hello")
+    assert isinstance(result, SummaryResult)
+    assert calls[0]["url"] == "http://ollama:11434/v1/chat/completions"
+    assert calls[0]["headers"]["Authorization"] == "Bearer sk-test"
+    assert json.loads(calls[0]["content"])["model"] == "glm-5.2"
+
+
+def test_openai_compatible_provider_no_base_url_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance #20: a provider with no configured base URL is Unavailable
+    (so the chain advances) rather than raising or making a bogus request."""
+    posted = _stub_httpx_post(monkeypatch, status_code=200)
+    provider = OpenAICompatibleProvider(
+        name="ollama-cloud",
+        base_url="",
+        api_key="",
+        model="glm-5.2",
+        timeout=30,
+        require_api_key=False,
+    )
+    with pytest.raises(ProviderUnavailableError) as exc:
+        provider.summarize("hello")
+    assert exc.value.reason == "ollama-cloud_no_base_url"
+    assert posted == []  # never hit the network
+
+
+def test_openai_compatible_provider_omits_auth_header_when_keyless(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A keyless backend (e.g. a local signed-in Ollama daemon) sends no
+    Authorization header when require_api_key is False and no key is set."""
+    calls = _stub_httpx_post(
+        monkeypatch,
+        status_code=200,
+        json_body={"choices": [{"message": {"content": _OK_MARKDOWN}}]},
+    )
+    provider = OpenAICompatibleProvider(
+        name="ollama-cloud",
+        base_url="http://ollama:11434/v1",
+        api_key="",
+        model="glm-5.2",
+        timeout=30,
+        require_api_key=False,
+    )
+    provider.summarize("hello")
+    assert "Authorization" not in calls[0]["headers"]
+
+
+def test_openai_compatible_provider_error_reasons_use_instance_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """429/5xx/other-4xx error reasons are prefixed with the instance name so
+    telemetry/breaker attribution is per-backend."""
+    provider = OpenAICompatibleProvider(
+        name="ollama-cloud",
+        base_url="http://ollama:11434/v1",
+        api_key="sk",
+        model="glm-5.2",
+        timeout=30,
+    )
+    _stub_httpx_post(monkeypatch, status_code=429, text="slow down")
+    with pytest.raises(ProviderUsageLimitError) as exc:
+        provider.summarize("x")
+    assert exc.value.reason == "ollama-cloud_usage_limit"
+
+    _stub_httpx_post(monkeypatch, status_code=503, text="down")
+    with pytest.raises(ProviderUnavailableError) as exc2:
+        provider.summarize("x")
+    assert exc2.value.reason == "ollama-cloud_5xx"
+
+    _stub_httpx_post(monkeypatch, status_code=400, text="bad")
+    with pytest.raises(ProviderError) as exc3:
+        provider.summarize("x")
+    assert exc3.value.reason == "ollama-cloud_http_error"
+
+
+def test_ollama_cloud_provider_unconfigured_base_url_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Out of the box (no SCRIBE_OLLAMA_BASE_URL) the ollama-cloud instance is
+    Unavailable, so the default chain advances instead of crashing."""
+    monkeypatch.setattr(summarizer.settings, "ollama_base_url", "")
+    monkeypatch.setattr(summarizer.settings, "ollama_api_key", "")
+    monkeypatch.setattr(summarizer.settings, "ollama_model", "glm-5.2")
+    monkeypatch.setattr(summarizer.settings, "ollama_timeout_secs", 30)
+    with pytest.raises(ProviderUnavailableError) as exc:
+        OllamaCloudProvider().summarize("hello")
+    assert exc.value.reason == "ollama-cloud_no_base_url"
+
+
+def test_ollama_cloud_provider_keyless_daemon_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A configured base URL with no API key is fine for ollama-cloud (local
+    signed-in daemon) — the call goes through without an Authorization header."""
+    monkeypatch.setattr(summarizer.settings, "ollama_base_url", "http://ollama:11434/v1")
+    monkeypatch.setattr(summarizer.settings, "ollama_api_key", "")
+    monkeypatch.setattr(summarizer.settings, "ollama_model", "glm-5.2")
+    monkeypatch.setattr(summarizer.settings, "ollama_timeout_secs", 30)
+    calls = _stub_httpx_post(
+        monkeypatch,
+        status_code=200,
+        json_body={"choices": [{"message": {"content": _OK_MARKDOWN}}]},
+    )
+    result = OllamaCloudProvider(model="gemma4:31b").summarize("hello")
+    assert isinstance(result, SummaryResult)
+    assert "Authorization" not in calls[0]["headers"]
+    assert json.loads(calls[0]["content"])["model"] == "gemma4:31b"
+
+
+# ---------- parse_provider_entry ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    [
+        ("codex", ("codex", None)),
+        ("freellmapi", ("freellmapi", None)),
+        ("ollama-cloud:glm-5.2", ("ollama-cloud", "glm-5.2")),
+        # Model tag itself contains a ':' — split on the FIRST colon only.
+        ("ollama-cloud:gemma4:31b", ("ollama-cloud", "gemma4:31b")),
+        ("freellmapi:gemini-2.5-flash", ("freellmapi", "gemini-2.5-flash")),
+        # Provider name is case-insensitive; model is kept verbatim.
+        ("  Ollama-Cloud : MiniMax-M3  ", ("ollama-cloud", "MiniMax-M3")),
+    ],
+)
+def test_parse_provider_entry(entry: str, expected: tuple[str, str | None]) -> None:
+    assert parse_provider_entry(entry) == expected
+
+
 # ---------- build_provider_chain ---------------------------------------------
 
 
@@ -475,29 +630,127 @@ def test_build_provider_chain_returns_configured_order(
     assert [p.name for p in chain] == ["claude", "codex"]
 
 
+def test_build_provider_chain_parses_per_provider_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance: a `provider:model` chain (including a model tag with a ':')
+    builds in order with the right backend names and per-instance models."""
+    monkeypatch.setattr(
+        summarizer.settings,
+        "summary_providers",
+        ["ollama-cloud:glm-5.2", "ollama-cloud:gemma4:31b", "freellmapi:gemini-2.5-flash"],
+    )
+    chain = build_provider_chain()
+    assert [p.name for p in chain] == ["ollama-cloud", "ollama-cloud", "freellmapi"]
+    assert [p._model for p in chain] == [
+        "glm-5.2",
+        "gemma4:31b",
+        "gemini-2.5-flash",
+    ]
+
+
+def test_build_provider_chain_old_name_only_format_uses_default_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Backward compatibility: a bare name with no ':' resolves to the
+    provider's configured default model."""
+    monkeypatch.setattr(summarizer.settings, "freellmapi_model", "gpt-4o-mini")
+    monkeypatch.setattr(summarizer.settings, "ollama_model", "glm-5.2")
+    monkeypatch.setattr(summarizer.settings, "summary_providers", ["ollama-cloud", "freellmapi"])
+    chain = build_provider_chain()
+    assert [p.name for p in chain] == ["ollama-cloud", "freellmapi"]
+    assert [p._model for p in chain] == ["glm-5.2", "gpt-4o-mini"]
+
+
 def test_build_provider_chain_rejects_unknown_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(summarizer.settings, "summary_providers", ["codex", "bogus"])
+    monkeypatch.setattr(summarizer.settings, "summary_providers", ["codex", "bogus:x"])
     with pytest.raises(ValueError) as exc:
         build_provider_chain()
     assert "bogus" in str(exc.value)
 
 
-def test_default_summary_providers_excludes_claude(
+def test_default_summary_providers_is_lightweight_http_chain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Regression for #250: the `claude` CLI is not installed in the runtime
-    image, so leaving it in the default chain guarantees a
-    `claude_missing` failure between codex and freellmapi. Operators who
-    want claude can opt in via SCRIBE_SUMMARY_PROVIDERS; the default must
-    only list providers that ship working in the container."""
+    """#388: the default chain is the lightweight direct-HTTP chain
+    glm-5.2 → gemma4:31b → gemini-2.5-flash. The heavy CLI harnesses (codex,
+    claude) are demoted to opt-in via SCRIBE_SUMMARY_PROVIDERS, so neither is
+    in the default. Regression-keeps the #250 invariant that `claude` (CLI not
+    installed in the runtime image) never sits in the default chain."""
     from scribe.config import Settings
 
     monkeypatch.delenv("SCRIBE_SUMMARY_PROVIDERS", raising=False)
     defaults = Settings().summary_providers
-    assert defaults == ["codex", "freellmapi"]
+    assert defaults == [
+        "ollama-cloud:glm-5.2",
+        "ollama-cloud:gemma4:31b",
+        "freellmapi:gemini-2.5-flash",
+    ]
     assert "claude" not in defaults
+    assert "codex" not in defaults
+
+
+def test_default_chain_builds_in_order_with_per_provider_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default `provider:model` chain instantiates in order. Two
+    ollama-cloud instances carry different models but share the backend name."""
+    from scribe.config import Settings
+
+    monkeypatch.delenv("SCRIBE_SUMMARY_PROVIDERS", raising=False)
+    chain = build_provider_chain(Settings())
+    assert [p.name for p in chain] == [
+        "ollama-cloud",
+        "ollama-cloud",
+        "freellmapi",
+    ]
+    assert [getattr(p, "_model", None) for p in chain] == [
+        "glm-5.2",
+        "gemma4:31b",
+        "gemini-2.5-flash",
+    ]
+
+
+def test_chain_falls_through_failing_model_to_next_ollama_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance (fallback): two ollama-cloud models share the backend name but
+    are independent chain positions — a 5xx on glm-5.2 advances to gemma4:31b,
+    which succeeds. Within one run the shared breaker does not trip (one failure
+    < threshold), so the second model is still attempted."""
+    monkeypatch.setattr(summarizer.settings, "ollama_base_url", "http://ollama:11434/v1")
+    monkeypatch.setattr(summarizer.settings, "ollama_api_key", "")
+    monkeypatch.setattr(summarizer.settings, "ollama_model", "glm-5.2")
+    monkeypatch.setattr(summarizer.settings, "ollama_timeout_secs", 30)
+    monkeypatch.setattr(
+        summarizer.settings,
+        "summary_providers",
+        ["ollama-cloud:glm-5.2", "ollama-cloud:gemma4:31b"],
+    )
+
+    seen_models: list[str] = []
+
+    def fake_post(url, *, content, headers, timeout):  # noqa: ARG001
+        model = json.loads(content)["model"]
+        seen_models.append(model)
+        if model == "glm-5.2":
+            return httpx.Response(503, text="overloaded", request=httpx.Request("POST", url))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": _OK_MARKDOWN}}]},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(summary_providers.httpx, "post", fake_post)
+
+    chain = build_provider_chain()
+    result = summarize_with_chain(chain, "prompt")
+    assert isinstance(result, SummaryResult)
+    assert seen_models == ["glm-5.2", "gemma4:31b"]
+    # The shared ollama-cloud breaker only saw one failure this run → still closed.
+    assert summary_providers.get_breaker("ollama-cloud").state == "closed"
 
 
 # ---------- summarize() integration with mocked providers --------------------

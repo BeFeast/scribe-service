@@ -25,6 +25,7 @@ _SECRET_SETTING_FIELDS = (
     "vast_api_key",
     "openai_transcribe_api_key",
     "freellmapi_api_key",
+    "ollama_api_key",
     "machine_bearer_token",
     "clerk_secret_key",
     "shortlink_api_key",

@@ -17,11 +17,18 @@ trial; success returns the breaker to `closed`, failure restarts the cooldown.
 Breaker state is in-process. On container restart everyone resets to `closed`
 — restart is a strong signal that conditions may have changed.
 
-Concrete provider classes (`CodexProvider`, `ClaudeProvider`,
-`FreeLLMAPIProvider`) live below the chain machinery and are the production
-backends wired up by `build_provider_chain`. The legacy entrypoint
-`scribe.pipeline.summarizer.summarize` builds the chain at call time and
-translates `ProviderError(chain_exhausted)` into `SummarizeError`.
+Concrete provider classes live below the chain machinery and are the
+production backends wired up by `build_provider_chain`. The default path is
+direct OpenAI-compatible HTTP via `OpenAICompatibleProvider` (#388): one
+generic `POST {base_url}/chat/completions` primitive instantiated several times
+with different names/models — `freellmapi` and `ollama-cloud` are both
+instances. The CLI harnesses `CodexProvider` / `ClaudeProvider` remain available
+as optional providers (a summary is one prompt → markdown, so the heavy
+agentic harness is not needed on the main path). The chain is configured as a
+list of `provider:model` entries; `build_provider_chain` parses them (splitting
+on the first `:`) and looks each provider up in `PROVIDER_REGISTRY`. The legacy
+entrypoint `scribe.pipeline.summarizer.summarize` builds the chain at call time
+and translates `ProviderError(chain_exhausted)` into `SummarizeError`.
 """
 from __future__ import annotations
 
@@ -34,6 +41,7 @@ import tempfile
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -57,6 +65,8 @@ __all__ = [
     "ClaudeProvider",
     "CodexProvider",
     "FreeLLMAPIProvider",
+    "OllamaCloudProvider",
+    "OpenAICompatibleProvider",
     "PROVIDER_REGISTRY",
     "ProviderError",
     "ProviderTimeoutError",
@@ -66,6 +76,7 @@ __all__ = [
     "SummaryResult",
     "build_provider_chain",
     "get_breaker",
+    "parse_provider_entry",
     "summarize_with_chain",
     "validate_and_canonicalize",
 ]
@@ -464,8 +475,13 @@ class CodexProvider:
 
     name = "codex"
 
-    def __init__(self, settings_obj: Settings | None = None) -> None:
+    def __init__(
+        self, settings_obj: Settings | None = None, *, model: str | None = None
+    ) -> None:
         self._settings = settings_obj or default_settings
+        # Per-chain model override (#388, `codex:<model>`); None → use the
+        # configured `codex_model` (which itself may be empty = codex config.toml).
+        self._model = model
         self.last_token_revoked_stderr: str | None = None
 
     def summarize(self, prompt: str) -> SummaryResult:
@@ -506,8 +522,9 @@ class CodexProvider:
                         "-c", f"model_reasoning_effort={s.codex_reasoning}",
                         "-o", str(out_file),
                     ]
-                    if s.codex_model:
-                        cmd += ["-m", s.codex_model]
+                    model = self._model or s.codex_model
+                    if model:
+                        cmd += ["-m", model]
                     cmd += ["-"]  # read prompt from stdin
                     try:
                         proc = subprocess.run(
@@ -562,8 +579,12 @@ class ClaudeProvider:
 
     name = "claude"
 
-    def __init__(self, settings_obj: Settings | None = None) -> None:
+    def __init__(
+        self, settings_obj: Settings | None = None, *, model: str | None = None
+    ) -> None:
         self._settings = settings_obj or default_settings
+        # Per-chain model override (#388, `claude:<model>`); None → claude_model.
+        self._model = model
 
     def summarize(self, prompt: str) -> SummaryResult:
         return validate_and_canonicalize(self.complete(prompt))
@@ -575,7 +596,7 @@ class ClaudeProvider:
         # the kernel argv size limit (E2BIG) for long transcripts.
         cmd = [
             s.claude_bin,
-            "--model", s.claude_model,
+            "--model", self._model or s.claude_model,
             "--effort", s.claude_effort,
             "-p",
         ]
@@ -632,71 +653,108 @@ class ClaudeProvider:
         return summary_md
 
 
-class FreeLLMAPIProvider:
-    """FreeLLMAPI / OpenAI-compatible chat completions backend.
+class OpenAICompatibleProvider:
+    """Generic OpenAI-compatible `/chat/completions` HTTP backend (#388).
 
-    POSTs to `${base_url}/chat/completions` with bearer auth and returns the
-    first choice's content. 429 → `ProviderUsageLimitError`; 5xx →
-    `ProviderUnavailableError`; httpx timeout → `ProviderTimeoutError`; any
-    other transport error → `ProviderError`.
+    The single lightweight primitive behind every direct-HTTP summary provider:
+    a summary is one prompt → markdown, so no agentic CLI harness is needed.
+    POSTs to `${base_url}/chat/completions` with optional bearer auth and returns
+    the first choice's content. Each instance carries its own
+    `name`/`base_url`/`api_key`/`model`/`timeout`, so the same backend type can
+    appear several times in the chain with different models (e.g.
+    `ollama-cloud:glm-5.2` then `ollama-cloud:gemma4:31b`).
+
+    Error mapping is identical for every instance, so the circuit breaker and
+    `_classify_error` work uniformly:
+      * empty `base_url` → `ProviderUnavailableError` (chain advances)
+      * empty `api_key` when `require_api_key` → `ProviderUnavailableError`
+      * httpx timeout → `ProviderTimeoutError`
+      * other httpx transport error → `ProviderUnavailableError`
+      * 429 → `ProviderUsageLimitError`
+      * 5xx → `ProviderUnavailableError`
+      * any other ≥400 (incl. 413 payload-too-large) → generic `ProviderError`
+        — the chain advances; oversized inputs are handled upstream by map-reduce
+        (#382), so a 413 should not normally be reached on the single-pass path.
+      * unparseable / empty body → generic `ProviderError`
+
+    The circuit breaker is keyed on `name` (the backend identity), not the model:
+    trip-relevant failures (429/5xx/timeout) are backend-wide, so two models on
+    the same backend correctly share one breaker, while model-specific errors
+    (e.g. a 404 for a decommissioned model) are non-trip-relevant and simply
+    advance to the next chain entry.
     """
 
-    name = "freellmapi"
-
-    def __init__(self, settings_obj: Settings | None = None) -> None:
-        self._settings = settings_obj or default_settings
+    def __init__(
+        self,
+        *,
+        name: str,
+        base_url: str,
+        api_key: str,
+        model: str,
+        timeout: float,
+        require_api_key: bool = True,
+    ) -> None:
+        self.name = name
+        self._base_url = (base_url or "").strip()
+        self._api_key = (api_key or "").strip()
+        self._model = model
+        self._timeout = timeout
+        self._require_api_key = require_api_key
 
     def summarize(self, prompt: str) -> SummaryResult:
         return validate_and_canonicalize(self.complete(prompt))
 
     def complete(self, prompt: str) -> str:
-        s = self._settings
-        if not s.freellmapi_api_key.strip():
+        if not self._base_url:
             raise ProviderUnavailableError(
-                reason="freellmapi_no_api_key",
-                details="SCRIBE_FREELLMAPI_API_KEY not configured",
+                reason=f"{self.name}_no_base_url",
+                details=f"base URL not configured for {self.name}",
             )
-        url = f"{s.freellmapi_base_url.rstrip('/')}/chat/completions"
+        if self._require_api_key and not self._api_key:
+            raise ProviderUnavailableError(
+                reason=f"{self.name}_no_api_key",
+                details=f"API key not configured for {self.name}",
+            )
+        url = f"{self._base_url.rstrip('/')}/chat/completions"
         body = {
-            "model": s.freellmapi_model,
+            "model": self._model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
         }
-        headers = {
-            "Authorization": f"Bearer {s.freellmapi_api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
         try:
             resp = httpx.post(
                 url,
                 content=json.dumps(body),
                 headers=headers,
-                timeout=s.freellmapi_timeout_secs,
+                timeout=self._timeout,
             )
         except httpx.TimeoutException as exc:
             raise ProviderTimeoutError(
                 reason="timeout",
-                details=f"freellmapi timed out after {s.freellmapi_timeout_secs}s",
+                details=f"{self.name} timed out after {self._timeout}s",
             ) from exc
         except httpx.HTTPError as exc:
             raise ProviderUnavailableError(
-                reason="freellmapi_transport_error",
+                reason=f"{self.name}_transport_error",
                 details=str(exc),
             ) from exc
 
         if resp.status_code == 429:
             raise ProviderUsageLimitError(
-                reason="freellmapi_usage_limit",
+                reason=f"{self.name}_usage_limit",
                 details=resp.text[:400],
             )
         if 500 <= resp.status_code < 600:
             raise ProviderUnavailableError(
-                reason="freellmapi_5xx",
+                reason=f"{self.name}_5xx",
                 details=f"{resp.status_code}: {resp.text[:400]}",
             )
         if resp.status_code >= 400:
             raise ProviderError(
-                reason="freellmapi_http_error",
+                reason=f"{self.name}_http_error",
                 details=f"{resp.status_code}: {resp.text[:400]}",
             )
 
@@ -706,7 +764,7 @@ class FreeLLMAPIProvider:
             content = choices[0]["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise ProviderError(
-                reason="freellmapi_bad_response",
+                reason=f"{self.name}_bad_response",
                 details=f"could not parse choices[0].message.content: {exc}",
             ) from exc
 
@@ -714,34 +772,123 @@ class FreeLLMAPIProvider:
         if not summary_md:
             raise ProviderError(
                 reason="empty_response",
-                details="freellmapi returned empty content",
+                details=f"{self.name} returned empty content",
             )
         return summary_md
 
 
-PROVIDER_REGISTRY: dict[str, type[SummaryProvider]] = {
-    "codex": CodexProvider,
-    "claude": ClaudeProvider,
-    "freellmapi": FreeLLMAPIProvider,
+class FreeLLMAPIProvider(OpenAICompatibleProvider):
+    """`freellmapi` instance of `OpenAICompatibleProvider`.
+
+    Convenience subclass that wires the `freellmapi_*` settings; the free
+    aggregator requires a bearer key, so `require_api_key=True` (a missing key
+    yields `ProviderUnavailableError(freellmapi_no_api_key)` and the chain
+    advances).
+    """
+
+    def __init__(
+        self, settings_obj: Settings | None = None, *, model: str | None = None
+    ) -> None:
+        s = settings_obj or default_settings
+        super().__init__(
+            name="freellmapi",
+            base_url=s.freellmapi_base_url,
+            api_key=s.freellmapi_api_key,
+            model=model or s.freellmapi_model,
+            timeout=s.freellmapi_timeout_secs,
+            require_api_key=True,
+        )
+
+
+class OllamaCloudProvider(OpenAICompatibleProvider):
+    """`ollama-cloud` instance of `OpenAICompatibleProvider` (#388).
+
+    Wires the `ollama_*` settings. A local signed-in Ollama daemon needs no API
+    key, so `require_api_key=False`; an unconfigured `ollama_base_url` still
+    yields `ProviderUnavailableError(ollama-cloud_no_base_url)` so the chain
+    advances rather than crashing.
+    """
+
+    def __init__(
+        self, settings_obj: Settings | None = None, *, model: str | None = None
+    ) -> None:
+        s = settings_obj or default_settings
+        super().__init__(
+            name="ollama-cloud",
+            base_url=s.ollama_base_url,
+            api_key=s.ollama_api_key,
+            model=model or s.ollama_model,
+            timeout=s.ollama_timeout_secs,
+            require_api_key=False,
+        )
+
+
+# A factory builds one provider instance from settings + an optional per-chain
+# model override (parsed from a `provider:model` entry). Keeping factories rather
+# than bare classes lets one backend type (OpenAICompatibleProvider) be
+# registered under several provider names with their own settings wiring.
+ProviderFactory = Callable[[Settings, "str | None"], SummaryProvider]
+
+
+def _build_codex(s: Settings, model: str | None) -> SummaryProvider:
+    return CodexProvider(s, model=model)
+
+
+def _build_claude(s: Settings, model: str | None) -> SummaryProvider:
+    return ClaudeProvider(s, model=model)
+
+
+def _build_freellmapi(s: Settings, model: str | None) -> SummaryProvider:
+    return FreeLLMAPIProvider(s, model=model)
+
+
+def _build_ollama_cloud(s: Settings, model: str | None) -> SummaryProvider:
+    return OllamaCloudProvider(s, model=model)
+
+
+PROVIDER_REGISTRY: dict[str, ProviderFactory] = {
+    "codex": _build_codex,
+    "claude": _build_claude,
+    "freellmapi": _build_freellmapi,
+    "ollama-cloud": _build_ollama_cloud,
 }
+
+
+def parse_provider_entry(entry: str) -> tuple[str, str | None]:
+    """Split a `provider[:model]` chain entry into `(provider_name, model)`.
+
+    The entry is split on the FIRST `:` only, so a model tag that itself
+    contains a colon (e.g. `ollama-cloud:gemma4:31b`) parses as
+    provider=`ollama-cloud`, model=`gemma4:31b`. The provider name is lowercased
+    (case-insensitive match against `PROVIDER_REGISTRY`); the model is kept
+    verbatim because model identifiers are case-sensitive. A bare name with no
+    `:` returns `model=None`, meaning "use the provider's default model" — this
+    is the backward-compatible old name-only format.
+    """
+    name, sep, model = entry.partition(":")
+    name = name.strip().lower()
+    model = model.strip() if sep else ""
+    return name, (model or None)
 
 
 def build_provider_chain(
     settings_obj: Settings | None = None,
 ) -> list[SummaryProvider]:
-    """Instantiate the configured provider chain.
+    """Instantiate the configured provider chain from `summary_providers`.
 
-    Reads provider names from `settings.summary_providers`. Unknown names raise
-    `ValueError` rather than being silently dropped — a typo in env should be
-    surfaced loudly during process start, not buried in a fallback path.
+    Each entry is a `provider[:model]` string (see `parse_provider_entry`).
+    Unknown provider names raise `ValueError` rather than being silently dropped
+    — a typo in env should surface loudly during process start, not be buried in
+    a fallback path.
     """
     s = settings_obj or default_settings
-    names: list[str] = list(s.summary_providers) if s.summary_providers else []
-    unknown = [n for n in names if n not in PROVIDER_REGISTRY]
+    entries: list[str] = list(s.summary_providers) if s.summary_providers else []
+    parsed = [parse_provider_entry(e) for e in entries]
+    unknown = [name for name, _ in parsed if name not in PROVIDER_REGISTRY]
     if unknown:
         raise ValueError(
             "unknown summary providers in SCRIBE_SUMMARY_PROVIDERS: "
             + ", ".join(unknown)
             + f". Known providers: {sorted(PROVIDER_REGISTRY)}"
         )
-    return [PROVIDER_REGISTRY[name](s) for name in names]
+    return [PROVIDER_REGISTRY[name](s, model) for name, model in parsed]
