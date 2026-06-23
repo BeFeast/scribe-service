@@ -230,6 +230,23 @@ summary_chain_outcome_total = Counter(
     labelnames=("outcome",),
 )
 
+# Map-reduce summarization telemetry (#382). When the built prompt exceeds the
+# configured threshold the chain summarises the transcript in chunks (map) and
+# merges the partials (reduce) so payload-limited backends do not 413.
+# result labels: success, truncated (reduce input had to be truncated), failed.
+summary_map_reduce_total = Counter(
+    "scribe_summary_map_reduce_total",
+    "Map-reduce summarization runs, labelled by provider and outcome.",
+    labelnames=("provider", "result"),
+)
+
+# Number of transcript chunks fanned out per map-reduce run.
+summary_map_reduce_chunks = Histogram(
+    "scribe_summary_map_reduce_chunks",
+    "Transcript chunks per map-reduce summarization run.",
+    buckets=(1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64),
+)
+
 # Transcription-provider chain telemetry — mirrors the summary-provider
 # metrics. The fallback chain (scribe.pipeline.transcribe_providers) tries each
 # provider (vast → optional openai / local-whisper) in order; a per-provider

@@ -135,6 +135,9 @@ def _alert_token_revoked(stderr_tail: str) -> None:
     send_admin_alert(msg)
 
 
+_TRANSCRIPT_SEPARATOR = "\n\nTranscript to summarize:\n\n"
+
+
 def _build_prompt(
     transcript_md: str,
     *,
@@ -143,7 +146,14 @@ def _build_prompt(
     summary_date: dt.date | None,
     prompt_version: str | None,
     prompt_body: str | None,
-) -> str:
+) -> tuple[str, str]:
+    """Return `(prompt, instructions)`.
+
+    `instructions` is the rendered prompt template with placeholders filled but
+    no transcript appended; `prompt` is `instructions + separator + transcript`.
+    The split lets the map-reduce path (#382) reuse the instructions for its
+    reduce pass while chunking only the transcript.
+    """
     summary_date = summary_date or dt.date.today()
     transcript_slug = transcript_slug or _slugify(title)
     try:
@@ -155,7 +165,7 @@ def _build_prompt(
             template = prompts.read_active_prompt()[1]
     except prompts.PromptError as exc:
         raise SummarizeError(str(exc)) from exc
-    return (
+    instructions = (
         template.replace("{date}", summary_date.isoformat())
         .replace("{transcript_slug}", transcript_slug)
         .replace("{short_description_language_code}", settings.short_description_language)
@@ -163,9 +173,8 @@ def _build_prompt(
             "{short_description_language_name}",
             _short_description_language_name(settings.short_description_language),
         )
-        + "\n\nTranscript to summarize:\n\n"
-        + transcript_md
     )
+    return instructions + _TRANSCRIPT_SEPARATOR + transcript_md, instructions
 
 
 def summarize(
@@ -185,7 +194,7 @@ def summarize(
     `CodexTokenRevokedError` when the whole chain failed and codex's last
     failure was a token-revoked signature.
     """
-    prompt = _build_prompt(
+    prompt, instructions = _build_prompt(
         transcript_md,
         title=title,
         transcript_slug=transcript_slug,
@@ -201,7 +210,13 @@ def summarize(
 
     attempts: list[tuple[str, str]] = []
     try:
-        result = summarize_with_chain(providers, prompt, attempts=attempts)
+        result = summarize_with_chain(
+            providers,
+            prompt,
+            attempts=attempts,
+            instructions=instructions,
+            transcript=transcript_md,
+        )
     except ProviderError as exc:
         if exc.reason == "no_providers":
             raise SummarizeError(
