@@ -1,37 +1,137 @@
-# scribe — deploy on DevBox /opt/stacks/scribe/. TODO(task#12): finalize.
+# scribe — reference deployment stack. Mirrors the prod stack at
+# /opt/stacks/scribe/compose.yaml on devbox 10.10.0.13 (the file releases are
+# actually rolled through via scripts/release-deploy.sh ->
+# `docker compose --project-directory /opt/stacks/scribe`). Keep this file in
+# sync with that stack so the repo is the source of truth, not the host. Do
+# NOT deploy this file over the prod stack blind — reconcile by diff.
+#
+# Stack directory layout (operator-wired on the host; not committed):
+#   <stack>/compose.yaml   this file
+#   <stack>/.env            SCRIBE_* env (see .env.example)
+#   <stack>/codex/          codex auth.json + config.toml (host-owned UID 1001)
+#   <stack>/prompts/        transcript-summary.*.md (copied from src/scribe/prompts)
+#   <stack>/infisical-agent/{agent.yaml,scribe.env.tpl,identity/...}
+#   <stack>/src/            this repo checkout (build context for scribe-backups)
+#
+# Non-root runtime (#348): the scribe image runs as fixed UID/GID 1001 (user
+# `scribe`). Every host bind-mount below MUST be owned by UID 1001 on the host
+# (the devbox user `sus` is UID 1001), or be a named volume. Root-owned mounts
+# created before #348 must be chowned to 1001 before they are usable — see
+# docs/runbooks/non-root-volume-ownership.md.
+
+name: scribe
+
 services:
   scribe:
+    container_name: scribe
     # Deploy pulls a pre-built tag; the explicit `docker build` happens in
     # release-deploy.sh, not on `compose up`. `scribe:current` is re-pointed
     # to the chosen release image — see docs/runbooks/release-rollback.md.
     image: scribe:current
-    ports:
-      - "13120:8000"   # TODO(task#12): confirm port
-    env_file: .env
+    restart: unless-stopped
+    env_file:
+      - .env
+      # Optional: Infisical machine creds for the (now redundant) in-process
+      # fetch in scribe.runtime_config. Operator-wired on the host, e.g.
+      #   - /home/god/.config/infisical/machine.env
+      # Boot secrets are delivered by the infisical-agent sidecar below.
     environment:
       # bgutil PO-token provider sidecar (#309). Container-DNS over the
-      # implicit project network. Empty disables the integration.
+      # implicit project network. Empty string disables the integration.
       SCRIBE_BGUTIL_POT_BASE_URL: http://scribe-pot:4416
+    ports:
+      - "13120:8000"
     volumes:
-      - ./data/codex-auth:/home/scribe/.codex   # codex auth JSON (transferred; chown host dir to UID 1001)
-      - /mnt/nfs/scribe-tmp:/data/tmp           # TODO(task#12): NFS mount of TrueNAS
+      # codex auth (auth.json) + config.toml — transferred from a host that's
+      # already logged in to ChatGPT. Read-write so codex can refresh OAuth
+      # tokens. Host path must be owned by UID 1001 (#348); the legacy root-home
+      # codex target is gone after the non-root switch.
+      - ./codex:/home/scribe/.codex
+      # big-file scratch dir. Named volume on the LXC's Docker loop disk, whose
+      # backing store is truenas-vms NFS at the device level — effectively
+      # NFS-tier storage without a per-file bind-mount. The named volume is
+      # chowned to UID 1001 by the image on first use.
+      # TODO(task#12): the original plan was a dedicated TrueNAS NFS bind-mount
+      #   at /mnt/nfs/scribe-tmp; that was abandoned in favour of this named
+      #   volume. Do NOT re-add the dead NFS bind-mount.
+      - scribe-tmp:/data/tmp
+      # versioned transcript-summary prompts (operator-copied from
+      # src/scribe/prompts). Paired with SCRIBE_PROMPT_DIR=/data/prompts in .env.
+      - ./prompts:/data/prompts
+      - scribe-backups:/backups:ro
+      # Infisical Agent-rendered SCRIBE_* boot secrets (#261), read-only.
+      - scribe-secrets:/secrets:ro
     depends_on:
+      infisical-agent:
+        condition: service_started
       scribe-pot:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
     logging:
       driver: journald
       options:
         tag: scribe
-    restart: unless-stopped
-    # network: reach db-dev Postgres — TODO(task#12)
 
-  # bgutil PO-token provider (#309). HTTP server mode on port 4416 (the
-  # plugin's default). Stays on the implicit project network — scribe reaches
-  # it as `scribe-pot:4416`, the port is not published to the host. The
-  # image bundles its own Node/Deno runtime; no persistent state to mount.
-  # On the devbox stack at /opt/stacks/scribe this service is reconciled by
-  # the Dockhand-adopted lifecycle (no `docker compose up`); see
-  # docs/runbooks/bgutil-pot-provider.md.
+  # Nightly pg_dump + flat .md tree export. PRD §4.12. Cron runs 03:00 in
+  # container TZ (Europe/Tel_Aviv). The named volume lives on the LXC's
+  # Docker loop disk (98G, plenty of headroom for ~year of dumps + .md).
+  # TODO: migrate to a dedicated TrueNAS dataset bind-mount once the
+  #       middlewared/NFS-export side is provisioned.
+  scribe-backups:
+    container_name: scribe-backups
+    build: ./src/docker/backups   # repo checkout lives at <stack>/src on the host
+    image: scribe-backups:local
+    restart: unless-stopped
+    env_file: .env  # SCRIBE_DATABASE_URL is reused from here
+    environment:
+      SCRIBE_BASE_URL: http://scribe:8000
+      TZ: Europe/Tel_Aviv
+      RETENTION_DAYS: "30"
+    volumes:
+      - scribe-backups:/backups
+    depends_on:
+      scribe:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # Infisical Agent sidecar (#261): authenticates with the machine identity,
+  # renders services/prod/scribe-service SCRIBE_* secrets into the
+  # scribe-secrets volume as /secrets/scribe.env, refreshes on a TTL, and
+  # keeps a last-known-good copy so scribe restarts survive an Infisical
+  # outage. Reaches Infisical over container-DNS on db-dev-net (no public
+  # secrets.oklabs.uk hairpin at boot). The identity files are operator-wired
+  # at <stack>/infisical-agent/identity/ (chmod 0600, dir chmod 0700).
+  infisical-agent:
+    container_name: scribe-infisical-agent
+    image: infisical/cli:latest
+    restart: unless-stopped
+    command: ["agent", "--config", "/etc/infisical/agent.yaml"]
+    volumes:
+      - ./infisical-agent/agent.yaml:/etc/infisical/agent.yaml:ro
+      - ./infisical-agent/scribe.env.tpl:/etc/infisical/templates/scribe.env.tpl:ro
+      - ./infisical-agent/identity/client-id:/etc/infisical/identity/client-id:ro
+      - ./infisical-agent/identity/client-secret:/etc/infisical/identity/client-secret:ro
+      - scribe-secrets:/secrets
+    networks:
+      - db-dev-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # bgutil PO-token provider sidecar (#309, Layer A). HTTP server on 4416,
+  # in-network only; scribe reaches it as scribe-pot:4416 on the implicit
+  # default net. Reconciled via Dockhand. See docs/runbooks/bgutil-pot-provider.md.
   scribe-pot:
     container_name: scribe-pot
     image: brainicism/bgutil-ytdlp-pot-provider:1.3.1
@@ -51,3 +151,21 @@ services:
       options:
         max-size: "5m"
         max-file: "3"
+
+volumes:
+  scribe-tmp: {}
+  scribe-backups: {}
+  scribe-secrets:
+    driver: local
+
+networks:
+  # Pin the implicit project network (scribe_default) subnet so the
+  # scribe-backups sidecar IP stays inside SCRIBE_TRUSTED_CIDRS
+  # (10.10.0.0/16,172.29.0.0/16) across stack recreates — otherwise a
+  # docker-assigned drift would 401 the .md export again. See issue #300.
+  default:
+    ipam:
+      config:
+        - subnet: 172.29.0.0/16
+  db-dev-net:
+    external: true

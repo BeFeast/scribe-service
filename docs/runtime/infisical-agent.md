@@ -30,9 +30,9 @@ services:
     # ...existing keys...
     env_file: .env
     volumes:
-      - ./data/codex-auth:/home/scribe/.codex
-      - /mnt/nfs/scribe-tmp:/data/tmp
-      - scribe-secrets:/secrets:ro          # rendered env-file (read-only)
+      - ./codex:/home/scribe/.codex          # codex auth (host-owned UID 1001, #348)
+      - scribe-tmp:/data/tmp                  # named volume (not the dead NFS bind)
+      - scribe-secrets:/secrets:ro            # rendered env-file (read-only)
     depends_on:
       infisical-agent:
         condition: service_started
