@@ -195,9 +195,9 @@ export function TranscriptDetail({ id, navigate, onRefresh }) {
           </button>
         </div>
       </div>
-      <div className="transcript-body">
-        {t.transcript_excerpt}{"\n\n…"}
-      </div>
+      {/* Full transcript is download-only (#384): the inline body is dropped so
+          the detail page stays light on long videos. Get the full text via the
+          Download .md button or the Share sheet → transcript.md endpoint. */}
 
       <div className="hr"/>
       <div className="mono muted" style={{fontSize: 11, display: "flex", gap: 16, flexWrap: "wrap"}}>

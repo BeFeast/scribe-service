@@ -57,6 +57,7 @@ def _seed_transcript(
     owner_email: str | None = None,
     summary_shortlink: str | None = "https://go.example/s",
     transcript_shortlink: str | None = "https://go.example/t",
+    transcript_md: str = "transcript body",
 ):
     job = Job(
         url=url or f"https://youtu.be/{video_id}",
@@ -72,7 +73,7 @@ def _seed_transcript(
         job_id=job.id,
         video_id=video_id,
         title=title,
-        transcript_md="transcript body",
+        transcript_md=transcript_md,
         summary_md=summary_md,
         short_description=short_description,
         tags=tags,
@@ -257,7 +258,9 @@ def test_api_library_filters_q_and_tag(client, db_session):
     assert by_tag["rows"][0]["video_id"] == "filter11111"
 
 
-def test_transcript_detail_json_keeps_full_body_for_spa(client, db_session):
+def test_transcript_detail_json_excludes_full_body_returns_excerpt(client, db_session):
+    # Issue #384: the detail payload must not carry the full transcript_md. It
+    # ships only a short transcript_excerpt; the full text is download-only.
     _, transcript = _seed_transcript(
         db_session,
         video_id="detailjson1",
@@ -277,11 +280,42 @@ def test_transcript_detail_json_keeps_full_body_for_spa(client, db_session):
     assert body["id"] == transcript.id
     assert body["job_id"] == transcript.job_id
     assert body["summary_md"].startswith("# Heading")
-    assert body["transcript_md"] == "transcript body"
+    assert "transcript_md" not in body
+    assert body["transcript_excerpt"] == "transcript body"
     assert body["vast_cost"] == 0.125
     # Issue #295: mobile Share sheet reads these off the detail payload.
     assert body["summary_shortlink"] == "https://go.example/s"
     assert body["transcript_shortlink"] == "https://go.example/t"
+
+
+def test_transcript_detail_long_transcript_is_excerpt_only(client, db_session):
+    # Issue #384 acceptance: a long transcript must not bloat the detail JSON;
+    # the capped excerpt ships there while the full body stays download-only via
+    # GET /transcripts/:id/transcript.md.
+    full_body = "## Transcript\n\n" + " ".join(f"word{i}" for i in range(5000))
+    _, transcript = _seed_transcript(
+        db_session,
+        video_id="detaillong12",
+        title="Long Transcript",
+        summary_md="# Heading",
+        transcript_md=full_body,
+    )
+
+    detail = client.get(
+        f"/transcripts/{transcript.id}",
+        headers={"Accept": "application/json"},
+    )
+    assert detail.status_code == 200
+    excerpt = detail.json()["transcript_excerpt"]
+    # Excerpt is capped (~500 chars) and never the full body.
+    assert len(excerpt) <= 501
+    assert len(excerpt) < len(full_body)
+    assert "## Transcript" not in excerpt
+    assert "transcript_md" not in detail.json()
+
+    download = client.get(f"/transcripts/{transcript.id}/transcript.md")
+    assert download.status_code == 200
+    assert download.text == full_body
 
 
 def test_transcript_detail_json_allows_partial_summary(client, db_session):

@@ -273,10 +273,31 @@ def _full(t: Transcript) -> TranscriptFull:
         source_platform=t.source_platform,
         created_at=t.created_at,
         job_id=t.job_id,
-        transcript_md=t.transcript_md,
+        transcript_excerpt=_transcript_excerpt(t),
         summary_md=t.summary_md,
         vast_cost=t.vast_cost,
     )
+
+
+def _transcript_excerpt(t: Transcript, limit: int = 500) -> str:
+    """Short preview of the transcript body for the detail JSON (#384).
+
+    The detail page must load fast regardless of transcript length, so the
+    full text is download-only via GET /transcripts/:id/transcript.md and only
+    a capped preview ships in the JSON payload. The rendered "# Title /
+    ## Metadata" header is dropped so the preview shows the spoken text.
+    """
+    body = t.transcript_md or ""
+    marker = "## Transcript"
+    idx = body.find(marker)
+    if idx != -1:
+        body = body[idx + len(marker) :]
+    body = body.strip()
+    if len(body) <= limit:
+        return body
+    word_end = body.rfind(" ", 0, limit + 1)
+    cut = word_end if word_end > 0 else limit
+    return body[:cut].rstrip() + "…"
 
 
 def _share_token_hash(token: str) -> str:

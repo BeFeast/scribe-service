@@ -7,28 +7,25 @@ echo '=== Project Test Suite ==='
 python -m pytest
 
 echo '=== Requirement Verification ==='
-echo 'Requirement 1: Extend `POST /jobs` to accept optional `{ summarize?: bool, notify?: bool, summa...'
+echo 'Requirement 1: **Frontend (`transcript-detail.jsx`):** убрать инлайн-блок по�...'
+echo 'WARN: Run tests in tests/test_download_canary.py'
+
+echo 'Requirement 2: **Backend:** `GET /transcripts/:id` НЕ должен возвращать по�...'
 python -m pytest
 
-echo 'Requirement 2: Persist/honor them in the job pipeline (summarize toggle gates the codex summary...'
-echo 'WARN: Run tests in .codex-work/pr19/test_migrations.py'
-
-echo 'Requirement 3: Re-enable the three opt rows in `CaptureSheet.jsx` and wire them into the `submi...'
-echo 'WARN: Run tests in web/spa/tests/CommandPalette.test.ts'
-
-echo 'Requirement 4: `POST /jobs` accepts and honors the three optional fields; omitting them preserv...'
+echo 'Requirement 3: Проверить, что от полного `transcript_md` в detail-JSON б...'
 python -m pytest
 
-echo 'Requirement 5: `submitJob(auth, url, opts)` forwards them; CaptureSheet toggles drive `opts`.'
+echo 'Requirement 4: Детальная страница грузится быстро независ...'
 python -m pytest
 
-echo 'Requirement 6: A real submit with `summarize:false` skips the summary step (verified end-to-end...'
-echo 'WARN: Run tests in tests/test_summary_circuit_breaker.py'
+echo 'Requirement 5: Кнопка Download .md отдаёт полный транскрипт.'
+echo 'WARN: Run tests in tests/test_download_canary.py'
 
-echo 'Requirement 7: `uv run pytest -q` covers the new request shape; SPA `bun run build` green.'
-echo 'WARN: Run tests in tests/test_api_spa_endpoints.py'
+echo 'Requirement 6: Copy-as-Markdown (Transcript) в Share-sheet продолжает работат...'
+echo 'WARN: Run tests in web/spa/tests/adaptTranscript.test.ts'
 
-echo 'Requirement 8: No mock/placeholder — every toggle maps to real pipeline behavior.'
+echo 'Requirement 7: Тест: detail-JSON для длинного транскрипта не сод...'
 python -m pytest
 
 echo 'All verifications passed.'

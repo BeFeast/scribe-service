@@ -49,3 +49,22 @@ describe("adaptTranscript shortlink passthrough (#295)", () => {
 		expect(adapted.transcript_shortlink).toBeNull();
 	});
 });
+
+// Issue #384: GET /transcripts/:id no longer returns the full transcript_md.
+// It ships only a short transcript_excerpt; adaptTranscript must surface it so
+// the Share sheet "Copy as Markdown → Transcript" fallback keeps working.
+describe("adaptTranscript excerpt source (#384)", () => {
+	test("uses transcript_excerpt when the backend omits the full body", () => {
+		const adapted = adaptTranscript({
+			id: 1,
+			video_id: "abc",
+			title: "Detail",
+			summary_md: "# Heading",
+			transcript_excerpt: "[00:00:12] short preview of the transcript…",
+		});
+
+		expect(adapted.transcript_excerpt).toBe(
+			"[00:00:12] short preview of the transcript…",
+		);
+	});
+});
