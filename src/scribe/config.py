@@ -13,7 +13,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from scribe.runtime_config import RuntimeConfigError, load_infisical_settings, redact_values
 
-_DEFAULT_SUMMARY_PROVIDERS: tuple[str, ...] = ("codex", "freellmapi")
+# Default summary fallback chain (#388). Entries are `provider:model`; the
+# generic OpenAI-compatible HTTP backend (scribe.pipeline.summary_providers)
+# is used several times with different models. Direct HTTP keeps summaries off
+# the heavy codex/claude CLI harnesses (single-codex-lock, ChatGPT model caps).
+# codex/claude stay available — append e.g. `codex` to SCRIBE_SUMMARY_PROVIDERS.
+_DEFAULT_SUMMARY_PROVIDERS: tuple[str, ...] = (
+    "ollama-cloud:glm-5.2",
+    "ollama-cloud:gemma4:31b",
+    "freellmapi:gemini-2.5-flash",
+)
 # Transcription provider chain. Default is Vast-only so behaviour is unchanged
 # until an operator opts a fallback in via SCRIBE_TRANSCRIBE_PROVIDERS (see
 # scribe.pipeline.transcribe_providers).
@@ -307,10 +316,14 @@ class Settings(BaseSettings):
     # all summary work. Contention is observable via `scribe_codex_lock_wait_seconds`.
     codex_lock_wait_timeout_secs: int = 120
 
-    # Fallback summary providers tried in order when codex (or any earlier
-    # provider) fails. Sourced from SCRIBE_SUMMARY_PROVIDERS as a
-    # comma-separated, case-insensitive list. Unknown names are dropped at
-    # build-time with a warning so a typo in env does not crash the worker.
+    # Summary fallback chain tried in order. Sourced from SCRIBE_SUMMARY_PROVIDERS
+    # as a comma-separated list of `provider:model` entries (#388), e.g.
+    # "ollama-cloud:glm-5.2,ollama-cloud:gemma4:31b,freellmapi:gemini-2.5-flash".
+    # Each entry is split on the FIRST ':' — provider name (case-insensitive) and
+    # model (verbatim, so tags like `gemma4:31b` survive). A bare provider name
+    # with no ':' uses that provider's default model (backward compatible with the
+    # old name-only format). Unknown provider names are rejected at chain-build
+    # time so a typo surfaces loudly.
     summary_providers: list[str] = list(_DEFAULT_SUMMARY_PROVIDERS)
 
     # Claude CLI fallback. `claude_bin` resolves via PATH inside the container.
@@ -332,6 +345,19 @@ class Settings(BaseSettings):
     freellmapi_api_key: str = ""
     freellmapi_model: str = "gpt-4o-mini"
     freellmapi_timeout_secs: int = 600
+
+    # Ollama Cloud / OpenAI-compatible HTTP backend (#388). flat-subscription,
+    # zero marginal cost; catalogue includes glm-5.2, gemma4:* and minimax-m3
+    # (1M context for very long transcripts). `ollama_base_url` is the
+    # OpenAI-compatible endpoint (local signed-in daemon `…:11434/v1` or the
+    # cloud API — set by ops). Empty base URL = provider Unavailable so the chain
+    # advances (no key/URL ⇒ skip, never crash). `ollama_api_key` is optional: a
+    # local signed-in daemon needs none, so the provider does not require it.
+    # `ollama_model` is the default model used when a chain entry omits one.
+    ollama_base_url: str = ""
+    ollama_api_key: str = ""
+    ollama_model: str = "glm-5.2"
+    ollama_timeout_secs: int = 600
 
     # Directory containing transcript-summary.v*.md and transcript-summary.active.
     # Operators can bind-mount this path to persist prompt edits across deploys.
@@ -435,16 +461,19 @@ class Settings(BaseSettings):
     @field_validator("summary_providers", mode="before")
     @classmethod
     def _parse_summary_providers(cls, value: Any) -> list[str]:
-        """Accept either a comma-separated env string or a list. Names are
-        lowercased and stripped; unknown names are kept (callers reject them
-        at chain-build time with a clear error)."""
+        """Accept a comma-separated env string or a list of `provider:model`
+        entries. Entries are stripped but kept verbatim — the entry is NOT
+        lowercased here because the model part is case-sensitive (e.g.
+        `gemma4:31b`). The provider name is lowercased case-insensitively at
+        chain-build time, which also rejects unknown providers with a clear
+        error."""
         if value is None or value == "":
             return list(_DEFAULT_SUMMARY_PROVIDERS)
         if isinstance(value, str):
-            parts = [p.strip().lower() for p in value.split(",")]
+            parts = [p.strip() for p in value.split(",")]
             return [p for p in parts if p]
         if isinstance(value, list):
-            return [str(p).strip().lower() for p in value if str(p).strip()]
+            return [str(p).strip() for p in value if str(p).strip()]
         raise ValueError("summary_providers must be a list or comma-separated string")
 
     @field_validator("transcribe_providers", mode="before")
