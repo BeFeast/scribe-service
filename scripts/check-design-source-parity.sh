@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# SCRIBE_DESIGN_ARCHIVE overrides the default path so a relocated asset does not
+# break verification; see docs/runbooks/design-archive-preflight.md.
 ARCHIVE="${SCRIBE_DESIGN_ARCHIVE:-/mnt/storage/src/Scribe.redesign.zip}"
 EXPECTED_SHA="3253d4d262b00a25bdb07bf4ff3c7112998b9b8ee917211438aa220bcdd9719a"
 REPO_EXPORT="${ROOT}/design/scribe-redesign-2026-05-24/app"
