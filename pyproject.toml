@@ -18,7 +18,7 @@ dependencies = [
     # change can break downloads silently. Bumping is a deliberate one-line
     # change here, paired with a green nightly canary (see
     # docs/runbooks/download-canary.md and worker/download_canary.py).
-    "yt-dlp==2026.3.17",
+    "yt-dlp==2026.6.9",
     # bgutil PO-token provider plugin (#309). yt-dlp auto-discovers any
     # installed yt-dlp plugin package; pairing this with the bgutil HTTP
     # provider sidecar (default `http://scribe-pot:4416`) lets yt-dlp
