@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import zipfile
 from pathlib import Path
@@ -12,10 +13,20 @@ SPA_SRC = ROOT / "web" / "spa" / "src"
 DESIGN_EXPORT = ROOT / "design" / "scribe-redesign-2026-05-24" / "app"
 STAGED_SOURCE = SPA_SRC / "design-source" / "app"
 DESIGN_APP = SPA_SRC / "design-app"
-DESIGN_ARCHIVE = Path("/mnt/storage/src/Scribe.redesign.zip")
+# Default workshop location of the staged Claude design archive. The path is
+# overridable via SCRIBE_DESIGN_ARCHIVE so a relocated asset does not break
+# verification — mirrors scripts/check-design-source-parity.sh and avoids the
+# hardcode class of failure described in docs/runbooks/design-archive-preflight.md.
+DEFAULT_DESIGN_ARCHIVE = Path("/mnt/storage/src/Scribe.redesign.zip")
 EXPECTED_DESIGN_ARCHIVE_SHA256 = (
     "3253d4d262b00a25bdb07bf4ff3c7112998b9b8ee917211438aa220bcdd9719a"
 )
+
+
+def design_archive_path() -> Path:
+    """Resolve the staged design archive, honoring the SCRIBE_DESIGN_ARCHIVE override."""
+    override = os.environ.get("SCRIBE_DESIGN_ARCHIVE")
+    return Path(override) if override else DEFAULT_DESIGN_ARCHIVE
 DESIGN_SOURCE_FILES = (
     "app.jsx",
     "command-palette.jsx",
@@ -58,22 +69,35 @@ def test_design_export_source_is_staged_verbatim() -> None:
         ).read_text(encoding="utf-8")
 
 
-def test_staged_design_source_matches_claude_archive_when_available() -> None:
-    if not DESIGN_ARCHIVE.exists():
-        pytest.skip("Design archive not available at /mnt/storage/src/Scribe.redesign.zip")
+def test_design_archive_path_honors_env_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCRIBE_DESIGN_ARCHIVE overrides the default path; unset falls back to default."""
+    monkeypatch.delenv("SCRIBE_DESIGN_ARCHIVE", raising=False)
+    assert design_archive_path() == DEFAULT_DESIGN_ARCHIVE
 
-    digest = hashlib.sha256(DESIGN_ARCHIVE.read_bytes()).hexdigest()
+    relocated = "/home/god/src/_assets/Scribe.redesign.zip"
+    monkeypatch.setenv("SCRIBE_DESIGN_ARCHIVE", relocated)
+    assert design_archive_path() == Path(relocated)
+
+
+def test_staged_design_source_matches_claude_archive_when_available() -> None:
+    archive = design_archive_path()
+    if not archive.exists():
+        pytest.skip(f"Design archive not available at {archive}")
+
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     assert digest == EXPECTED_DESIGN_ARCHIVE_SHA256
 
-    with zipfile.ZipFile(DESIGN_ARCHIVE) as archive:
+    with zipfile.ZipFile(archive) as zf:
         archive_names = sorted(
             name.removeprefix("app/")
-            for name in archive.namelist()
+            for name in zf.namelist()
             if name.startswith("app/") and not name.endswith("/")
         )
         assert archive_names == sorted(DESIGN_SOURCE_FILES)
         for name in DESIGN_SOURCE_FILES:
-            expected = archive.read(f"app/{name}").decode("utf-8")
+            expected = zf.read(f"app/{name}").decode("utf-8")
             assert (STAGED_SOURCE / name).read_text(encoding="utf-8") == expected
             assert (DESIGN_EXPORT / name).read_text(encoding="utf-8") == expected
 
