@@ -86,7 +86,12 @@ new caller of an existing, stable surface.
   job is attributed to the default owner. This does not change the mobile
   contract: a mobile app talks to Scribe over the internet, not from the
   trusted LAN, so it still MUST send the owner extension token. Machine-bearer
-  and non-LAN callers remain rejected regardless of the flag.
+  and non-LAN callers remain rejected regardless of the flag. The exception is
+  additionally gated on a configured default owner (else there is no identity
+  to attribute the job to) and on the LAN classification being unambiguous: a
+  request carrying `X-Forwarded-For` with no `SCRIBE_TRUSTED_PROXIES` set is
+  refused, so an undeclared reverse proxy on a trusted address cannot launder
+  an external caller into the trusted CIDR.
 - The cookie gate fires **only when `youtube_cookies` is present**. A
   mobile app that authenticates as the owner but submits a public video
   without cookies is unaffected.

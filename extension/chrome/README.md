@@ -104,6 +104,18 @@ the cookie blob is still validated, size-capped (256 KiB), kept per-job ephemera
 and never persisted or logged. Leave the flag off (default) for multi-user or
 public deployments so the strict owner gate stays in force.
 
+Two guards keep the LAN exception from being over-broad:
+
+- **A default owner must be configured.** If neither `SCRIBE_DEFAULT_OWNER_SUBJECT`
+  nor `SCRIBE_DEFAULT_OWNER_EMAIL` is set there is no identity to attribute the job
+  to, so LAN cookie submits keep returning `403` even with the flag on.
+- **Reverse proxies must be declared.** `is_trusted_lan_request` trusts the immediate
+  peer, so a proxy on a trusted address (e.g. loopback, in the default
+  `SCRIBE_TRUSTED_CIDRS`) would otherwise make every forwarded client look local. If
+  a cookie submit carries `X-Forwarded-For` but `SCRIBE_TRUSTED_PROXIES` is unset, the
+  request is treated as ambiguous and refused. Set `SCRIBE_TRUSTED_PROXIES` to your
+  proxy's address so the real client IP is resolved before it is trusted.
+
 ## Open Scribe queue
 
 Right-clicking the toolbar action shows an **Open Scribe queue** item (#378).

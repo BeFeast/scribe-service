@@ -139,6 +139,7 @@ def test_flag_on_lan_valid_cookies_passes_gate(client, monkeypatch):
     gate and the validator; it only fails later in the DB path (proving the
     gate no longer blocks it)."""
     monkeypatch.setattr(settings, "lan_youtube_cookies_enabled", True)
+    monkeypatch.setattr(settings, "default_owner_subject", "default-subject")
     _override_actor(_lan_actor())
 
     def _explode(*_a, **_k):
@@ -158,6 +159,7 @@ def test_flag_on_lan_invalid_cookies_is_422(client, monkeypatch):
     """The opt-in relaxes the auth gate, not the format check: an invalid blob
     from the LAN still gets a value-free 422."""
     monkeypatch.setattr(settings, "lan_youtube_cookies_enabled", True)
+    monkeypatch.setattr(settings, "default_owner_subject", "default-subject")
     _override_actor(_lan_actor())
     secret = "lan_SECRET_marker_2468"
     blob = "youtube.com one-field-only " + secret + "\n"
@@ -172,6 +174,7 @@ def test_flag_on_lan_invalid_cookies_is_422(client, monkeypatch):
 
 def test_flag_on_lan_oversized_cookies_is_422(client, monkeypatch):
     monkeypatch.setattr(settings, "lan_youtube_cookies_enabled", True)
+    monkeypatch.setattr(settings, "default_owner_subject", "default-subject")
     _override_actor(_lan_actor())
     blob = "#" + ("x" * (YOUTUBE_COOKIES_MAX_BYTES + 1))
     resp = client.post(
@@ -208,6 +211,63 @@ def test_flag_on_non_lan_request_cookies_is_403(client, monkeypatch):
     )
     assert resp.status_code == 403
     assert "LOGIN_INFO" not in resp.text
+
+
+def test_flag_on_lan_cookies_without_default_owner_is_403(client, monkeypatch):
+    """No default owner configured → the LAN exception has no identity to
+    attribute the job to, so it must stay closed even with the opt-in on and a
+    trusted-LAN caller (else the blob would be stashed for an ownerless job)."""
+    monkeypatch.setattr(settings, "lan_youtube_cookies_enabled", True)
+    monkeypatch.setattr(settings, "default_owner_subject", "")
+    monkeypatch.setattr(settings, "default_owner_email", "")
+    _override_actor(_lan_actor())
+    resp = client.post(
+        "/jobs",
+        json={"url": "https://youtu.be/dQw4w9WgXcQ", "youtube_cookies": VALID_COOKIES},
+    )
+    assert resp.status_code == 403
+    assert "owner" in resp.json()["detail"].lower()
+    assert "LOGIN_INFO" not in resp.text
+
+
+def test_flag_on_lan_cookies_via_undeclared_proxy_is_403(client, monkeypatch):
+    """Reverse-proxy laundering guard: an X-Forwarded-For header with no
+    trusted_proxies configured means the proxy is undeclared and the real
+    client is unknown/spoofable, so the LAN cookie exception is refused."""
+    monkeypatch.setattr(settings, "lan_youtube_cookies_enabled", True)
+    monkeypatch.setattr(settings, "default_owner_subject", "default-subject")
+    monkeypatch.setattr(settings, "trusted_proxies", "")
+    _override_actor(_lan_actor())
+    resp = client.post(
+        "/jobs",
+        json={"url": "https://youtu.be/dQw4w9WgXcQ", "youtube_cookies": VALID_COOKIES},
+        headers={"X-Forwarded-For": "10.10.0.42"},
+    )
+    assert resp.status_code == 403
+    assert "owner" in resp.json()["detail"].lower()
+    assert "LOGIN_INFO" not in resp.text
+
+
+def test_flag_on_lan_cookies_via_declared_proxy_passes_gate(client, monkeypatch):
+    """With the proxy topology declared (trusted_proxies set), an
+    X-Forwarded-For request is no longer ambiguous and the LAN cookie
+    exception applies again — it clears the gate and blows up in the DB path."""
+    monkeypatch.setattr(settings, "lan_youtube_cookies_enabled", True)
+    monkeypatch.setattr(settings, "default_owner_subject", "default-subject")
+    monkeypatch.setattr(settings, "trusted_proxies", "127.0.0.0/8")
+    _override_actor(_lan_actor())
+
+    def _explode(*_a, **_k):
+        raise RuntimeError("reached DB path")
+
+    monkeypatch.setattr(routes_module, "initial_video_key", lambda url: "vid")
+    monkeypatch.setattr(routes_module, "current_owner", _explode)
+    resp = client.post(
+        "/jobs",
+        json={"url": "https://youtu.be/dQw4w9WgXcQ", "youtube_cookies": VALID_COOKIES},
+        headers={"X-Forwarded-For": "10.10.0.42"},
+    )
+    assert resp.status_code == 500
 
 
 def test_post_jobs_no_cookies_from_non_owner_actor_proceeds(client, monkeypatch):

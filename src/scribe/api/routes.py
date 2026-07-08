@@ -33,7 +33,9 @@ from scribe.api.auth import (
     OwnerIdentity,
     current_actor,
     current_owner,
+    default_owner,
     is_trusted_lan_request,
+    lan_request_proxy_safe,
     new_extension_token,
     require_operator_auth,
     token_hash,
@@ -857,9 +859,20 @@ def create_job(
         # excludes machine-bearer actors (shared infra credential) and the
         # request-level check re-affirms the caller is on the trusted network,
         # so public/non-LAN callers stay rejected.
+        #
+        # Two guards close review gaps in that exception:
+        #  - default_owner() must resolve, else current_owner() below returns
+        #    None and the blob would be stashed for a job with no owner
+        #    attribution — the very identity this exception depends on.
+        #  - lan_request_proxy_safe() rejects the undeclared-reverse-proxy case
+        #    (proxy on a trusted address, trusted_proxies unset) where a
+        #    forwarded external caller would otherwise be laundered into the
+        #    trusted CIDR via a spoofable X-Forwarded-For.
         lan_cookies_ok = (
             settings.lan_youtube_cookies_enabled
             and actor.is_trusted_lan
+            and default_owner() is not None
+            and lan_request_proxy_safe(request)
             and is_trusted_lan_request(request)
         )
         if actor.owner_id is None and not lan_cookies_ok:
