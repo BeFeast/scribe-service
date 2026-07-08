@@ -848,7 +848,21 @@ def create_job(
         # so they cannot supply cookies on someone else's behalf. We check
         # auth before validating shape so an anonymous caller can't probe
         # the format checker.
-        if actor.owner_id is None:
+        #
+        # LAN opt-in (#405): in a single-operator LAN deployment the LAN actor
+        # *is* the owner and the cookies come from the operator's own browser
+        # session. When SCRIBE_LAN_YOUTUBE_COOKIES_ENABLED is on, a plain
+        # trusted-LAN actor may attach cookies; the job is attributed to the
+        # default owner via current_owner() below. The is_trusted_lan check
+        # excludes machine-bearer actors (shared infra credential) and the
+        # request-level check re-affirms the caller is on the trusted network,
+        # so public/non-LAN callers stay rejected.
+        lan_cookies_ok = (
+            settings.lan_youtube_cookies_enabled
+            and actor.is_trusted_lan
+            and is_trusted_lan_request(request)
+        )
+        if actor.owner_id is None and not lan_cookies_ok:
             raise HTTPException(
                 status_code=403,
                 detail="youtube_cookies requires owner or extension-token authentication",

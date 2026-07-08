@@ -20,6 +20,9 @@ def auth_policy_defaults(monkeypatch):
     monkeypatch.setattr(settings, "trusted_proxies", "")
     monkeypatch.setattr(settings, "machine_bearer_token", "")
     monkeypatch.setattr(settings, "app_start_workers", False)
+    # Gated-video LAN opt-in is off by default (#405) so the strict #308 owner
+    # gate is the baseline; tests that exercise the LAN path enable it locally.
+    monkeypatch.setattr(settings, "lan_youtube_cookies_enabled", False)
 
     # The machine-bearer rotation state is cached in-process; bust it before
     # every test so a prior test's rotation cannot leak into the next one.

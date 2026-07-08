@@ -19,6 +19,7 @@ from scribe.api.schemas import (
     CookieValidationError,
     validate_youtube_cookies,
 )
+from scribe.config import settings
 from scribe.main import app
 
 VALID_COOKIES = (
@@ -50,6 +51,11 @@ def _owner_actor() -> Actor:
 def _lan_actor() -> Actor:
     # Trusted-LAN: authenticated but not tied to a human owner.
     return Actor(kind="trusted-lan", role="lan")
+
+
+def _machine_actor() -> Actor:
+    # Machine bearer: a shared infra credential, not an operator session.
+    return Actor(kind="machine", role="machine", subject="svc")
 
 
 @pytest.fixture()
@@ -96,6 +102,7 @@ def test_validator_rejects_empty_blob():
 # -- route auth gate -------------------------------------------------------
 
 def test_post_jobs_cookies_from_non_owner_actor_is_403(client):
+    # LAN opt-in is off by default (conftest) → strict #308 owner gate applies.
     _override_actor(_lan_actor())
     resp = client.post(
         "/jobs",
@@ -110,6 +117,97 @@ def test_post_jobs_cookies_from_non_owner_actor_is_403(client):
     # Value never appears in the rejection response.
     assert "LOGIN_INFO" not in resp.text
     assert "opaque-value" not in resp.text
+
+
+# -- LAN gated-video opt-in (#405) -----------------------------------------
+
+def test_flag_off_lan_cookies_is_403(client, monkeypatch):
+    """Explicit flag-off assertion: LAN + cookies → the existing 403."""
+    monkeypatch.setattr(settings, "lan_youtube_cookies_enabled", False)
+    _override_actor(_lan_actor())
+    resp = client.post(
+        "/jobs",
+        json={"url": "https://youtu.be/dQw4w9WgXcQ", "youtube_cookies": VALID_COOKIES},
+    )
+    assert resp.status_code == 403
+    assert "owner" in resp.json()["detail"].lower()
+    assert "LOGIN_INFO" not in resp.text
+
+
+def test_flag_on_lan_valid_cookies_passes_gate(client, monkeypatch):
+    """With the opt-in on, a trusted-LAN actor + valid blob clears the auth
+    gate and the validator; it only fails later in the DB path (proving the
+    gate no longer blocks it)."""
+    monkeypatch.setattr(settings, "lan_youtube_cookies_enabled", True)
+    _override_actor(_lan_actor())
+
+    def _explode(*_a, **_k):
+        raise RuntimeError("reached DB path")
+
+    monkeypatch.setattr(routes_module, "initial_video_key", lambda url: "vid")
+    monkeypatch.setattr(routes_module, "current_owner", _explode)
+    resp = client.post(
+        "/jobs",
+        json={"url": "https://youtu.be/dQw4w9WgXcQ", "youtube_cookies": VALID_COOKIES},
+    )
+    # Past the 403 gate and the 422 validator → blew up in the DB path.
+    assert resp.status_code == 500
+
+
+def test_flag_on_lan_invalid_cookies_is_422(client, monkeypatch):
+    """The opt-in relaxes the auth gate, not the format check: an invalid blob
+    from the LAN still gets a value-free 422."""
+    monkeypatch.setattr(settings, "lan_youtube_cookies_enabled", True)
+    _override_actor(_lan_actor())
+    secret = "lan_SECRET_marker_2468"
+    blob = "youtube.com one-field-only " + secret + "\n"
+    resp = client.post(
+        "/jobs",
+        json={"url": "https://youtu.be/dQw4w9WgXcQ", "youtube_cookies": blob},
+    )
+    assert resp.status_code == 422
+    assert "Netscape" in resp.json()["detail"]
+    assert secret not in resp.text
+
+
+def test_flag_on_lan_oversized_cookies_is_422(client, monkeypatch):
+    monkeypatch.setattr(settings, "lan_youtube_cookies_enabled", True)
+    _override_actor(_lan_actor())
+    blob = "#" + ("x" * (YOUTUBE_COOKIES_MAX_BYTES + 1))
+    resp = client.post(
+        "/jobs",
+        json={"url": "https://youtu.be/dQw4w9WgXcQ", "youtube_cookies": blob},
+    )
+    assert resp.status_code == 422
+    assert "byte limit" in resp.json()["detail"]
+
+
+def test_flag_on_machine_bearer_cookies_is_403(client, monkeypatch):
+    """A machine bearer is a shared infra credential, not an operator session:
+    it stays rejected for cookie submits even with the opt-in on."""
+    monkeypatch.setattr(settings, "lan_youtube_cookies_enabled", True)
+    _override_actor(_machine_actor())
+    resp = client.post(
+        "/jobs",
+        json={"url": "https://youtu.be/dQw4w9WgXcQ", "youtube_cookies": VALID_COOKIES},
+    )
+    assert resp.status_code == 403
+    assert "owner" in resp.json()["detail"].lower()
+    assert "LOGIN_INFO" not in resp.text
+
+
+def test_flag_on_non_lan_request_cookies_is_403(client, monkeypatch):
+    """Even with the opt-in on and a LAN-shaped actor, a request that does not
+    originate from the trusted network is rejected (request-level LAN check)."""
+    monkeypatch.setattr(settings, "lan_youtube_cookies_enabled", True)
+    monkeypatch.setattr(routes_module, "is_trusted_lan_request", lambda request: False)
+    _override_actor(_lan_actor())
+    resp = client.post(
+        "/jobs",
+        json={"url": "https://youtu.be/dQw4w9WgXcQ", "youtube_cookies": VALID_COOKIES},
+    )
+    assert resp.status_code == 403
+    assert "LOGIN_INFO" not in resp.text
 
 
 def test_post_jobs_no_cookies_from_non_owner_actor_proceeds(client, monkeypatch):

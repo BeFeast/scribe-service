@@ -60,6 +60,14 @@ class Actor:
     def is_admin(self) -> bool:
         return self.role in {"admin", "machine", "lan"}
 
+    @property
+    def is_trusted_lan(self) -> bool:
+        """A plain trusted-LAN actor: authenticated by network, no owner and
+        not a machine-bearer. Distinguishes the LAN operator (kind
+        ``trusted-lan``) from a machine token (kind ``machine``), which is a
+        shared infra credential — both have ``owner_id is None`` (#405)."""
+        return self.kind == "trusted-lan"
+
 
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()

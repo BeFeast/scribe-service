@@ -541,3 +541,13 @@ def test_openapi_includes_config_endpoints():
 
 def test_prompt_version_is_not_exposed_as_dead_runtime_config():
     assert "prompt_template_active_version" not in RUNTIME_CONFIG
+
+
+def test_lan_youtube_cookies_flag_default_off_and_mutable():
+    # Default off so multi-user/public deployments keep #308's strict gate.
+    assert Settings.model_fields["lan_youtube_cookies_enabled"].default is False
+    spec = RUNTIME_CONFIG["lan_youtube_cookies_enabled"]
+    assert spec.kind == "bool"
+    assert spec.mutable is True
+    assert parse_runtime_config_value("lan_youtube_cookies_enabled", "true") is True
+    assert parse_runtime_config_value("lan_youtube_cookies_enabled", "off") is False

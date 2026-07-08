@@ -62,6 +62,7 @@ RUNTIME_CONFIG: dict[str, RuntimeConfigSpec] = {
     "short_description_language": RuntimeConfigSpec("short_description_language", "short_description_language"),
     "default_owner_email": RuntimeConfigSpec("default_owner_email", "text_optional"),
     "default_owner_subject": RuntimeConfigSpec("default_owner_subject", "text_optional"),
+    "lan_youtube_cookies_enabled": RuntimeConfigSpec("lan_youtube_cookies_enabled", "bool"),
 }
 
 _URL_ADAPTER = TypeAdapter(AnyHttpUrl)
@@ -453,6 +454,15 @@ class Settings(BaseSettings):
     short_description_language: str = "ru"
     default_owner_email: str = ""
     default_owner_subject: str = ""
+
+    # LAN gated-video opt-in (#405). Off by default so multi-user/public
+    # deployments keep #308's strict owner gate on `youtube_cookies`. When on,
+    # a plain trusted-LAN actor (no Clerk sign-in) may attach `youtube_cookies`
+    # to POST /jobs; the job is attributed to the default owner via
+    # `current_owner`. Machine-bearer (shared infra credential) and non-LAN
+    # callers stay rejected. Cookies remain per-job ephemeral (never persisted
+    # or logged) exactly as on the owner path.
+    lan_youtube_cookies_enabled: bool = False
 
     # These belong to the auth layer from #104/#105. They are env-only here:
     # the owner attribution code consumes them without exposing bearer secrets

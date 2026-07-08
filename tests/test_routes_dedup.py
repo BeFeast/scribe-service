@@ -146,6 +146,78 @@ def test_post_jobs_with_cookies_stashes_blob_in_jar(client, db_session, monkeypa
         cookie_jar.discard(job_id)
 
 
+def test_post_jobs_lan_cookies_rejected_when_flag_off(client, db_session, monkeypatch):
+    """Default (#405 opt-in off): a real trusted-LAN request with cookies but
+    no owner token still hits the strict #308 gate and 403s before the DB."""
+    monkeypatch.setattr(settings, "lan_youtube_cookies_enabled", False)
+    monkeypatch.setattr(settings, "trusted_cidrs", "10.10.0.0/16")
+
+    resp = client.post(
+        "/jobs",
+        json={"url": "https://youtu.be/lanoff12345", "youtube_cookies": VALID_COOKIES_BLOB},
+        headers={"X-Forwarded-For": "10.10.0.42"},
+    )
+    assert resp.status_code == 403, resp.text
+    assert "owner" in resp.json()["detail"].lower()
+    assert "LOGIN_INFO" not in resp.text
+
+
+def test_post_jobs_lan_cookies_opt_in_stashes_and_attributes_to_default_owner(
+    client, db_session, monkeypatch
+):
+    """#405 opt-in on: a real trusted-LAN request (no token) with a valid blob
+    is accepted, queued, attributed to the default owner, and the blob is
+    stashed for the worker — never on the Job row or in the response."""
+    from scribe.api import cookie_jar
+
+    monkeypatch.setattr(settings, "lan_youtube_cookies_enabled", True)
+    monkeypatch.setattr(settings, "default_owner_subject", "default-subject")
+    monkeypatch.setattr(settings, "default_owner_email", "default@example.test")
+    monkeypatch.setattr(settings, "trusted_cidrs", "10.10.0.0/16")
+
+    resp = client.post(
+        "/jobs",
+        json={"url": "https://youtu.be/lancookie12", "youtube_cookies": VALID_COOKIES_BLOB},
+        headers={"X-Forwarded-For": "10.10.0.42"},
+    )
+    assert resp.status_code == 201, resp.text
+    job_id = resp.json()["job_id"]
+    try:
+        assert "LOGIN_INFO" not in resp.text
+        assert "opaque-value" not in resp.text
+        assert cookie_jar.take(job_id) == VALID_COOKIES_BLOB
+        job = db_session.get(Job, job_id)
+        assert job is not None
+        assert job.status == JobStatus.queued
+        assert job.owner_subject == "default-subject"
+        assert job.owner_email == "default@example.test"
+        assert not hasattr(job, "youtube_cookies")
+    finally:
+        cookie_jar.discard(job_id)
+
+
+def test_post_jobs_machine_bearer_cookies_rejected_even_with_flag_on(
+    client, db_session, monkeypatch
+):
+    """A machine bearer is a shared infra credential, not an operator session:
+    it 403s for cookie submits even with the #405 opt-in on, from the LAN."""
+    monkeypatch.setattr(settings, "lan_youtube_cookies_enabled", True)
+    monkeypatch.setattr(settings, "machine_bearer_token", "machine-token")
+    monkeypatch.setattr(settings, "trusted_cidrs", "10.10.0.0/16")
+
+    resp = client.post(
+        "/jobs",
+        json={"url": "https://youtu.be/lanmach1234", "youtube_cookies": VALID_COOKIES_BLOB},
+        headers={
+            "Authorization": "Bearer machine-token",
+            "X-Forwarded-For": "10.10.0.42",
+        },
+    )
+    assert resp.status_code == 403, resp.text
+    assert "owner" in resp.json()["detail"].lower()
+    assert "LOGIN_INFO" not in resp.text
+
+
 def test_post_jobs_without_cookies_leaves_jar_untouched(client, db_session):
     from scribe.api import cookie_jar
 
