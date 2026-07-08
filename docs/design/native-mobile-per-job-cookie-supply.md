@@ -79,6 +79,19 @@ new caller of an existing, stable surface.
   machine-bearer actor is rejected with `403
   "youtube_cookies requires owner or extension-token authentication"` when
   cookies are present.
+- **LAN exception (#405, does not apply to mobile).** A single-operator LAN
+  deployment can opt in with `SCRIBE_LAN_YOUTUBE_COOKIES_ENABLED=true`, after
+  which a plain **trusted-LAN** request (per `SCRIBE_TRUSTED_CIDRS` /
+  `SCRIBE_TRUSTED_PROXIES`) may attach `youtube_cookies` without a token; the
+  job is attributed to the default owner. This does not change the mobile
+  contract: a mobile app talks to Scribe over the internet, not from the
+  trusted LAN, so it still MUST send the owner extension token. Machine-bearer
+  and non-LAN callers remain rejected regardless of the flag. The exception is
+  additionally gated on a configured default owner (else there is no identity
+  to attribute the job to) and on the LAN classification being unambiguous: a
+  request carrying `X-Forwarded-For` with no `SCRIBE_TRUSTED_PROXIES` set is
+  refused, so an undeclared reverse proxy on a trusted address cannot launder
+  an external caller into the trusted CIDR.
 - The cookie gate fires **only when `youtube_cookies` is present**. A
   mobile app that authenticates as the owner but submits a public video
   without cookies is unaffected.
@@ -238,9 +251,11 @@ guarantees.
   `input`. Verified by `tests/test_jobs_youtube_cookies.py`
   (`test_post_jobs_*_does_not_log_value`, `..._omits_input`).
 - **Owner-scoped only.** A non-owner actor (trusted-LAN, machine bearer)
-  gets `403` when cookies are present. The mobile app MUST authenticate as
+  gets `403` when cookies are present, unless the LAN opt-in above is enabled
+  for a trusted-LAN caller (#405). The mobile app MUST authenticate as
   the owner via an extension token. Verified by
-  `test_post_jobs_cookies_from_non_owner_actor_is_403`.
+  `test_post_jobs_cookies_from_non_owner_actor_is_403` and the `#405`
+  flag on/off cases in `tests/test_jobs_youtube_cookies.py`.
 - **Per-job ephemeral.** `stash`/`take`/`discard` are keyed by `job_id`;
   nothing survives process restart by design.
 - **Public-only fallback.** If the user does not enable cookies, or the

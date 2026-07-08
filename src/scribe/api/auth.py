@@ -60,6 +60,14 @@ class Actor:
     def is_admin(self) -> bool:
         return self.role in {"admin", "machine", "lan"}
 
+    @property
+    def is_trusted_lan(self) -> bool:
+        """A plain trusted-LAN actor: authenticated by network, no owner and
+        not a machine-bearer. Distinguishes the LAN operator (kind
+        ``trusted-lan``) from a machine token (kind ``machine``), which is a
+        shared infra credential — both have ``owner_id is None`` (#405)."""
+        return self.kind == "trusted-lan"
+
 
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
@@ -116,6 +124,23 @@ def require_operator_auth(request: Request) -> AuthState:
 
 def is_trusted_lan_request(request: Request) -> bool:
     return _is_trusted_host(_client_ip(request))
+
+
+def lan_request_proxy_safe(request: Request) -> bool:
+    """Is the trusted-LAN classification safe from reverse-proxy laundering?
+
+    ``is_trusted_lan_request`` trusts the immediate peer, so a reverse proxy on
+    a trusted address (e.g. loopback, which is in the default ``trusted_cidrs``)
+    makes every forwarded external client look like the LAN. If a request
+    carries an ``X-Forwarded-For`` header but no ``trusted_proxies`` are
+    configured, the proxy is undeclared: the real client is unknown and the
+    header is client-spoofable (see ``_client_ip``), so the classification must
+    not be used to grant a privilege like the #405 cookie exception. Returns
+    ``False`` in that case, ``True`` otherwise (direct connection, or a proxy
+    whose topology the operator has declared via ``trusted_proxies``)."""
+    if request.headers.get("x-forwarded-for") and not settings.trusted_proxies.strip():
+        return False
+    return True
 
 
 def _bearer_token(request: Request, *, strict: bool = False) -> str | None:

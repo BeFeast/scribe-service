@@ -85,6 +85,37 @@ submissions still go through — Scribe just falls back to the public download
 path. Click **Disable** on the options page to revoke the permission at any
 time.
 
+#### Auth for cookie submits (owner token vs. trusted LAN)
+
+By default, `POST /jobs` accepts `youtube_cookies` only from an **owner-attached**
+actor — i.e. with an extension bearer token minted in Scribe Settings (which in
+turn needs a Clerk sign-in). A trusted-LAN request without a token is authenticated
+by network but not tied to an owner, so a cookie submit is rejected with
+`403 "youtube_cookies requires owner or extension-token authentication"`.
+
+For a single-operator LAN deployment where Clerk sign-in is unavailable, an operator
+can opt in by setting `SCRIBE_LAN_YOUTUBE_COOKIES_ENABLED=true` (also togglable at
+runtime via `POST /api/config`). With the flag on, a submit from a trusted-LAN
+client (per `SCRIBE_TRUSTED_CIDRS` / `SCRIBE_TRUSTED_PROXIES`) may include
+`youtube_cookies` **without** a bearer token; the job is attributed to the default
+owner (`SCRIBE_DEFAULT_OWNER_SUBJECT` / `SCRIBE_DEFAULT_OWNER_EMAIL`). The flag
+changes nothing else: machine-bearer callers and non-LAN callers are still rejected,
+the cookie blob is still validated, size-capped (256 KiB), kept per-job ephemeral,
+and never persisted or logged. Leave the flag off (default) for multi-user or
+public deployments so the strict owner gate stays in force.
+
+Two guards keep the LAN exception from being over-broad:
+
+- **A default owner must be configured.** If neither `SCRIBE_DEFAULT_OWNER_SUBJECT`
+  nor `SCRIBE_DEFAULT_OWNER_EMAIL` is set there is no identity to attribute the job
+  to, so LAN cookie submits keep returning `403` even with the flag on.
+- **Reverse proxies must be declared.** `is_trusted_lan_request` trusts the immediate
+  peer, so a proxy on a trusted address (e.g. loopback, in the default
+  `SCRIBE_TRUSTED_CIDRS`) would otherwise make every forwarded client look local. If
+  a cookie submit carries `X-Forwarded-For` but `SCRIBE_TRUSTED_PROXIES` is unset, the
+  request is treated as ambiguous and refused. Set `SCRIBE_TRUSTED_PROXIES` to your
+  proxy's address so the real client IP is resolved before it is trusted.
+
 ## Open Scribe queue
 
 Right-clicking the toolbar action shows an **Open Scribe queue** item (#378).

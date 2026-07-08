@@ -33,7 +33,9 @@ from scribe.api.auth import (
     OwnerIdentity,
     current_actor,
     current_owner,
+    default_owner,
     is_trusted_lan_request,
+    lan_request_proxy_safe,
     new_extension_token,
     require_operator_auth,
     token_hash,
@@ -848,7 +850,32 @@ def create_job(
         # so they cannot supply cookies on someone else's behalf. We check
         # auth before validating shape so an anonymous caller can't probe
         # the format checker.
-        if actor.owner_id is None:
+        #
+        # LAN opt-in (#405): in a single-operator LAN deployment the LAN actor
+        # *is* the owner and the cookies come from the operator's own browser
+        # session. When SCRIBE_LAN_YOUTUBE_COOKIES_ENABLED is on, a plain
+        # trusted-LAN actor may attach cookies; the job is attributed to the
+        # default owner via current_owner() below. The is_trusted_lan check
+        # excludes machine-bearer actors (shared infra credential) and the
+        # request-level check re-affirms the caller is on the trusted network,
+        # so public/non-LAN callers stay rejected.
+        #
+        # Two guards close review gaps in that exception:
+        #  - default_owner() must resolve, else current_owner() below returns
+        #    None and the blob would be stashed for a job with no owner
+        #    attribution — the very identity this exception depends on.
+        #  - lan_request_proxy_safe() rejects the undeclared-reverse-proxy case
+        #    (proxy on a trusted address, trusted_proxies unset) where a
+        #    forwarded external caller would otherwise be laundered into the
+        #    trusted CIDR via a spoofable X-Forwarded-For.
+        lan_cookies_ok = (
+            settings.lan_youtube_cookies_enabled
+            and actor.is_trusted_lan
+            and default_owner() is not None
+            and lan_request_proxy_safe(request)
+            and is_trusted_lan_request(request)
+        )
+        if actor.owner_id is None and not lan_cookies_ok:
             raise HTTPException(
                 status_code=403,
                 detail="youtube_cookies requires owner or extension-token authentication",
