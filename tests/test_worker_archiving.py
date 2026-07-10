@@ -7,6 +7,7 @@ or ffmpeg. Needs SCRIBE_TEST_DATABASE_URL (Postgres enum + FOR UPDATE).
 """
 from __future__ import annotations
 
+import hashlib
 from types import SimpleNamespace
 
 import pytest
@@ -204,6 +205,67 @@ def test_recover_interrupted_archiving_source_present(db_session, tmp_path, monk
     assert uploads.find_source(job.id) is not None
 
 
+def test_recover_interrupted_archiving_source_present_but_unconfigured(db_session, tmp_path, monkeypatch):
+    # Regression: a restart during `archiving` while media storage is
+    # temporarily unconfigured (e.g. R2 creds absent) must NOT be treated as
+    # source loss. The source survives, so the archive stays retryable (pending)
+    # and the file is kept for the sweep once storage returns — deleting it +
+    # marking permanent would strand the transcript with no archival copy ever.
+    monkeypatch.setattr(settings, "temp_dir", str(tmp_path))
+    monkeypatch.setattr(worker_loop.media_store, "is_configured", lambda: False)
+    job = Job(url="upload:z.mp4", video_id="upload:aaaabbbbccccdddd", status=JobStatus.archiving, source="upload")
+    db_session.add(job)
+    db_session.flush()
+    transcript = Transcript(
+        job_id=job.id, video_id=job.video_id, title="clip",
+        transcript_md="## Transcript\n\nbody", summary_md="## TL;DR\n- p",
+    )
+    db_session.add(transcript)
+    src = uploads.job_dir(job.id) / "z.mp4"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_bytes(b"src")
+    db_session.commit()
+
+    worker_loop.recover_interrupted_jobs(db_session)
+
+    db_session.refresh(job)
+    db_session.refresh(transcript)
+    assert job.status == JobStatus.done
+    assert "pending retry" in transcript.media_error
+    assert not transcript.media_error.endswith("(permanent)")
+    # Source kept so the archive sweep can finish once storage is configured.
+    assert uploads.find_source(job.id) is not None
+
+
+def test_maybe_archive_unconfigured_keeps_source(db_session, tmp_path, monkeypatch):
+    # Regression: if storage config is lost after a job is accepted, the archive
+    # step must record a retryable error but KEEP the local source, so the sweep
+    # can finish the media step once storage is configured again.
+    monkeypatch.setattr(settings, "temp_dir", str(tmp_path))
+    monkeypatch.setattr(worker_loop.media_store, "is_configured", lambda: False)
+    job = Job(url="upload:w.mp4", video_id="upload:1234123412341234", status=JobStatus.summarizing, source="upload")
+    db_session.add(job)
+    db_session.flush()
+    transcript = Transcript(
+        job_id=job.id, video_id=job.video_id, title="clip",
+        transcript_md="## Transcript\n\nbody", summary_md="## TL;DR\n- p",
+    )
+    db_session.add(transcript)
+    source = uploads.job_dir(job.id) / "w.mp4"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"src")
+    db_session.commit()
+
+    worker_loop._maybe_archive(db_session, job, transcript, source, job_log=None)
+
+    db_session.refresh(transcript)
+    assert transcript.media_object_key is None
+    assert "pending retry" in transcript.media_error
+    assert not transcript.media_error.endswith("(permanent)")
+    # Source retained for the retry sweep — NOT deleted.
+    assert uploads.find_source(job.id) is not None
+
+
 def test_recover_interrupted_archiving_source_lost(db_session, tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "temp_dir", str(tmp_path))
     monkeypatch.setattr(worker_loop.media_store, "is_configured", lambda: True)
@@ -265,6 +327,52 @@ def test_url_job_does_not_archive(db_session, tmp_path, monkeypatch):
     assert upload_calls == []
     assert transcript.media_object_key is None
     assert db_session.query(JobStageEvent).filter_by(job_id=job.id, stage="archiving").first() is None
+
+
+# --- upload endpoint spend cap ----------------------------------------------
+
+def test_upload_job_respects_daily_spend_cap(db_session, tmp_path, monkeypatch):
+    # Regression: upload jobs run through the same Vast transcribe chain as
+    # POST /jobs, so they must respect the rolling daily spend cap — a multipart
+    # upload must not be a trivial way to bypass it.
+    monkeypatch.setattr(settings, "temp_dir", str(tmp_path))
+    monkeypatch.setattr(routes_module.media_store, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        routes_module.ffmpeg, "probe_media",
+        lambda _p: ffmpeg.MediaProbe(has_video=True, has_audio=True, duration_seconds=10),
+    )
+    monkeypatch.setattr(settings, "daily_spend_cap_usd", 1.0)
+
+    # Seed recent Vast spend that already exceeds the cap.
+    spent_job = Job(url="https://youtu.be/a", video_id="youtube:spent", status=JobStatus.done)
+    db_session.add(spent_job)
+    db_session.flush()
+    db_session.add(Transcript(
+        job_id=spent_job.id, video_id="youtube:spent", title="t",
+        transcript_md="body", summary_md="s", vast_cost=5.0,
+    ))
+    db_session.commit()
+
+    def _use_session():
+        yield db_session
+
+    app.dependency_overrides[routes_module.get_session] = _use_session
+    app.dependency_overrides[routes_module.require_actor] = _admin_actor
+    payload = b"real video bytes"
+    blocked_video_id = f"upload:{hashlib.sha256(payload).hexdigest()[:16]}"
+    try:
+        client = TestClient(app, raise_server_exceptions=False)
+        r = client.post("/jobs/upload", files={"file": ("v.mp4", payload, "video/mp4")})
+        assert r.status_code == 429
+        assert "spend cap" in r.json()["detail"]
+        # No upload job was enqueued for this content, and the streamed staging
+        # file was cleaned up (temp_dir is per-test, so the staging root is ours).
+        assert db_session.query(Job).filter_by(video_id=blocked_video_id).count() == 0
+        staging = uploads._staging_root()
+        assert not staging.exists() or not any(staging.iterdir())
+    finally:
+        app.dependency_overrides.pop(routes_module.get_session, None)
+        app.dependency_overrides.pop(routes_module.require_actor, None)
 
 
 # --- media retrieval endpoint ------------------------------------------------

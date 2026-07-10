@@ -43,6 +43,7 @@ from scribe.api.auth import (
 )
 from scribe.api.preflight import match_url
 from scribe.api.schemas import (
+    SUMMARY_PROMPT_MAX_CHARS,
     ActiveJobsResponse,
     ActiveJobView,
     AuthConfigResponse,
@@ -1033,7 +1034,10 @@ async def create_upload_job(
     source: str | None = Form(None),
     summarize: bool = Form(True),
     notify: bool = Form(True),
-    summary_prompt: str | None = Form(None),
+    # Same ceiling as JobCreate.summary_prompt (JSON POST /jobs): a too-long
+    # prompt is rejected with 422 at request parsing, so a multipart upload
+    # can't smuggle an oversize prompt payload past the API contract (#408).
+    summary_prompt: str | None = Form(None, max_length=SUMMARY_PROMPT_MAX_CHARS),
     session: Session = Depends(get_session),
     actor: Actor = Depends(require_actor),
 ) -> JobView:
@@ -1131,6 +1135,26 @@ async def create_upload_job(
             job_id=active.id, url=active.url, video_id=video_id, **_source_fields(active.url),
             status=active.status.value, deduplicated=True, correlation_id=active.correlation_id,
         )
+
+    # Upload jobs run through the same Vast transcribe chain as POST /jobs, so
+    # they must respect the rolling daily spend cap too — otherwise a multipart
+    # upload is a trivial way to bypass it. Serialise the check+insert with the
+    # shared advisory lock so two concurrent submissions can't both slip under
+    # the cap. Applied only after dedup (dedup-done/active reuse existing work
+    # and spend nothing new), mirroring POST /jobs.
+    cap = settings.daily_spend_cap_usd
+    if cap > 0:
+        session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _CAP_LOCK_KEY})
+        spent = _recent_vast_spend_usd(session)
+        if spent >= cap:
+            uploads.discard_staging(staging_path)
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"daily Vast spend cap reached: ${spent:.4f} >= ${cap:.4f} (rolling 24h). "
+                    "Resubmit after the window opens, or raise SCRIBE_DAILY_SPEND_CAP_USD."
+                ),
+            )
 
     job = Job(
         url=url, video_id=video_id, status=JobStatus.queued,

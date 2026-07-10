@@ -393,9 +393,17 @@ def recover_interrupted_jobs(session) -> int:
             transition_job_status(session, job, JobStatus.queued)
             continue
         source = uploads.find_source(job.id)
-        if source is not None and media_store.is_configured():
+        if source is not None:
+            # Source survived the restart — retryable regardless of whether media
+            # storage is configured right now. The archive sweep is a no-op while
+            # storage is unconfigured and resumes once credentials return, so a
+            # transient config loss must NOT be treated as source loss: deleting
+            # the file + marking permanent here would strand the transcript with
+            # no archival copy ever (#408, config loss != source loss).
             transcript.media_error = "archiving interrupted by restart; pending retry"
         else:
+            # The uploaded source is genuinely gone — the archival copy can never
+            # be produced, so mark it failed-permanent rather than failing the job.
             transcript.media_error = "archive source lost after restart (permanent)"
             uploads.cleanup(job.id)
         log.warning(
@@ -516,11 +524,15 @@ def _maybe_archive(session, job: Job, transcript: Transcript, source: Path | Non
     if source is None:
         return
     if not media_store.is_configured():
-        # Should not happen (the upload endpoint 503s when unconfigured), but
-        # degrade cleanly rather than fail the job.
-        transcript.media_error = "media storage not configured at archive time"
+        # Should not happen (the upload endpoint 503s when unconfigured), but if
+        # storage config is lost after a job is accepted, degrade cleanly WITHOUT
+        # deleting the source: keep it so the archive sweep can finish the media
+        # step once storage is configured again. Deleting it here would strand the
+        # transcript with no way to ever produce the archival copy (#408). The
+        # error is left retryable (no "(permanent)" suffix) so the sweep picks it
+        # up; the sweep itself is a no-op until media storage is configured.
+        transcript.media_error = "media storage not configured at archive time; pending retry"
         session.commit()
-        uploads.cleanup(job.id)
         return
 
     transition_job_status(session, job, JobStatus.archiving)

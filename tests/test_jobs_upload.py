@@ -82,6 +82,22 @@ def test_upload_422_when_not_media(client, monkeypatch):
     assert "invalid media file" in r.json()["detail"]
 
 
+def test_upload_422_when_summary_prompt_too_long(client, monkeypatch):
+    # summary_prompt is capped at SUMMARY_PROMPT_MAX_CHARS just like the JSON
+    # POST /jobs contract, so a multipart upload can't smuggle an oversize
+    # prompt past the limit. Rejected at request parsing (422) before the
+    # session is touched — hence DB-free.
+    from scribe.api.schemas import SUMMARY_PROMPT_MAX_CHARS
+
+    _configure_media(monkeypatch)
+    r = client.post(
+        "/jobs/upload",
+        files={"file": ("v.mp4", b"data", "video/mp4")},
+        data={"summary_prompt": "x" * (SUMMARY_PROMPT_MAX_CHARS + 1)},
+    )
+    assert r.status_code == 422
+
+
 def test_upload_requires_auth(monkeypatch, tmp_path):
     # No require_actor override + non-trusted client → 401 like POST /jobs.
     monkeypatch.setattr(settings, "temp_dir", str(tmp_path))
