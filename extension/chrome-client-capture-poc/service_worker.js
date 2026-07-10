@@ -31,6 +31,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 async function captureActiveTab() {
+  // Clicking the toolbar action (which opens the popup) is a user gesture that
+  // grants the `activeTab` permission for this tab, so chrome.tabs.query returns
+  // its `url` here. Without `activeTab`/`tabs` in the manifest, `tab.url` is
+  // stripped and this always falls through to the "open a watch page" message.
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const watchUrl = tab?.url || "";
   if (!/^https:\/\/(www\.)?youtube\.com\/watch\?/.test(watchUrl) && !/^https:\/\/youtu\.be\//.test(watchUrl)) {

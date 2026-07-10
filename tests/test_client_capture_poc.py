@@ -40,6 +40,11 @@ def test_manifest_mv3_offscreen_and_cors_bypass() -> None:
     # Offscreen permission is what lets us hold a large Blob outside the SW.
     assert "offscreen" in manifest["permissions"]
 
+    # The SW reads the active tab's `url` (chrome.tabs.query) to find the watch
+    # page. Without activeTab/tabs, Chrome strips `tab.url` and capture never
+    # starts — so one of them must be granted (activeTab is least-privilege).
+    assert "activeTab" in manifest["permissions"] or "tabs" in manifest["permissions"]
+
     # The whole premise of path A: host permission for googlevideo bypasses the
     # page CORS wall a plain web app can't get past (findings §6).
     assert "https://*.googlevideo.com/*" in manifest["host_permissions"]
@@ -68,6 +73,11 @@ def test_offscreen_downloads_ranged_and_uploads_to_existing_endpoint() -> None:
     # Memory-safe download: HTTP range requests, not one giant buffer.
     assert "Range" in source
     assert "bytes=" in source
+
+    # Each response body is drained through a streaming reader, so even a
+    # Range-ignoring 200 (full body) stays memory-bounded instead of being
+    # slurped into one 50-200 MB arrayBuffer() and OOM-killing the offscreen doc.
+    assert "getReader" in source
 
     # Upload targets the EXISTING server endpoint (#408), as multipart, and must
     # NOT hand-set Content-Type (the browser sets the multipart boundary).

@@ -61,7 +61,7 @@ loudly rather than pretending resolution works. See §2/§3/§9 of the findings 
 
 | File | Role |
 | --- | --- |
-| `manifest.json` | MV3 manifest: `offscreen` permission, googlevideo + youtube + scribe host permissions. |
+| `manifest.json` | MV3 manifest: `activeTab` (read the watch tab's URL) + `offscreen` permissions, googlevideo + youtube + scribe host permissions. |
 | `service_worker.js` | Orchestrates resolve → offscreen → upload; never holds bytes. |
 | `resolve.js` | **Open-risk seam.** Stream-URL resolution (unimplemented). |
 | `offscreen.html` / `offscreen.js` | Ranged download + multipart upload to `/jobs/upload`. |

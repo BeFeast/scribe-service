@@ -13,6 +13,10 @@
 // request overhead low. Not a substitute for solving `n` (§4).
 const RANGE_CHUNK = 8 * 1024 * 1024;
 
+// Emit at most one progress message per this many bytes. Streaming the body chunk
+// by chunk (below) would otherwise fire thousands of messages for a large file.
+const PROGRESS_STEP = 2 * 1024 * 1024;
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "capture-and-upload") {
     return undefined;
@@ -32,15 +36,18 @@ async function captureAndUpload(payload) {
   return uploadToScribe(blob, payload);
 }
 
-// Memory-safe download: sequential Range GETs, appended into one Blob. Host
-// permissions for *.googlevideo.com let the offscreen doc read the response body
-// cross-origin (a plain web page could not — §6).
+// Memory-safe download: sequential Range GETs, each response *streamed* through a
+// ReadableStream reader (never a single arrayBuffer()) and appended into one Blob.
+// Streaming matters most when Range is NOT honored: a server — or a manually
+// pasted URL — that answers `200 OK` with the whole body would otherwise buffer
+// the entire 50–200 MB response as one contiguous ArrayBuffer and get the
+// offscreen doc killed. Host permissions for *.googlevideo.com let us read the
+// body cross-origin (a plain web page could not — §6).
 async function downloadRanged(url, mimeType) {
   const parts = [];
   let offset = 0;
   let total = null;
 
-  // Probe total length from the first ranged response's Content-Range.
   for (;;) {
     const end = offset + RANGE_CHUNK - 1;
     const resp = await fetch(url, { headers: { Range: `bytes=${offset}-${end}` } });
@@ -50,25 +57,33 @@ async function downloadRanged(url, mimeType) {
     if (!(resp.status === 206 || resp.status === 200)) {
       throw new Error(`stream fetch failed: HTTP ${resp.status}`);
     }
-    const buf = await resp.arrayBuffer();
-    if (buf.byteLength === 0) {
+
+    // Probe total length: Content-Range for a 206, Content-Length for a 200.
+    if (total === null) {
+      total =
+        resp.status === 206
+          ? parseContentRangeTotal(resp.headers.get("Content-Range"))
+          : parseIntOrNull(resp.headers.get("Content-Length"));
+    }
+
+    const base = offset;
+    const received = await streamBodyInto(resp, parts, (loaded) =>
+      reportProgress(base + loaded, total),
+    );
+    offset += received;
+
+    // A 200 means Range was ignored and the whole body just streamed through
+    // above — we already have everything, so stop (no more ranged requests).
+    if (resp.status === 200) {
       break;
     }
-    parts.push(new Uint8Array(buf));
-    offset += buf.byteLength;
-
-    if (total === null) {
-      total = parseContentRangeTotal(resp.headers.get("Content-Range"));
-      // A 200 (no range support) means we already have the whole body.
-      if (resp.status === 200) {
-        break;
-      }
+    if (received === 0) {
+      break;
     }
-    reportProgress(offset, total);
     if (total !== null && offset >= total) {
       break;
     }
-    if (buf.byteLength < RANGE_CHUNK) {
+    if (received < RANGE_CHUNK) {
       break; // short read -> last chunk
     }
   }
@@ -79,10 +94,54 @@ async function downloadRanged(url, mimeType) {
   return new Blob(parts, { type: mimeType || "application/octet-stream" });
 }
 
+// Drain resp.body through a ReadableStream reader, appending each chunk to
+// `parts`. Peak memory is one network chunk (tens of KB), never the whole
+// response — this is what keeps a Range-ignoring 200 from OOM-killing the doc.
+// Progress is throttled (PROGRESS_STEP) so a large body doesn't flood messaging.
+async function streamBodyInto(resp, parts, onProgress) {
+  const reader = resp.body?.getReader?.();
+  if (!reader) {
+    // No streaming body available (e.g. a fetch stub in tests): fall back to a
+    // single buffer. Range keeps this bounded to one RANGE_CHUNK per response.
+    const buf = await resp.arrayBuffer();
+    if (buf.byteLength > 0) {
+      parts.push(new Uint8Array(buf));
+      onProgress?.(buf.byteLength);
+    }
+    return buf.byteLength;
+  }
+
+  let received = 0;
+  let lastReported = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    if (value && value.byteLength > 0) {
+      parts.push(value);
+      received += value.byteLength;
+      if (received - lastReported >= PROGRESS_STEP) {
+        lastReported = received;
+        onProgress?.(received);
+      }
+    }
+  }
+  if (received !== lastReported) {
+    onProgress?.(received); // final flush
+  }
+  return received;
+}
+
 function parseContentRangeTotal(header) {
   // "bytes 0-8388607/57600000" -> 57600000
   const match = /\/(\d+)\s*$/.exec(header || "");
   return match ? Number(match[1]) : null;
+}
+
+function parseIntOrNull(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 function reportProgress(loaded, total) {

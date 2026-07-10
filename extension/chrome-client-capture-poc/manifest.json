@@ -11,6 +11,7 @@
     "service_worker": "service_worker.js"
   },
   "permissions": [
+    "activeTab",
     "offscreen",
     "storage",
     "cookies"
