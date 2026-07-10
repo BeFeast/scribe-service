@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'" />
+    <link rel="stylesheet" href="popup.css" />
+    <title>Scribe capture PoC</title>
+  </head>
+  <body>
+    <h1>Scribe capture (spike PoC)</h1>
+    <p class="hint">Open a YouTube watch page, then capture its audio client-side and upload to Scribe.</p>
+    <button id="capture" type="button">Capture &amp; upload active tab</button>
+    <p id="status" class="status"></p>
+    <script src="popup.js"></script>
+  </body>
+</html>

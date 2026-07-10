@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <!-- Offscreen document: holds the Blob and does the cross-origin fetches a
+         service worker can't safely do (survives SW termination; can hold a
+         ~50-200 MB audio Blob). See docs/spike-client-side-capture.md §5. -->
+    <title>Scribe capture (offscreen)</title>
+  </head>
+  <body>
+    <script src="offscreen.js"></script>
+  </body>
+</html>

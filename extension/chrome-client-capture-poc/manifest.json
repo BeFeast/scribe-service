@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Scribe Client-Side Capture (SPIKE PoC)",
+  "description": "Spike #413 PoC — acquire audio client-side (offscreen fetch + chunked upload). NOT for production.",
+  "version": "0.0.1",
+  "action": {
+    "default_title": "Scribe capture PoC",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "service_worker.js"
+  },
+  "permissions": [
+    "activeTab",
+    "offscreen",
+    "storage",
+    "cookies"
+  ],
+  "host_permissions": [
+    "https://scribe.oklabs.uk/*",
+    "https://*.googlevideo.com/*",
+    "https://www.youtube.com/*"
+  ],
+  "icons": {}
+}
