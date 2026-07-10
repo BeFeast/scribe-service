@@ -116,6 +116,16 @@ Two guards keep the LAN exception from being over-broad:
   request is treated as ambiguous and refused. Set `SCRIBE_TRUSTED_PROXIES` to your
   proxy's address so the real client IP is resolved before it is trusted.
 
+When the owner-gate rejects a cookie submit (`403 "youtube_cookies requires owner
+or extension-token authentication"`), the extension recognises that specific detail
+and does **not** show the generic "add a bearer token" advice (which is a dead end on
+a token-less trusted-LAN URL). Instead it explains that this Scribe URL only accepts
+cookies from a signed-in user and offers a one-click **Retry without cookies** — the
+popup shows a Retry button and the context-menu failure notification shows a
+"Retry without cookies" action. The retry resubmits the same URL with
+`youtube_cookies` omitted, so a non-gated video still succeeds via the public
+download path. Any other 401/403 keeps the existing token guidance unchanged.
+
 ## Open Scribe queue
 
 Right-clicking the toolbar action shows an **Open Scribe queue** item (#378).
@@ -137,6 +147,8 @@ it never clutters the page/link right-click menus used for submitting videos.
 9. Set the base URL to an unreachable host and submit again; confirm the popup includes a useful connectivity error from the unreachable host.
 10. Submit a non-http(s) toolbar page; confirm the extension reports that an http(s) video page is required.
 11. Right-click the toolbar action and choose **Open Scribe queue**; confirm the configured `baseUrl` opens in a new tab.
+12. Enable YouTube cookies, point at a trusted-LAN Scribe URL whose owner-gate is on (no `SCRIBE_LAN_YOUTUBE_COOKIES_ENABLED`), and submit a YouTube watch page with no bearer token; confirm the message says Scribe only accepts cookies from a signed-in user (not "add a bearer token") and a **Retry without cookies** action is offered.
+13. Click **Retry without cookies** on that failure (popup button or notification action); confirm the resubmit without `youtube_cookies` succeeds for a non-gated video via the public download path.
 
 The extension posts to Scribe's existing `POST /jobs` API with:
 
