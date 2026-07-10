@@ -4,6 +4,7 @@ import { useAuth } from "../hooks/useAuth";
 import { IconArrow, IconCheck, IconClock, IconPlus, IconSearch, IconWave } from "./icons.jsx";
 import { ACTIVE_JOBS, STATS, TRANSCRIPTS, fmtDuration, fmtRelative, fmtUsd } from "./data.js";
 import { isJobView, parseVideoUrl, pushRecentSubmission, readRecentSubmissions } from "./command-utils.js";
+import { submitUploadJob } from "./api-jobs.js";
 // Command palette — ⌘K. Detects YouTube URLs and offers a one-key submit.
 // Falls through to a fuzzy-ish title search + a fixed list of commands.
 
@@ -14,6 +15,7 @@ export function CommandPalette({ open, onClose, navigate }) {
   const [submitted, setSubmitted] = React.useState(null);
   const [recents, setRecents] = React.useState([]);
   const inputRef = React.useRef(null);
+  const fileInputRef = React.useRef(null);
 
   React.useEffect(() => {
     if (open) {
@@ -30,6 +32,17 @@ export function CommandPalette({ open, onClose, navigate }) {
     const list = [];
     if (!q || !ytId) {
       const lower = q.toLowerCase();
+      // Desktop upload entry point (#411): parity with the mobile CaptureSheet.
+      // A native file picker submits via submitUploadJob → POST /jobs/upload.
+      list.push({ section: "Add" });
+      list.push({
+        type: "upload",
+        key: "upload-file",
+        title: "Upload video / audio file…",
+        hint: "attach a local file",
+        onPick: () => { if (fileInputRef.current) fileInputRef.current.click(); },
+      });
+
       const matched = TRANSCRIPTS
         .filter(t => !lower || t.title.toLowerCase().includes(lower) || (t.tags||[]).some(tg => tg.includes(lower)))
         .slice(0, 6)
@@ -96,6 +109,24 @@ export function CommandPalette({ open, onClose, navigate }) {
       setRecents(pushRecentSubmission({ id: body.job_id, video_id: body.video_id, status: body.status }));
     } catch (error) {
       setSubmitted({ state: "error", video_id: ytId, message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  // Upload path (#411): a picked local file submits via POST /jobs/upload and
+  // surfaces the same submitting/queued/error states as submitUrl(). The 413
+  // (too large) and 422 (invalid media) details bubble up from submitUploadJob.
+  async function onPickFile(e) {
+    const picked = e.target.files && e.target.files[0];
+    // Reset so re-picking the same file fires change again.
+    e.target.value = "";
+    if (!picked || submitted) return;
+    setSubmitted({ state: "submitting", video_id: picked.name });
+    try {
+      const result = await submitUploadJob(auth, picked, { source: "upload" });
+      setSubmitted({ id: result.job_id, video_id: result.video_id, status: result.status });
+      setRecents(pushRecentSubmission({ id: result.job_id, video_id: result.video_id, status: result.status }));
+    } catch (error) {
+      setSubmitted({ state: "error", video_id: picked.name, message: error instanceof Error ? error.message : String(error) });
     }
   }
 
@@ -170,6 +201,14 @@ export function CommandPalette({ open, onClose, navigate }) {
           </div>
         )}
 
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="video/*,audio/*"
+          onChange={onPickFile}
+          style={{ display: "none" }}
+        />
+
         <div className="cmdk-list">
           {items.map((it, idx) => {
             if (it.section) return <div key={"s" + idx} className="cmdk-section-label">{it.section}</div>;
@@ -183,6 +222,7 @@ export function CommandPalette({ open, onClose, navigate }) {
                    : it.type === "job"      ? <span className="live-dot" style={{margin: 0}}/>
                    : it.type === "cmd"      ? <span style={{fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 600}}>{it.glyph}</span>
                    : it.type === "recent"   ? <IconClock size={13}/>
+                   : it.type === "upload"   ? <IconPlus size={13}/>
                    : <IconArrow size={13}/>}
                 </div>
                 <div className="cmdk-title">{it.title}</div>

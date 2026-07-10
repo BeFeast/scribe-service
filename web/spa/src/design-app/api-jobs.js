@@ -91,7 +91,16 @@ export async function submitUploadJob(auth, file, opts = {}) {
 	});
 	const body = await response.json().catch(() => null);
 	if (!response.ok || !isJobView(body)) {
-		throw new Error(`HTTP ${response.status}`);
+		// Surface the server's rejection detail so callers can show the size-cap
+		// (413) and ffprobe (422) reasons inline, not just the bare status. The
+		// `HTTP <status>` prefix is preserved for backward compatibility.
+		const detail =
+			body && typeof body === "object" && typeof body.detail === "string"
+				? body.detail
+				: null;
+		throw new Error(
+			detail ? `HTTP ${response.status}: ${detail}` : `HTTP ${response.status}`,
+		);
 	}
 	return { job_id: body.job_id, video_id: body.video_id, status: body.status };
 }
