@@ -28,6 +28,10 @@ dependencies = [
     "markdown>=3.10.2",
     "prometheus-client>=0.25.0",
     "pyjwt[crypto]>=2.10",
+    # Cloudflare R2 (S3-compatible) client for the upload-your-own-video
+    # archival copy (#408). Only used by the media-store path; the upload
+    # feature stays disabled (503) until the R2 credentials are configured.
+    "boto3>=1.34",
 ]
 
 [build-system]

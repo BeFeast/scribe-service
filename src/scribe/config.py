@@ -482,6 +482,30 @@ class Settings(BaseSettings):
     # cannot spoof the leftmost entry.
     trusted_proxies: str = ""
 
+    # Upload-your-own-video archival media store (#408). Users can upload a
+    # local video/audio file (POST /jobs/upload); after the normal transcript +
+    # summary, a downscaled archival copy is transcoded and stored in a private
+    # Cloudflare R2 bucket (S3-compatible), retrievable via presigned URL only.
+    # The feature is OFF unless all four R2 credentials are set — the upload
+    # endpoint returns 503 with a clear message when unconfigured (see
+    # scribe.pipeline.media_store.is_configured). Secrets come from Infisical
+    # (SCRIBE_MEDIA_S3_* -> settings). YouTube/URL jobs never archive media.
+    media_s3_endpoint: str = ""
+    media_s3_bucket: str = ""
+    media_s3_access_key: str = ""
+    media_s3_secret_key: str = ""
+    # R2 ignores the region but boto3's SigV4 signer requires one; "auto" is
+    # the value Cloudflare documents for the S3 API.
+    media_s3_region: str = "auto"
+    # TTL (seconds) of the presigned GET URL handed out by
+    # GET /transcripts/{id}/media. ~1h per the design.
+    media_presign_ttl_seconds: int = 3600
+    # Hard ceiling on an accepted upload body. Default 4 GiB; oversize uploads
+    # are rejected with 413 before entering the pipeline. API-contract style
+    # constant precedent is YOUTUBE_COOKIES_MAX_BYTES in api/schemas.py, but a
+    # size this large is an operator knob, so it lives in settings.
+    upload_max_bytes: int = 4 * 1024 * 1024 * 1024
+
     # Path the scribe-backups sidecar writes after each successful run; surfaced
     # by GET /admin/backup-status for healthcheck curl-polling (PRD §4.12).
     # The default lives on a volume that scribe-backups bind-mounts; for the

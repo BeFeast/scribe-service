@@ -26,6 +26,16 @@ transcripts_total = Counter(
     labelnames=("kind",),
 )
 
+# Archival media (upload jobs, #408). Outcome is ok / failed / retry_ok — a
+# failed archive is a SOFT failure (transcript + summary already persisted), so
+# this counter is the signal that the R2 store or transcode is degraded without
+# the job hard-failing.
+media_archive_total = Counter(
+    "scribe_media_archive_total",
+    "Archival media transcode+upload outcomes for uploaded sources.",
+    labelnames=("outcome",),
+)
+
 # Stage timing. Buckets tuned for the observed distribution: download/ffmpeg
 # are seconds, whisper is minutes (cold-start + transcription), summary is
 # tens of seconds to a couple of minutes.
