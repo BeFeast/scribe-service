@@ -7,52 +7,31 @@ echo '=== Project Test Suite ==='
 python -m pytest
 
 echo '=== Requirement Verification ==='
-echo 'Requirement 1: Add an explicit opt-in setting, e.g. `SCRIBE_LAN_YOUTUBE_COOKIES_ENABLED` (defau...'
-echo 'WARN: Run tests in web/spa/tests/settingsProfileAction.test.ts'
+echo 'Requirement 1: **Command palette** (`web/spa/src/design-app/command-palette.jsx`): add an "Uplo...'
+echo 'WARN: Run tests in web/spa/tests/CommandPalette.test.ts'
 
-echo 'Requirement 2: When enabled AND the actor is `trusted_lan` (per `is_trusted_lan_request`, honor...'
-echo 'WARN: Run tests in tests/test_jobs_youtube_cookies.py'
+echo 'Requirement 2: **Drag-and-drop onto the desktop shell** (optional but preferred if cheap): drop...'
+echo 'WARN: Run tests in tests/test_spa_app_shell_source.py'
 
-echo 'Requirement 3: Preserve the existing security model otherwise: cookies stay per-job ephemeral v...'
-echo 'WARN: Run tests in tests/test_jobs_youtube_cookies.py'
-
-echo 'Requirement 4: Keep the 256 KiB size cap and value-free 422s.'
-python -m pytest
-
-echo 'Requirement 5: With the flag **off** (default): behavior identical to today — LAN + `youtube_...'
+echo 'Requirement 3: Reuse everything from #408: `submitUploadJob`, size-cap error surfacing (413), f...'
 echo 'WARN: Run tests in tests/test_spa_job_detail_log.py'
 
-echo 'Requirement 6: With the flag **on**: `POST /jobs` from a `trusted_cidrs` client with valid `you...'
-echo 'WARN: Run tests in tests/test_jobs_youtube_cookies.py'
+echo 'Requirement 4: Same UI constraints as #408 (see the UI-constraint comment there): existing desi...'
+echo 'WARN: Run tests in tests/test_spa_design_system.py'
 
-echo 'Requirement 7: With the flag **on**, a non-LAN unauthenticated caller and a machine-bearer call...'
-echo 'WARN: Run tests in tests/test_cookie_jar.py'
+echo 'Requirement 5: At desktop viewport (>768px), a user can pick a local media file via the command...'
+echo 'WARN: Run tests in web/spa/tests/CommandPalette.test.ts'
 
-echo 'Requirement 8: Invalid cookie blob still → value-free 422; oversize blob still rejected.'
-echo 'WARN: Run tests in tests/test_cookie_jar.py'
+echo 'Requirement 6: Upload progress and terminal states (success, 413 too large, 422 invalid media) ...'
+echo 'WARN: Run tests in tests/test_ffmpeg_media.py'
 
-echo 'Requirement 9: Cookies never appear in logs, DB, or API responses (existing #313 guarantees hol...'
-echo 'WARN: Run tests in tests/test_api_live_logs.py'
-
-echo 'Requirement 10: `extension/chrome/README.md` and relevant docs updated to describe the LAN mode.'
+echo 'Requirement 7: Mobile CaptureSheet behavior is unchanged.'
 python -m pytest
 
-echo 'Requirement 11: Tests cover: flag off/on × LAN/public/machine-bearer × valid/invalid blob.'
-echo 'WARN: Run tests in .codex-work/pr22/tests/test_routes_dedup.py'
+echo 'Requirement 8: Design check scripts pass; `cd web/spa && bun run lint && bun run build` pass; p...'
+echo 'WARN: Run tests in tests/test_spa_design_system.py'
 
-echo 'Requirement 12: Runtime verification on devbox: enable the flag, submit an age-restricted video ...'
-echo 'WARN: Run tests in tests/test_jobs_youtube_cookies.py'
-
-echo 'Requirement 13: `src/scribe/api/routes.py` (create_job cookie gate)'
-echo 'WARN: Run tests in tests/test_jobs_youtube_cookies.py'
-
-echo 'Requirement 14: `src/scribe/api/auth.py` / `src/scribe/config.py` (flag + LAN classification reu...'
-python -m pytest
-
-echo 'Requirement 15: `tests/` (auth/jobs cookie tests)'
-echo 'WARN: Run tests in tests/test_cookie_jar.py'
-
-echo 'Requirement 16: `extension/chrome/README.md`, `docs/design/native-mobile-per-job-cookie-supply.m...'
-python -m pytest
+echo 'Requirement 9: Runtime verification on `http://10.10.0.13:13120/` after deploy: real file uploa...'
+echo 'WARN: Run tests in tests/test_docker_runtime.py'
 
 echo 'All verifications passed.'
