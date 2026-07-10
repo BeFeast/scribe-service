@@ -13,6 +13,7 @@ const DEFAULT_BASE_URL = "https://scribe.oklabs.uk";
 const statusEl = document.getElementById("status");
 const metaEl = document.getElementById("meta");
 const confirmBtn = document.getElementById("confirm");
+const retryBtn = document.getElementById("retry");
 const openJobLink = document.getElementById("openjob");
 const settingsBtn = document.getElementById("settings");
 
@@ -21,7 +22,7 @@ init();
 async function init() {
   document.getElementById("host").textContent = await hostLabel();
   settingsBtn.addEventListener("click", () => chrome.runtime.openOptionsPage());
-  await submitAndRender(false);
+  await submitAndRender();
 }
 
 async function hostLabel() {
@@ -33,16 +34,17 @@ async function hostLabel() {
   }
 }
 
-async function submitAndRender(force) {
-  setStatus("", force ? "Submitting…" : "Checking this page…");
+async function submitAndRender({ force = false, noCookies = false } = {}) {
+  setStatus("", force || noCookies ? "Submitting…" : "Checking this page…");
   confirmBtn.hidden = true;
+  retryBtn.hidden = true;
   openJobLink.hidden = true;
   metaEl.hidden = true;
   settingsBtn.hidden = true;
 
   let response;
   try {
-    response = await chrome.runtime.sendMessage({ type: "submit-active-tab", force });
+    response = await chrome.runtime.sendMessage({ type: "submit-active-tab", force, noCookies });
   } catch (error) {
     renderError(String(error?.message || error));
     return;
@@ -58,6 +60,12 @@ async function submitAndRender(force) {
   }
   if (response.confirm) {
     renderConfirm(response.message);
+    return;
+  }
+  // #406: the cookie owner-gate rejected youtube_cookies — offer a one-click
+  // retry that resubmits without them instead of the misleading auth guidance.
+  if (response.cookieGate) {
+    renderCookieGate(response.message);
     return;
   }
   renderError(response.message || "Submit failed.");
@@ -92,8 +100,19 @@ function renderConfirm(message) {
   confirmBtn.disabled = false;
   confirmBtn.onclick = () => {
     confirmBtn.disabled = true;
-    submitAndRender(true);
+    submitAndRender({ force: true });
   };
+}
+
+function renderCookieGate(message) {
+  setStatus("error", message || "Scribe rejected the YouTube cookies.");
+  retryBtn.hidden = false;
+  retryBtn.disabled = false;
+  retryBtn.onclick = () => {
+    retryBtn.disabled = true;
+    submitAndRender({ force: true, noCookies: true });
+  };
+  settingsBtn.hidden = false;
 }
 
 function renderError(message) {

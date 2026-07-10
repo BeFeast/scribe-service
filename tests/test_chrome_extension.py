@@ -269,6 +269,87 @@ def test_service_worker_formats_401_and_403_auth_errors_for_notifications() -> N
     assert "The saved bearer token is invalid or does not allow this request" in source
 
 
+def test_service_worker_distinguishes_cookie_gate_403() -> None:
+    # #406: a 403 from the youtube_cookies owner-gate must show cookie-specific
+    # guidance, not the misleading "add a bearer token" advice (a dead end on a
+    # token-less trusted-LAN URL).
+    source = read("service_worker.js")
+
+    assert "function isCookieGateError(status, body)" in source
+    # Match on the stable prefix of the server detail (routes.py).
+    assert '.includes("youtube_cookies requires owner")' in source
+    assert "Scribe rejected the YouTube cookies:" in source
+    assert "only accepts cookies" in source
+    assert "sign in and add an extension token." in source
+    # The generic 403/401 guidance is still present for every other case.
+    assert "This Scribe URL is protected" in source
+    assert "Scribe authorization failed (403)" in source
+
+
+def test_service_worker_offers_retry_without_cookies() -> None:
+    # #406: the cookie-gate failure is tagged so both submit surfaces can offer a
+    # one-click retry that resubmits the same URL with youtube_cookies omitted.
+    source = read("service_worker.js")
+
+    # createJob can drop the cookie attachment on demand and tags the gate error.
+    assert "async function createJob(config, url, { includeCookies = true } = {})" in source
+    assert "if (includeCookies && isYoutubeUrl(url)) {" in source
+    assert "error.cookieGate = true;" in source
+    # Popup path: submitActiveTab skips preflight on retry and surfaces cookieGate.
+    assert "async function submitActiveTab({ force = false, noCookies = false } = {})" in source
+    assert "createJob(config, url, { includeCookies: !noCookies })" in source
+    assert "noCookies: Boolean(message.noCookies)" in source
+    # Context-menu path: a notification button resubmits without cookies.
+    assert "async function submitToScribe(url, { includeCookies = true } = {})" in source
+    assert "createJob(config, url, { includeCookies })" in source
+    assert "chrome.notifications.onButtonClicked.addListener" in source
+    assert "submitToScribe(url, { includeCookies: false })" in source
+    assert 'const RETRY_URLS_KEY = "cookieRetryUrls";' in source
+    assert "async function getRetryUrls" in source
+    assert 'title: "Retry without cookies"' in source
+
+
+def test_notification_ids_are_collision_free_within_a_millisecond() -> None:
+    # #406 review: two context-menu submits hitting the cookie gate in the same
+    # millisecond must not share a notification id, or the later retry notice
+    # overwrites the earlier one's stored URL and drops its retry button.
+    source = read("service_worker.js")
+
+    # A monotonic sequence suffix makes ids unique regardless of the clock.
+    assert "function nextNotificationId(prefix)" in source
+    assert "notificationSeq += 1;" in source
+    assert "`${prefix}-${Date.now()}-${notificationSeq}`" in source
+    # Both notification paths route through the unique-id helper.
+    assert 'nextNotificationId("scribe-error")' in source
+    assert "nextNotificationId(`scribe-job-${result.job_id}`)" in source
+    # The old millisecond-only ids that could collide are gone.
+    assert "`scribe-error-${Date.now()}`" not in source
+    assert "`scribe-job-${result.job_id}-${Date.now()}`" not in source
+
+
+def test_popup_offers_retry_without_cookies() -> None:
+    html = read("popup.html")
+    js = read("popup.js")
+
+    assert 'id="retry"' in html
+    assert "Retry without cookies" in html
+    # The popup renders a retry surface for the cookie gate and resubmits without
+    # cookies (force=true skips the confirm/preflight step).
+    assert "function renderCookieGate" in js
+    assert "response.cookieGate" in js
+    assert "submitAndRender({ force: true, noCookies: true })" in js
+    assert 'type: "submit-active-tab", force, noCookies' in js
+
+
+def test_extension_docs_describe_cookie_gate_retry() -> None:
+    docs = read("README.md")
+
+    assert "youtube_cookies requires owner" in docs
+    assert "Retry without cookies" in docs
+    assert "only accepts cookies from a signed-in user" in docs
+    assert "public download path" in docs
+
+
 def test_options_store_base_url_and_optional_bearer_token_without_hardcoded_secret() -> None:
     html = read("options.html")
     source = read("options.js")

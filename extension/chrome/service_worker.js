@@ -8,11 +8,24 @@ try {
 const DEFAULT_BASE_URL = "https://scribe.oklabs.uk";
 const SOURCE = "chrome-extension";
 const NOTIFICATION_LINKS_KEY = "notificationLinks";
+// #406: maps a cookie-gate failure notification id -> the URL to resubmit
+// without youtube_cookies when its "Retry without cookies" button is clicked.
+const RETRY_URLS_KEY = "cookieRetryUrls";
 const NOTIFICATION_ICON = "icons/scribe-128.png";
 const CLEAR_BADGE_ALARM = "clear-scribe-badge";
 
 const YOUTUBE_HOST = /(^|\.)youtube\.com$|^youtu\.be$/i;
 const YOUTUBE_COOKIE_ORIGIN = "https://*.youtube.com/*";
+
+// #406: monotonically increasing suffix so notifications created within the same
+// millisecond (e.g. two context-menu submits racing the cookie gate) get distinct
+// ids. Without it, a later cookie-gate notice would overwrite the earlier one's
+// Chrome notification and its stored retry URL, dropping the first video's retry.
+let notificationSeq = 0;
+function nextNotificationId(prefix) {
+  notificationSeq += 1;
+  return `${prefix}-${Date.now()}-${notificationSeq}`;
+}
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
@@ -48,8 +61,13 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "submit-active-tab") {
     // `force` is the popup's Submit-anyway button (#339): the user already saw
-    // the preflight confirm state, so skip the check and submit.
-    submitActiveTab({ force: Boolean(message.force) }).then(sendResponse, (error) =>
+    // the preflight confirm state, so skip the check and submit. `noCookies` is
+    // the popup's Retry-without-cookies button (#406): resubmit the same tab
+    // dropping youtube_cookies after the owner-gate rejected them.
+    submitActiveTab({
+      force: Boolean(message.force),
+      noCookies: Boolean(message.noCookies),
+    }).then(sendResponse, (error) =>
       sendResponse({ ok: false, message: String(error?.message || error) }),
     );
     return true;
@@ -120,23 +138,49 @@ chrome.notifications.onClicked.addListener(async (notificationId) => {
   chrome.notifications.clear(notificationId);
 });
 
+// #406: the one-click "Retry without cookies" button on a cookie owner-gate
+// failure notification (context-menu submit path). The stored URL is resubmitted
+// with youtube_cookies omitted — the public download path still works for
+// non-gated videos, and LAN mode cannot mint the extension token the gate wants.
+chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIndex) => {
+  const retryUrls = await getRetryUrls();
+  const url = retryUrls[notificationId];
+  if (!url) {
+    return;
+  }
+
+  delete retryUrls[notificationId];
+  await chrome.storage.local.set({ [RETRY_URLS_KEY]: retryUrls });
+  chrome.notifications.clear(notificationId);
+  if (buttonIndex === 0) {
+    await submitToScribe(url, { includeCookies: false });
+  }
+});
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === CLEAR_BADGE_ALARM) {
     chrome.action.setBadgeText({ text: "" });
   }
 });
 
-async function submitToScribe(url) {
+async function submitToScribe(url, { includeCookies = true } = {}) {
   setBadge("...", "#5b6472");
 
   try {
     const config = await getConfig();
     await ensureHostPermission(config.baseUrl);
-    const result = await createJob(config, url);
+    const result = await createJob(config, url, { includeCookies });
     await notifySuccess(config.baseUrl, result);
     setBadge("OK", "#137333");
   } catch (error) {
-    await notifyFailure(error.message || String(error));
+    // #406: a cookie owner-gate rejection gets a retry-without-cookies button,
+    // but only on the first (cookie-bearing) attempt — a retry that still fails
+    // falls through to the generic failure notice and cannot loop.
+    if (error?.cookieGate && includeCookies) {
+      await notifyFailure(error.message || String(error), { retryUrl: url });
+    } else {
+      await notifyFailure(error.message || String(error));
+    }
     setBadge("ERR", "#b3261e");
   }
 }
@@ -168,7 +212,7 @@ async function recordAuthenticatedAt() {
 // confirm/refuse verdict the popup renders before any job is minted; `force`
 // (the popup's Submit-anyway button) skips straight to submit. Returns a plain
 // object the popup renders — no notification (the popup IS the receipt).
-async function submitActiveTab({ force = false } = {}) {
+async function submitActiveTab({ force = false, noCookies = false } = {}) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const url = tab?.url || "";
   const tabTitle = tab?.title || "";
@@ -201,7 +245,9 @@ async function submitActiveTab({ force = false } = {}) {
   }
 
   let extractor = null;
-  if (!force) {
+  // A retry-without-cookies (#406) skips preflight: the operator already
+  // confirmed this submit, we are only dropping the cookie attachment.
+  if (!force && !noCookies) {
     const preflightResult = await helpers.fetchPreflight(config.baseUrl, url, {
       headers: authHeaders(config),
     });
@@ -220,7 +266,7 @@ async function submitActiveTab({ force = false } = {}) {
 
   setBadge("...", "#5b6472");
   try {
-    const result = await createJob(config, url);
+    const result = await createJob(config, url, { includeCookies: !noCookies });
     if (!result.job_id) {
       throw new Error("Scribe responded OK but returned no job ID.");
     }
@@ -236,7 +282,10 @@ async function submitActiveTab({ force = false } = {}) {
     };
   } catch (error) {
     setBadge("ERR", "#b3261e");
-    return { ok: false, message: error.message || String(error) };
+    // #406: flag the cookie owner-gate so the popup can offer a one-click retry
+    // that drops youtube_cookies — but only on the cookie-bearing attempt.
+    const cookieGate = Boolean(error?.cookieGate) && !noCookies;
+    return { ok: false, cookieGate, message: error.message || String(error) };
   }
 }
 
@@ -319,7 +368,7 @@ async function ensureHostPermission(baseUrl) {
   );
 }
 
-async function createJob(config, url) {
+async function createJob(config, url, { includeCookies = true } = {}) {
   const headers = {
     "Content-Type": "application/json",
   };
@@ -328,7 +377,9 @@ async function createJob(config, url) {
   }
 
   const payload = { url, source: SOURCE };
-  if (isYoutubeUrl(url)) {
+  // #406: the retry-without-cookies path passes includeCookies=false so the
+  // resubmit takes the public download route the owner-gate leaves open.
+  if (includeCookies && isYoutubeUrl(url)) {
     const cookies = await collectYoutubeCookies();
     if (cookies) {
       payload.youtube_cookies = cookies;
@@ -357,7 +408,13 @@ async function createJob(config, url) {
   }
 
   if (!response.ok) {
-    throw new Error(formatHttpError(response.status, body, Boolean(config.bearerToken)));
+    const error = new Error(formatHttpError(response.status, body, Boolean(config.bearerToken)));
+    // #406: tag the cookie owner-gate so callers can offer a retry that drops
+    // youtube_cookies instead of the misleading "add a bearer token" advice.
+    if (isCookieGateError(response.status, body)) {
+      error.cookieGate = true;
+    }
+    throw error;
   }
 
   await recordAuthenticatedAt();
@@ -373,7 +430,7 @@ async function notifySuccess(baseUrl, result) {
   const title = result.deduplicated ? "Already known to Scribe" : "Submitted to Scribe";
   const status = result.status ? `Status: ${result.status}. ` : "";
   const message = `${status}Click to open job #${result.job_id}.`;
-  const notificationId = `scribe-job-${result.job_id}-${Date.now()}`;
+  const notificationId = nextNotificationId(`scribe-job-${result.job_id}`);
 
   const links = await getNotificationLinks();
   links[notificationId] = jobUrl;
@@ -388,19 +445,35 @@ async function notifySuccess(baseUrl, result) {
   });
 }
 
-async function notifyFailure(message) {
-  chrome.notifications.create(`scribe-error-${Date.now()}`, {
+async function notifyFailure(message, { retryUrl = null } = {}) {
+  const notificationId = nextNotificationId("scribe-error");
+  const options = {
     type: "basic",
     iconUrl: NOTIFICATION_ICON,
     title: "Scribe submit failed",
     message: truncate(message, 240),
     priority: 2,
-  });
+  };
+  // #406: a cookie owner-gate failure carries a one-click retry that resubmits
+  // the same URL without youtube_cookies. Store the URL keyed by notification id
+  // so onButtonClicked can resubmit it.
+  if (retryUrl) {
+    options.buttons = [{ title: "Retry without cookies" }];
+    const retryUrls = await getRetryUrls();
+    retryUrls[notificationId] = retryUrl;
+    await chrome.storage.local.set({ [RETRY_URLS_KEY]: retryUrls });
+  }
+  chrome.notifications.create(notificationId, options);
 }
 
 async function getNotificationLinks() {
   const stored = await chrome.storage.local.get({ [NOTIFICATION_LINKS_KEY]: {} });
   return stored[NOTIFICATION_LINKS_KEY] || {};
+}
+
+async function getRetryUrls() {
+  const stored = await chrome.storage.local.get({ [RETRY_URLS_KEY]: {} });
+  return stored[RETRY_URLS_KEY] || {};
 }
 
 function formatDetail(body) {
@@ -416,12 +489,36 @@ function formatDetail(body) {
   return JSON.stringify(body);
 }
 
+// #406: the cookie owner-gate rejects an anonymous `youtube_cookies` submit with
+// a specific 403 detail (routes.py: "youtube_cookies requires owner or
+// extension-token authentication"). Match on the stable prefix so a wording
+// tweak on the server side does not silently fall back to generic guidance.
+function isCookieGateError(status, body) {
+  if (status !== 403) {
+    return false;
+  }
+  const detail = formatDetail(body);
+  return typeof detail === "string" && detail.toLowerCase().includes("youtube_cookies requires owner");
+}
+
 function formatHttpError(status, body, tokenConfigured) {
   if (status === 401) {
     const guidance = tokenConfigured
       ? "The saved bearer token was rejected. Check the token in extension settings."
       : "This Scribe URL requires authentication. Add a bearer token in extension settings.";
     return `Scribe authentication required (401): ${guidance}`;
+  }
+
+  // #406: distinguish the cookie owner-gate from a generic 403. On a trusted-LAN
+  // Scribe URL no token is needed at all — "add a bearer token" sends the
+  // operator down a dead end (LAN mode cannot mint extension tokens). The real
+  // fix is to disable YouTube cookies (or retry without them).
+  if (isCookieGateError(status, body)) {
+    return (
+      "Scribe rejected the YouTube cookies: this Scribe URL only accepts cookies " +
+      "from a signed-in user. Disable YouTube cookies in extension settings, or " +
+      "sign in and add an extension token."
+    );
   }
 
   if (status === 403) {
