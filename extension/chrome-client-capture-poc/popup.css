@@ -1,0 +1,28 @@
+body {
+  font: 13px/1.4 system-ui, sans-serif;
+  width: 320px;
+  margin: 0;
+  padding: 12px;
+}
+
+h1 {
+  font-size: 14px;
+  margin: 0 0 6px;
+}
+
+.hint {
+  color: #5b6472;
+  margin: 0 0 10px;
+}
+
+button {
+  width: 100%;
+  padding: 8px;
+  cursor: pointer;
+}
+
+.status {
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
