@@ -42,6 +42,13 @@ export function isJobView(value) {
 	);
 }
 
+// A submit is "in flight" only while the request is pending. A terminal error
+// or a queued success must NOT block the next pick, so the palette can retry a
+// rejected upload (e.g. 413 too large / 422 invalid media) without reopening.
+export function isSubmitInFlight(submitted) {
+	return Boolean(submitted && submitted.state === "submitting");
+}
+
 export function isCommandPaletteShortcut(event) {
 	const key = event.key?.toLowerCase?.() ?? "";
 	return (

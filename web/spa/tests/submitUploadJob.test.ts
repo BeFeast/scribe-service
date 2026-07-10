@@ -78,4 +78,30 @@ describe("submitUploadJob (#408 upload ingest)", () => {
 
 		await expect(submitUploadJob(auth, makeFile())).rejects.toThrow("HTTP 503");
 	});
+
+	test("surfaces the 413 size-cap detail from the server", async () => {
+		const { auth } = makeAuth(
+			new Response(
+				JSON.stringify({ detail: "upload exceeds 2048 MiB cap" }),
+				{ status: 413, headers: { "content-type": "application/json" } },
+			),
+		);
+
+		await expect(submitUploadJob(auth, makeFile())).rejects.toThrow(
+			"HTTP 413: upload exceeds 2048 MiB cap",
+		);
+	});
+
+	test("surfaces the 422 invalid-media detail from the server", async () => {
+		const { auth } = makeAuth(
+			new Response(
+				JSON.stringify({ detail: "invalid media file: not decodable" }),
+				{ status: 422, headers: { "content-type": "application/json" } },
+			),
+		);
+
+		await expect(submitUploadJob(auth, makeFile())).rejects.toThrow(
+			"HTTP 422: invalid media file: not decodable",
+		);
+	});
 });

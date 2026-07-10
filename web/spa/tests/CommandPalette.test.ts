@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	isCommandPaletteShortcut,
 	isJobView,
+	isSubmitInFlight,
 	parseVideoUrl,
 } from "../src/design-app/command-utils.js";
 
@@ -52,6 +53,33 @@ describe("isJobView", () => {
 		expect(
 			isJobView({ job_id: "42", video_id: "jNQXAC9IVRw", status: "queued" }),
 		).toBe(false);
+	});
+});
+
+describe("isSubmitInFlight", () => {
+	test("blocks re-picking only while a submit is pending", () => {
+		// In flight — a new pick must be ignored to avoid a double submit.
+		expect(isSubmitInFlight({ state: "submitting", video_id: "clip.mp4" })).toBe(
+			true,
+		);
+	});
+
+	test("allows retry after a terminal upload error (413/422)", () => {
+		// Error is terminal: re-picking a replacement file must go through.
+		expect(
+			isSubmitInFlight({
+				state: "error",
+				video_id: "clip.mp4",
+				message: "HTTP 413: upload exceeds 2048 MiB cap",
+			}),
+		).toBe(false);
+	});
+
+	test("allows another upload after a queued success and when idle", () => {
+		expect(
+			isSubmitInFlight({ id: 9, video_id: "upload:abcd", status: "queued" }),
+		).toBe(false);
+		expect(isSubmitInFlight(null)).toBe(false);
 	});
 });
 
