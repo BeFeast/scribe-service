@@ -36,10 +36,18 @@ from sqlalchemy.orm import sessionmaker
 from scribe.api import cookie_jar
 from scribe.api.routes import render_job_view, transition_job_status
 from scribe.config import settings
-from scribe.db.models import Job, JobStatus, Transcript
+from scribe.db.models import Job, JobStageEvent, JobStatus, Transcript
 from scribe.db.session import SessionLocal
 from scribe.obs import metrics
-from scribe.pipeline import downloader, ffmpeg, summarizer, transcribe_providers, whisper_client
+from scribe.pipeline import (
+    downloader,
+    ffmpeg,
+    media_store,
+    summarizer,
+    transcribe_providers,
+    uploads,
+    whisper_client,
+)
 from scribe.pipeline.frontmatter_inject import inject_author_frontmatter
 from scribe.worker import vast_budget
 
@@ -255,6 +263,66 @@ def retry_failed_vast_destroys(session) -> int:
     return recovered
 
 
+def retry_pending_archives(session, *, limit: int = 3) -> int:
+    """Re-attempt soft-failed archival uploads (#408).
+
+    A transcript with ``media_error`` set but no ``media_object_key`` had its
+    archive transcode/upload fail (e.g. an R2 outage) — the transcript + summary
+    are already usable, so this sweep just retries the media step when the local
+    source still exists. If the source is gone (cleaned up, or lost across a
+    restart), the failure is marked permanent and no retry is attempted.
+
+    Rows are claimed with ``FOR UPDATE SKIP LOCKED`` so concurrent workers do
+    not race on the same transcript; readers (plain SELECTs) are unaffected by
+    the row lock under MVCC, so holding it across the transcode is safe.
+    """
+    if not media_store.is_configured():
+        return 0
+    transcripts = session.scalars(
+        select(Transcript)
+        .where(
+            Transcript.media_object_key.is_(None),
+            Transcript.media_error.is_not(None),
+            Transcript.media_error.not_like("%(permanent)"),
+        )
+        .order_by(Transcript.id)
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    ).all()
+    retried = 0
+    for transcript in transcripts:
+        source = uploads.find_source(transcript.job_id)
+        if source is None:
+            transcript.media_error = "archive source unavailable (permanent)"
+            session.commit()
+            continue
+        job = session.get(Job, transcript.job_id)
+        if job is None:
+            session.commit()
+            continue
+        job_log = logging.LoggerAdapter(
+            log,
+            {"job_id": job.id, "video_id": transcript.video_id, "correlation_id": job.correlation_id},
+        )
+        try:
+            key, size, content_type = _transcode_and_upload(job, transcript, source, job_log)
+        except (ffmpeg.FfmpegError, media_store.MediaStoreError, OSError) as exc:
+            transcript.media_error = f"{type(exc).__name__}: {exc}"
+            session.commit()
+            metrics.media_archive_total.labels(outcome="failed").inc()
+            continue
+        transcript.media_object_key = key
+        transcript.media_size_bytes = size
+        transcript.media_content_type = content_type
+        transcript.media_uploaded_at = datetime.now(UTC)
+        transcript.media_error = None
+        session.commit()
+        metrics.media_archive_total.labels(outcome="retry_ok").inc()
+        uploads.cleanup(transcript.job_id)
+        retried += 1
+    return retried
+
+
 def _claim_next_job(session) -> Job | None:
     """Atomically claim one queued job (FOR UPDATE SKIP LOCKED), set downloading."""
     job = session.scalar(
@@ -309,9 +377,49 @@ def recover_interrupted_jobs(session) -> int:
             },
         )
         transition_job_status(session, job, JobStatus.queued)
-    if not jobs:
+
+    # Archiving is a post-summary tail (#408): the transcript + summary are
+    # already persisted, so a job interrupted mid-archiving must NOT be requeued
+    # through the whole pipeline. Move it to `done` and let the periodic archive
+    # sweep re-attempt the media step when the source survived the restart;
+    # otherwise mark the archive failed-permanent rather than failing the job.
+    archiving_jobs = session.scalars(
+        select(Job).where(Job.status == JobStatus.archiving).order_by(Job.id).with_for_update()
+    ).all()
+    for job in archiving_jobs:
+        transcript = session.scalar(select(Transcript).where(Transcript.job_id == job.id))
+        if transcript is None:
+            # No transcript yet (should not happen post-summary) — requeue.
+            transition_job_status(session, job, JobStatus.queued)
+            continue
+        source = uploads.find_source(job.id)
+        if source is not None:
+            # Source survived the restart — retryable regardless of whether media
+            # storage is configured right now. The archive sweep is a no-op while
+            # storage is unconfigured and resumes once credentials return, so a
+            # transient config loss must NOT be treated as source loss: deleting
+            # the file + marking permanent here would strand the transcript with
+            # no archival copy ever (#408, config loss != source loss).
+            transcript.media_error = "archiving interrupted by restart; pending retry"
+        else:
+            # The uploaded source is genuinely gone — the archival copy can never
+            # be produced, so mark it failed-permanent rather than failing the job.
+            transcript.media_error = "archive source lost after restart (permanent)"
+            uploads.cleanup(job.id)
+        log.warning(
+            "recovering interrupted archiving job",
+            extra={
+                "job_id": job.id,
+                "video_id": job.video_id,
+                "source_present": source is not None,
+                "correlation_id": job.correlation_id,
+            },
+        )
+        transition_job_status(session, job, JobStatus.done)
+
+    if not jobs and not archiving_jobs:
         session.commit()
-    return len(jobs)
+    return len(jobs) + len(archiving_jobs)
 
 
 def _find_partial_transcript(
@@ -345,7 +453,132 @@ def _find_done_transcript(
     return session.scalar(stmt.order_by(Transcript.id.desc()))
 
 
-def _summarize_and_finalize(session, job: Job, transcript: Transcript, title: str, *, promoted: bool) -> None:
+def _is_upload_job(job: Job) -> bool:
+    """True for user-uploaded-file jobs (#408); False for URL/YouTube jobs.
+
+    The dedup key for uploads is ``upload:<sha16>`` (see the /jobs/upload
+    handler), so the video_id prefix is a stable, migration-free marker."""
+    return bool(job.video_id) and job.video_id.startswith("upload:")
+
+
+def _archive_object_key(transcript: Transcript, ext: str) -> str:
+    """Stable, per-transcript R2 object key for the archival media copy."""
+    safe_video = transcript.video_id.replace(":", "_").replace("/", "_")
+    return f"media/{safe_video}/{transcript.id}.{ext}"
+
+
+def _transcode_and_upload(job: Job, transcript: Transcript, source: Path, job_log) -> tuple[str, int, str]:
+    """Transcode the downscaled archival copy and push it to R2 (#408).
+
+    Video sources become a 480p H.264/AAC mp4; audio-only sources become Opus.
+    The transcode temp lives in its own scratch dir (never the upload dir) so a
+    leftover can never be mistaken for the source on a retry. Returns
+    ``(object_key, size_bytes, content_type)``. Raises FfmpegError /
+    MediaStoreError / OSError on failure — the caller isolates those into a soft
+    archive failure."""
+    probe = ffmpeg.probe_media(source)
+    work = Path(tempfile.mkdtemp(prefix="scribe-archive-"))
+    try:
+        if probe.has_video:
+            out = work / "archive.mp4"
+            ffmpeg.transcode_archival_video(source, out)
+            content_type, ext = "video/mp4", "mp4"
+        else:
+            out = work / "archive.opus"
+            ffmpeg.transcode_archival_audio(source, out)
+            content_type, ext = "audio/ogg", "opus"
+        key = _archive_object_key(transcript, ext)
+        size = out.stat().st_size
+        media_store.upload_file(out, key, content_type)
+        job_log.info(
+            "archival media uploaded",
+            extra={"stage": "archiving", "media_object_key": key, "media_size_bytes": size},
+        )
+        return key, size, content_type
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def _archiving_stage_event(session, job: Job, *, finish: bool = False) -> None:
+    """Record/close the archiving JobStageEvent (kept out of the SPA pipeline
+    timeline so URL jobs stay byte-identical, but persisted for observability
+    like every other stage)."""
+    event = session.scalar(
+        select(JobStageEvent).where(JobStageEvent.job_id == job.id, JobStageEvent.stage == "archiving")
+    )
+    if event is None:
+        event = JobStageEvent(job_id=job.id, stage="archiving", started_at=datetime.now(UTC))
+        session.add(event)
+    if finish and event.finished_at is None:
+        event.finished_at = datetime.now(UTC)
+
+
+def _maybe_archive(session, job: Job, transcript: Transcript, source: Path | None, job_log) -> None:
+    """Archive the uploaded source to R2 after the summary is persisted.
+
+    No-op for URL/YouTube jobs (``source is None``) so their pipeline is
+    byte-identical to today. A transcode/upload failure is ISOLATED: it records
+    ``transcript.media_error`` and returns, so the job still finishes ``done``
+    with a usable transcript + summary; the local source is kept for the retry
+    sweep. On success the source directory is deleted."""
+    if source is None:
+        return
+    if not media_store.is_configured():
+        # Should not happen (the upload endpoint 503s when unconfigured), but if
+        # storage config is lost after a job is accepted, degrade cleanly WITHOUT
+        # deleting the source: keep it so the archive sweep can finish the media
+        # step once storage is configured again. Deleting it here would strand the
+        # transcript with no way to ever produce the archival copy (#408). The
+        # error is left retryable (no "(permanent)" suffix) so the sweep picks it
+        # up; the sweep itself is a no-op until media storage is configured.
+        transcript.media_error = "media storage not configured at archive time; pending retry"
+        session.commit()
+        return
+
+    transition_job_status(session, job, JobStatus.archiving)
+    _archiving_stage_event(session, job)
+    session.commit()
+
+    try:
+        with _time_stage("archiving"):
+            key, size, content_type = _transcode_and_upload(job, transcript, source, job_log)
+    except (ffmpeg.FfmpegError, media_store.MediaStoreError, OSError) as exc:
+        session.rollback()
+        transcript = session.get(Transcript, transcript.id)
+        if transcript is not None:
+            transcript.media_error = f"{type(exc).__name__}: {exc}"
+        _archiving_stage_event(session, job, finish=True)
+        session.commit()
+        metrics.media_archive_total.labels(outcome="failed").inc()
+        job_log.warning(
+            "archive failed (soft); transcript + summary preserved",
+            extra={"stage": "archiving", "error": f"{type(exc).__name__}: {exc}"},
+        )
+        return
+
+    transcript = session.get(Transcript, transcript.id)
+    if transcript is not None:
+        transcript.media_object_key = key
+        transcript.media_size_bytes = size
+        transcript.media_content_type = content_type
+        transcript.media_uploaded_at = datetime.now(UTC)
+        transcript.media_error = None
+    _archiving_stage_event(session, job, finish=True)
+    session.commit()
+    metrics.media_archive_total.labels(outcome="ok").inc()
+    uploads.cleanup(job.id)
+
+
+def _summarize_and_finalize(
+    session,
+    job: Job,
+    transcript: Transcript,
+    title: str,
+    *,
+    promoted: bool,
+    archive_source: Path | None = None,
+    job_log=None,
+) -> None:
     """Run summarizer against an already-persisted transcript_md, update the
     row with summary + tags, mark the job done.
 
@@ -363,6 +596,8 @@ def _summarize_and_finalize(session, job: Job, transcript: Transcript, title: st
         # stays partial (summary_md=NULL) so the caller gets a transcript-only
         # result with no summary-provider spend. A later submit (summarize
         # default True) can resume the partial and fill in the summary.
+        session.refresh(job)
+        _maybe_archive(session, job, transcript, archive_source, job_log)
         session.refresh(job)
         _set_job_status(session, job, JobStatus.done)
         metrics.last_success_timestamp.set(time.time())
@@ -398,6 +633,8 @@ def _summarize_and_finalize(session, job: Job, transcript: Transcript, title: st
         transcript.summary_md = summary_md
         transcript.short_description = summary.short_description
         transcript.tags = summary.tags or None
+    session.refresh(job)
+    _maybe_archive(session, job, transcript, archive_source, job_log)
     session.refresh(job)
     _set_job_status(session, job, JobStatus.done)
     metrics.transcripts_total.labels(kind="promoted" if promoted else "full").inc()
@@ -444,6 +681,12 @@ def process_job(session, job: Job) -> None:
     # so even unexpected exits (BaseException, abrupt thread shutdown) restore
     # the gauge — otherwise it would drift upward over the process lifetime.
     metrics.workers_busy.inc()
+    # Upload jobs (#408) skip the yt-dlp download and, after summary, archive a
+    # downscaled copy of their uploaded source to R2. `upload_source` is None
+    # for URL/YouTube jobs, so every `archive_source=upload_source` below is a
+    # no-op for them and their pipeline stays byte-identical to today.
+    is_upload = _is_upload_job(job)
+    upload_source = uploads.find_source(job_id) if is_upload else None
     try:
         try:
             # Resume path: a prior job already produced the transcript but its
@@ -456,24 +699,44 @@ def process_job(session, job: Job) -> None:
                 partial.owner_email = job.owner_email
                 partial.owner_display_name = job.owner_display_name
                 partial.owner_id = job.owner_id
-                _summarize_and_finalize(session, job, partial, partial.title, promoted=True)
+                _summarize_and_finalize(
+                    session, job, partial, partial.title,
+                    promoted=True, archive_source=upload_source, job_log=job_log,
+                )
                 job_log.info("job done (resumed)", extra={"transcript_id": partial.id, "stage": "done"})
                 return
 
             tmpdir = _make_job_tmpdir(settings.temp_dir, job_log)
             try:
-                # Per-job YouTube cookies (#313): the API handler stashed
-                # the validated blob keyed by job_id; take it once and let
-                # the downloader manage the 0600 temp lifecycle. ``None``
-                # falls through to the public-only download path.
-                job_cookies = cookie_jar.take(job_id)
-                with _time_stage("download"):
-                    dl = downloader.download_audio(
-                        job.url,
-                        tmpdir,
-                        cookies=job_cookies,
-                        pot_base_url=settings.bgutil_pot_base_url or None,
+                if is_upload:
+                    # Upload jobs feed the user's file straight into the pipeline
+                    # (no yt-dlp). Re-validate with ffprobe so a corrupt/missing
+                    # source fails cleanly, then present a DownloadResult so the
+                    # rest of the pipeline is unchanged.
+                    if upload_source is None or not upload_source.exists():
+                        raise RuntimeError("uploaded source file is missing")
+                    with _time_stage("download"):
+                        probe = ffmpeg.probe_media(upload_source)
+                    dl = downloader.DownloadResult(
+                        audio_path=upload_source,
+                        title=job.title or upload_source.stem,
+                        video_id=job.video_id,
+                        duration_seconds=probe.duration_seconds,
+                        source_platform="upload",
                     )
+                else:
+                    # Per-job YouTube cookies (#313): the API handler stashed
+                    # the validated blob keyed by job_id; take it once and let
+                    # the downloader manage the 0600 temp lifecycle. ``None``
+                    # falls through to the public-only download path.
+                    job_cookies = cookie_jar.take(job_id)
+                    with _time_stage("download"):
+                        dl = downloader.download_audio(
+                            job.url,
+                            tmpdir,
+                            cookies=job_cookies,
+                            pot_base_url=settings.bgutil_pot_base_url or None,
+                        )
                 was_pending_key = job.video_id.startswith("pending:")
                 job.title = dl.title
                 if job.video_id != dl.video_id:
@@ -514,7 +777,10 @@ def process_job(session, job: Job) -> None:
                         partial.author_url = dl.author_url
                     if partial.source_platform is None and dl.source_platform:
                         partial.source_platform = dl.source_platform
-                    _summarize_and_finalize(session, job, partial, partial.title, promoted=True)
+                    _summarize_and_finalize(
+                        session, job, partial, partial.title,
+                        promoted=True, archive_source=upload_source, job_log=job_log,
+                    )
                     job_log.info("job done (resumed)", extra={"transcript_id": partial.id, "stage": "done"})
                     return
 
@@ -600,7 +866,10 @@ def process_job(session, job: Job) -> None:
                 session.commit()
                 metrics.transcripts_total.labels(kind="partial").inc()
 
-                _summarize_and_finalize(session, job, transcript, dl.title, promoted=False)
+                _summarize_and_finalize(
+                    session, job, transcript, dl.title,
+                    promoted=False, archive_source=upload_source, job_log=job_log,
+                )
                 job_log.info("job done", extra={"transcript_id": transcript.id, "stage": "done", "title": dl.title})
             finally:
                 shutil.rmtree(tmpdir, ignore_errors=True)
@@ -612,6 +881,11 @@ def process_job(session, job: Job) -> None:
                 _set_job_status(session, failed, JobStatus.failed)
                 _deliver_webhook(session, failed)
             job_log.exception("job failed", extra={"stage": "failed", "error": f"{type(exc).__name__}: {exc}"})
+            # A hard failure discards the uploaded source: the transcript (if any)
+            # can still be re-summarized from stored text, but there is no
+            # archival source to keep, and a re-upload supplies a fresh one.
+            if is_upload:
+                uploads.cleanup(job_id)
     finally:
         # Belt-and-braces: any return path above (resume short-circuit,
         # exception before the download stage, etc.) must not leave a
@@ -627,6 +901,7 @@ def run_worker(stop: threading.Event) -> None:
         session = SessionLocal()
         try:
             retry_failed_vast_destroys(session)
+            retry_pending_archives(session)
             job = _claim_next_job(session)
             if job is None:
                 stop.wait(_POLL_INTERVAL)

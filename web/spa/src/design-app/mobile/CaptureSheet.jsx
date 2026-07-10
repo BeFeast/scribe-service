@@ -41,7 +41,7 @@
 // port of the iOS source, with literal hex replaced by tokens).
 
 import React from "react";
-import { submitJob } from "../api-jobs.js";
+import { submitJob, submitUploadJob } from "../api-jobs.js";
 import { parseVideoUrl } from "../command-utils.js";
 import { IconCheck, IconLink, IconPlus, IconWave } from "../icons.jsx";
 
@@ -70,7 +70,11 @@ export function CaptureSheet({ open, onClose, auth, navigateDesign }) {
 	const [notify, setNotify] = React.useState(true);
 	const [promptOn, setPromptOn] = React.useState(false);
 	const [summaryPrompt, setSummaryPrompt] = React.useState("");
+	// Upload-your-own-video (#408): a selected local file takes precedence over
+	// the URL field and submits via POST /jobs/upload instead of POST /jobs.
+	const [file, setFile] = React.useState(null);
 	const inputRef = React.useRef(null);
+	const fileInputRef = React.useRef(null);
 	const toastTimerRef = React.useRef(null);
 
 	// `shown` controls the slide-in transform. We mount the layer first
@@ -92,6 +96,7 @@ export function CaptureSheet({ open, onClose, auth, navigateDesign }) {
 		setNotify(true);
 		setPromptOn(false);
 		setSummaryPrompt("");
+		setFile(null);
 		const raf = requestAnimationFrame(() => setShown(true));
 		const focusTimer = setTimeout(() => {
 			if (inputRef.current) inputRef.current.focus();
@@ -110,7 +115,23 @@ export function CaptureSheet({ open, onClose, auth, navigateDesign }) {
 
 	const parsed = React.useMemo(() => parseVideoUrl(url), [url]);
 	const videoId = parsed ? parsed.videoId : null;
-	const valid = Boolean(videoId) && !submitting;
+	// A selected file OR a valid URL is submittable; the file path wins.
+	const valid = (Boolean(file) || Boolean(videoId)) && !submitting;
+
+	const onPickFile = React.useCallback((event) => {
+		const picked = event.target.files?.[0];
+		if (picked) {
+			setFile(picked);
+			// A file supersedes a typed URL — clear it so intent is unambiguous.
+			setUrl("");
+			setError(null);
+		}
+	}, []);
+
+	const clearFile = React.useCallback(() => {
+		setFile(null);
+		if (fileInputRef.current) fileInputRef.current.value = "";
+	}, []);
 
 	const close = React.useCallback(() => {
 		setShown(false);
@@ -125,24 +146,28 @@ export function CaptureSheet({ open, onClose, auth, navigateDesign }) {
 	}, []);
 
 	const submit = React.useCallback(async () => {
-		if (!valid || !parsed) return;
+		if (!valid) return;
+		if (!file && !parsed) return;
 		setSubmitting(true);
 		setError(null);
 		try {
-			const result = await submitJob(auth, parsed.url, {
+			const opts = {
 				summarize,
 				notify,
 				// Only send the custom prompt when the row is toggled on; an
 				// empty/whitespace string falls back to the active template.
 				summaryPrompt: promptOn ? summaryPrompt : "",
-			});
+			};
+			const result = file
+				? await submitUploadJob(auth, file, opts)
+				: await submitJob(auth, parsed.url, opts);
 			close();
 			// Navigate after the sheet finishes sliding out so the page
 			// transition runs against a settled chrome (mirrors the
 			// prototype's `setTimeout(..., 280)` after closeSheet()).
 			setTimeout(() => {
 				navigateDesign("job", { id: result.job_id });
-				flashToast("Added to queue");
+				flashToast(file ? "Uploading…" : "Added to queue");
 			}, 280);
 		} catch (err) {
 			setSubmitting(false);
@@ -151,6 +176,7 @@ export function CaptureSheet({ open, onClose, auth, navigateDesign }) {
 	}, [
 		valid,
 		parsed,
+		file,
 		auth,
 		navigateDesign,
 		close,
@@ -233,12 +259,52 @@ export function CaptureSheet({ open, onClose, auth, navigateDesign }) {
 									spellCheck={false}
 									placeholder="Paste a YouTube URL"
 									value={url}
-									onChange={(event) => setUrl(event.target.value)}
+									onChange={(event) => {
+										setUrl(event.target.value);
+										if (file) clearFile();
+									}}
 									onKeyDown={onKey}
 								/>
 							</label>
 
-							{videoId ? (
+							{/* Upload-your-own-video (#408): attach a local file
+							    instead of a URL. The label opens the hidden file
+							    input; a picked file supersedes the URL field. */}
+							<label className="url-field">
+								<IconPlus size={18} />
+								<span style={{ flex: 1, minWidth: 0, color: "var(--muted)" }}>
+									{file ? file.name : "Or upload a video / audio file"}
+								</span>
+								<input
+									ref={fileInputRef}
+									type="file"
+									accept="video/*,audio/*"
+									onChange={onPickFile}
+									style={{ display: "none" }}
+								/>
+							</label>
+
+							{file ? (
+								<div className="detected">
+									<div className="thumb" aria-hidden="true">
+										<IconWave size={20} />
+									</div>
+									<div style={{ minWidth: 0, flex: 1 }}>
+										<div className="d-title">{file.name}</div>
+										<div className="d-meta">
+											{Math.round(file.size / 1024)} KB · upload
+										</div>
+									</div>
+									<button
+										type="button"
+										className="s-cancel"
+										onClick={clearFile}
+										disabled={submitting}
+									>
+										Remove
+									</button>
+								</div>
+							) : videoId ? (
 								<div className="detected">
 									<div className="thumb" aria-hidden="true">
 										<IconWave size={20} />
@@ -323,7 +389,13 @@ export function CaptureSheet({ open, onClose, auth, navigateDesign }) {
 								disabled={!valid}
 							>
 								<IconPlus size={18} />
-								{submitting ? "Adding to queue…" : "Add to queue"}
+								{submitting
+									? file
+										? "Uploading…"
+										: "Adding to queue…"
+									: file
+										? "Upload file"
+										: "Add to queue"}
 							</button>
 						</div>
 					</div>

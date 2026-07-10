@@ -18,6 +18,11 @@ class JobStatus(StrEnum):
     downloading = "downloading"
     transcribing = "transcribing"
     summarizing = "summarizing"
+    # Uploads only (#408): after summarize, the uploaded source is transcoded
+    # to a downscaled archival copy and pushed to R2. A soft state — the
+    # transcript + summary are already persisted, so an archive failure never
+    # sends the job to `failed`. YouTube/URL jobs never enter this state.
+    archiving = "archiving"
     done = "done"
     failed = "failed"
 
@@ -218,6 +223,16 @@ class Transcript(Base):
     owner_subject: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     owner_email: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner_display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Archival media copy for uploaded sources (#408). NULL for URL/YouTube
+    # jobs, which never archive. `media_object_key` is the R2 object key
+    # (retrieval via presigned URL only, GET /transcripts/{id}/media);
+    # `media_error` records a soft archive failure so the transcript stays
+    # usable while a retry sweep re-attempts the transcode/upload.
+    media_object_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    media_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    media_content_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    media_uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    media_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary_shortlink: Mapped[str | None] = mapped_column(Text, nullable=True)
     transcript_shortlink: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner_id: Mapped[int | None] = mapped_column(

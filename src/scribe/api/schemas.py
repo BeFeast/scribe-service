@@ -173,6 +173,15 @@ class TranscriptFull(TranscriptBrief):
     transcript_excerpt: str
     summary_md: str | None
     vast_cost: float | None = None
+    # Archival media copy (#408). `media_available` is True when an uploaded
+    # source was archived to R2; the SPA offers a download that resolves via
+    # GET /transcripts/{id}/media (302 -> presigned URL). The raw object key is
+    # never exposed. `media_error` surfaces a soft archive failure so the UI can
+    # show "archive pending/failed" without hiding the transcript.
+    media_available: bool = False
+    media_content_type: str | None = None
+    media_size_bytes: int | None = None
+    media_error: str | None = None
 
 
 class JobStageView(BaseModel):

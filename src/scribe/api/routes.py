@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import hashlib
 import html
 import importlib.metadata
 import json
@@ -20,7 +21,7 @@ from html.parser import HTMLParser
 from urllib.parse import quote, urlparse
 
 import markdown as md
-from fastapi import APIRouter, Body, Depends, Form, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, or_, select, text
@@ -42,6 +43,7 @@ from scribe.api.auth import (
 )
 from scribe.api.preflight import match_url
 from scribe.api.schemas import (
+    SUMMARY_PROMPT_MAX_CHARS,
     ActiveJobsResponse,
     ActiveJobView,
     AuthConfigResponse,
@@ -108,7 +110,7 @@ from scribe.obs import metrics
 from scribe.obs import ops as ops_helpers
 from scribe.obs.correlation import request_correlation_id
 from scribe.obs.live_logs import job_log_buffer
-from scribe.pipeline import prompts, summarizer
+from scribe.pipeline import ffmpeg, media_store, prompts, summarizer, uploads
 from scribe.pipeline.downloader import initial_video_key
 from scribe.pipeline.frontmatter_inject import inject_author_frontmatter
 from scribe.source_links import source_link_for_url
@@ -278,6 +280,10 @@ def _full(t: Transcript) -> TranscriptFull:
         transcript_excerpt=_transcript_excerpt(t),
         summary_md=t.summary_md,
         vast_cost=t.vast_cost,
+        media_available=t.media_object_key is not None,
+        media_content_type=t.media_content_type,
+        media_size_bytes=t.media_size_bytes,
+        media_error=t.media_error,
     )
 
 
@@ -1021,6 +1027,165 @@ def create_job(
     )
 
 
+@router.post("/jobs/upload", response_model=JobView, status_code=201)
+async def create_upload_job(
+    request: Request,
+    file: UploadFile = File(...),
+    source: str | None = Form(None),
+    summarize: bool = Form(True),
+    notify: bool = Form(True),
+    # Same ceiling as JobCreate.summary_prompt (JSON POST /jobs): a too-long
+    # prompt is rejected with 422 at request parsing, so a multipart upload
+    # can't smuggle an oversize prompt payload past the API contract (#408).
+    summary_prompt: str | None = Form(None, max_length=SUMMARY_PROMPT_MAX_CHARS),
+    session: Session = Depends(get_session),
+    actor: Actor = Depends(require_actor),
+) -> JobView:
+    """Upload a local video/audio file for transcription + summary (#408).
+
+    The body is streamed to disk in chunks (never buffered in memory),
+    validated with ffprobe, deduplicated by content SHA-256, and enqueued like
+    a normal job. After transcript + summary complete, the worker transcodes a
+    downscaled archival copy, stores it in R2, and deletes the original upload
+    and the working WAV. YouTube/URL jobs (POST /jobs) are unaffected.
+
+    - 503 when media storage is unconfigured (feature off).
+    - 413 when the body exceeds SCRIBE_UPLOAD_MAX_BYTES.
+    - 422 when the file is empty or not decodable media.
+    Same `require_actor` auth as POST /jobs.
+    """
+    if not media_store.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="media storage is not configured; file uploads are unavailable.",
+        )
+
+    owner = current_owner(request, session)
+    correlation_id = request_correlation_id(request)
+    prompt_override = (summary_prompt or "").strip() or None
+
+    # Stream the body to a staging file, hashing as we go, enforcing the size
+    # cap mid-stream so an oversize upload is rejected without buffering it.
+    max_bytes = settings.upload_max_bytes
+    staging_path = uploads.new_staging_path(file.filename)
+    hasher = hashlib.sha256()
+    size = 0
+    try:
+        with staging_path.open("wb") as fh:
+            while True:
+                chunk = await file.read(uploads.CHUNK_SIZE)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > max_bytes:
+                    raise uploads.UploadTooLargeError(max_bytes)
+                hasher.update(chunk)
+                fh.write(chunk)
+    except uploads.UploadTooLargeError as exc:
+        uploads.discard_staging(staging_path)
+        raise HTTPException(status_code=413, detail=str(exc)) from None
+    except Exception:
+        uploads.discard_staging(staging_path)
+        raise
+    finally:
+        await file.close()
+
+    if size == 0:
+        uploads.discard_staging(staging_path)
+        raise HTTPException(status_code=422, detail="uploaded file is empty")
+
+    # ffprobe validation before the file enters the transcribe pipeline.
+    try:
+        ffmpeg.probe_media(staging_path)
+    except ffmpeg.FfmpegError as exc:
+        uploads.discard_staging(staging_path)
+        raise HTTPException(status_code=422, detail=f"invalid media file: {exc}") from None
+
+    video_id = f"upload:{hasher.hexdigest()[:16]}"
+    filename = uploads.safe_filename(file.filename)
+    url = f"upload:{filename}"
+
+    # Dedup against done + active jobs with identical content. A partial
+    # (summary-failed) upload is intentionally NOT deduplicated: a re-upload
+    # supplies a fresh archival source, so a clean re-run is the right result.
+    done = session.scalar(
+        _actor_filter(
+            select(Transcript).where(Transcript.video_id == video_id, Transcript.summary_md.is_not(None)),
+            Transcript,
+            actor,
+        ).order_by(Transcript.id.desc())
+    )
+    if done is not None:
+        uploads.discard_staging(staging_path)
+        return JobView(
+            job_id=done.job_id, url=url, video_id=video_id, **_source_fields(url),
+            status=JobStatus.done.value, deduplicated=True, transcript=_brief(done),
+        )
+
+    active = session.scalar(
+        _actor_filter(
+            select(Job).where(Job.video_id == video_id, Job.status.in_(_ACTIVE)),
+            Job,
+            actor,
+        ).order_by(Job.id.desc())
+    )
+    if active is not None:
+        uploads.discard_staging(staging_path)
+        return JobView(
+            job_id=active.id, url=active.url, video_id=video_id, **_source_fields(active.url),
+            status=active.status.value, deduplicated=True, correlation_id=active.correlation_id,
+        )
+
+    # Upload jobs run through the same Vast transcribe chain as POST /jobs, so
+    # they must respect the rolling daily spend cap too — otherwise a multipart
+    # upload is a trivial way to bypass it. Serialise the check+insert with the
+    # shared advisory lock so two concurrent submissions can't both slip under
+    # the cap. Applied only after dedup (dedup-done/active reuse existing work
+    # and spend nothing new), mirroring POST /jobs.
+    cap = settings.daily_spend_cap_usd
+    if cap > 0:
+        session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _CAP_LOCK_KEY})
+        spent = _recent_vast_spend_usd(session)
+        if spent >= cap:
+            uploads.discard_staging(staging_path)
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"daily Vast spend cap reached: ${spent:.4f} >= ${cap:.4f} (rolling 24h). "
+                    "Resubmit after the window opens, or raise SCRIBE_DAILY_SPEND_CAP_USD."
+                ),
+            )
+
+    job = Job(
+        url=url, video_id=video_id, status=JobStatus.queued,
+        source=source or "upload",
+        title=filename,
+        correlation_id=correlation_id,
+        summarize=summarize,
+        notify=notify,
+        summary_prompt=prompt_override,
+        owner_subject=owner.subject if owner else None,
+        owner_email=owner.email if owner else None,
+        owner_display_name=owner.display_name if owner else None,
+        owner_id=actor.owner_id,
+    )
+    session.add(job)
+    session.flush()
+    record_job_stage_start(session, job, JobStatus.queued)
+    try:
+        uploads.promote_to_job(staging_path, job.id, file.filename)
+        session.commit()
+    except Exception:
+        uploads.discard_staging(staging_path)
+        uploads.cleanup(job.id)
+        raise
+    metrics.job_status_transitions.labels(status=JobStatus.queued.value).inc()
+    return JobView(
+        job_id=job.id, url=job.url, video_id=video_id, status=job.status.value,
+        **_source_fields(job.url), title=filename, correlation_id=correlation_id,
+    )
+
+
 @router.get("/jobs/{job_id}", response_model=JobView)
 def get_job(
     job_id: int,
@@ -1181,6 +1346,11 @@ def _job_stage_events(session: Session, job_ids: list[int]) -> dict[int, dict[st
 def _stage_views(job: Job, events: dict[str, JobStageEvent]) -> dict[str, JobStageView]:
     status = job.status.value
     status_rank = _STATUS_ORDER.get(status, -1)
+    # `archiving` (#408) is a post-summary tail not shown on the SPA pipeline
+    # timeline; rank it past every pipeline stage so all of them read `done`
+    # while the archival copy uploads. URL/YouTube jobs never reach this state.
+    if job.status == JobStatus.archiving:
+        status_rank = len(_PIPELINE_STAGES)
     failed_stage = None
     if job.status == JobStatus.failed:
         ordered_events = [event for event in events.values() if event.stage in _STATUS_ORDER]
@@ -1654,6 +1824,30 @@ def get_summary_md(
                    "POST /transcripts/{id}/resummarize to retry.",
         )
     return Response(content=t.summary_md, media_type="text/markdown; charset=utf-8")
+
+
+@router.get("/transcripts/{transcript_id}/media")
+def get_transcript_media(
+    transcript_id: int,
+    session: Session = Depends(get_session),
+    actor: Actor = Depends(require_actor),
+) -> Response:
+    """Redirect to a short-lived presigned URL for the archival media (#408).
+
+    Same owner-scoped auth as the rest of the transcript endpoints. 404 when the
+    transcript has no archived media (URL/YouTube jobs, or an archive that has
+    not completed); 503 when media storage is not configured.
+    """
+    t = _require_owned_transcript(transcript_id, session, actor)
+    if not t.media_object_key:
+        raise HTTPException(status_code=404, detail=f"transcript {transcript_id} has no archived media")
+    if not media_store.is_configured():
+        raise HTTPException(status_code=503, detail="media storage is not configured")
+    try:
+        url = media_store.generate_presigned_url(t.media_object_key)
+    except media_store.MediaStoreError as exc:
+        raise HTTPException(status_code=502, detail=f"could not sign media URL: {exc}") from exc
+    return RedirectResponse(url=url, status_code=302)
 
 
 _RESUMMARIZE_LOCK_TIMEOUT_S = 120.0
