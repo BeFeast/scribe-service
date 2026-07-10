@@ -309,6 +309,24 @@ def test_service_worker_offers_retry_without_cookies() -> None:
     assert 'title: "Retry without cookies"' in source
 
 
+def test_notification_ids_are_collision_free_within_a_millisecond() -> None:
+    # #406 review: two context-menu submits hitting the cookie gate in the same
+    # millisecond must not share a notification id, or the later retry notice
+    # overwrites the earlier one's stored URL and drops its retry button.
+    source = read("service_worker.js")
+
+    # A monotonic sequence suffix makes ids unique regardless of the clock.
+    assert "function nextNotificationId(prefix)" in source
+    assert "notificationSeq += 1;" in source
+    assert "`${prefix}-${Date.now()}-${notificationSeq}`" in source
+    # Both notification paths route through the unique-id helper.
+    assert 'nextNotificationId("scribe-error")' in source
+    assert "nextNotificationId(`scribe-job-${result.job_id}`)" in source
+    # The old millisecond-only ids that could collide are gone.
+    assert "`scribe-error-${Date.now()}`" not in source
+    assert "`scribe-job-${result.job_id}-${Date.now()}`" not in source
+
+
 def test_popup_offers_retry_without_cookies() -> None:
     html = read("popup.html")
     js = read("popup.js")

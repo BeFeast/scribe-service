@@ -17,6 +17,16 @@ const CLEAR_BADGE_ALARM = "clear-scribe-badge";
 const YOUTUBE_HOST = /(^|\.)youtube\.com$|^youtu\.be$/i;
 const YOUTUBE_COOKIE_ORIGIN = "https://*.youtube.com/*";
 
+// #406: monotonically increasing suffix so notifications created within the same
+// millisecond (e.g. two context-menu submits racing the cookie gate) get distinct
+// ids. Without it, a later cookie-gate notice would overwrite the earlier one's
+// Chrome notification and its stored retry URL, dropping the first video's retry.
+let notificationSeq = 0;
+function nextNotificationId(prefix) {
+  notificationSeq += 1;
+  return `${prefix}-${Date.now()}-${notificationSeq}`;
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
@@ -420,7 +430,7 @@ async function notifySuccess(baseUrl, result) {
   const title = result.deduplicated ? "Already known to Scribe" : "Submitted to Scribe";
   const status = result.status ? `Status: ${result.status}. ` : "";
   const message = `${status}Click to open job #${result.job_id}.`;
-  const notificationId = `scribe-job-${result.job_id}-${Date.now()}`;
+  const notificationId = nextNotificationId(`scribe-job-${result.job_id}`);
 
   const links = await getNotificationLinks();
   links[notificationId] = jobUrl;
@@ -436,7 +446,7 @@ async function notifySuccess(baseUrl, result) {
 }
 
 async function notifyFailure(message, { retryUrl = null } = {}) {
-  const notificationId = `scribe-error-${Date.now()}`;
+  const notificationId = nextNotificationId("scribe-error");
   const options = {
     type: "basic",
     iconUrl: NOTIFICATION_ICON,
