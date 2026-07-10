@@ -3,7 +3,7 @@ import React from "react";
 import { useAuth } from "../hooks/useAuth";
 import { IconArrow, IconCheck, IconClock, IconPlus, IconSearch, IconWave } from "./icons.jsx";
 import { ACTIVE_JOBS, STATS, TRANSCRIPTS, fmtDuration, fmtRelative, fmtUsd } from "./data.js";
-import { isJobView, parseVideoUrl, pushRecentSubmission, readRecentSubmissions } from "./command-utils.js";
+import { isJobView, isSubmitInFlight, parseVideoUrl, pushRecentSubmission, readRecentSubmissions } from "./command-utils.js";
 import { submitUploadJob } from "./api-jobs.js";
 // Command palette — ⌘K. Detects YouTube URLs and offers a one-key submit.
 // Falls through to a fuzzy-ish title search + a fixed list of commands.
@@ -119,7 +119,9 @@ export function CommandPalette({ open, onClose, navigate }) {
     const picked = e.target.files && e.target.files[0];
     // Reset so re-picking the same file fires change again.
     e.target.value = "";
-    if (!picked || submitted) return;
+    // Only block while a submit is genuinely in flight — a prior error or a
+    // successful queue must not silently swallow a freshly picked file (retry).
+    if (!picked || isSubmitInFlight(submitted)) return;
     setSubmitted({ state: "submitting", video_id: picked.name });
     try {
       const result = await submitUploadJob(auth, picked, { source: "upload" });
