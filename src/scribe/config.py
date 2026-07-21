@@ -400,6 +400,31 @@ class Settings(BaseSettings):
     admin_telegram_bot_token: str = ""
     admin_telegram_chat_id: str = ""
 
+    # Consumer-facing Telegram media ingestion (#417). When a Telegram user
+    # sends media too large for the bot's inline download path, the integration
+    # submits an opaque `tg:<file_id>` reference through POST /jobs; the worker
+    # resolves it here via the Bot API `getFile` + file download. The token is
+    # the ONLY credential allowed to resolve the reference — it lives in server
+    # config (Infisical / SCRIBE_TELEGRAM_BOT_TOKEN), is scrubbed from every log
+    # line (see scribe.obs.logging._SECRET_SETTING_FIELDS), and is never placed
+    # in a job record, API payload, or error message. Empty disables the path:
+    # a `tg:` submission then fails with an actionable "not configured" error.
+    #
+    # `telegram_api_base_url` defaults to the public Bot API, whose download
+    # limit is 20 MB. To ingest large media (up to 2 GB) point this at a
+    # self-hosted `telegram-bot-api` server; in its `--local` mode `getFile`
+    # returns an on-disk path that the adapter reads directly with no HTTP
+    # download. See docs/telegram-media-ingestion.md.
+    telegram_bot_token: str = ""
+    telegram_api_base_url: str = "https://api.telegram.org"
+    # Wall-clock budget for a single Telegram getFile+download stage.
+    telegram_download_timeout_s: int = 600
+    # Defence-in-depth ceiling on a resolved Telegram file size (bytes). The
+    # public Bot API already caps at 20 MB; a local Bot API server lifts that to
+    # 2 GB. This bound rejects an oversize `file_size` from getFile before the
+    # download starts, mirroring upload_max_bytes for the upload path.
+    telegram_max_bytes: int = 2 * 1024 * 1024 * 1024
+
     # Nightly yt-dlp download canary. Exercises the real download path against
     # a known-stable public video (default: "Me at the zoo" — the first YouTube
     # upload, kept online for historical reasons). A red canary means the pin
