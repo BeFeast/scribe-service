@@ -294,6 +294,21 @@ transcribe_provider_spend_usd_total = Counter(
 )
 
 
+# Runtime-config load state at boot (#415). Exactly one label carries 1.0:
+#   infisical — the overlay was fetched from Infisical successfully;
+#   disabled  — Infisical is not enabled/configured, so env is the intended
+#               source (normal for local/dev);
+#   degraded  — Infisical is ENABLED but was unreachable at boot, so the process
+#               is running on env fallback. This can leave provider credentials
+#               empty and is the state behind the #415 summary-chain outage.
+# Alert on scribe_runtime_config_load_state{state="degraded"} == 1.
+runtime_config_load_state = Gauge(
+    "scribe_runtime_config_load_state",
+    "Active runtime-config load state at boot (1=active): infisical, disabled, degraded.",
+    labelnames=("state",),
+)
+
+
 def gauge_value(g: Gauge) -> float:
     """Read the current value of an unlabelled Gauge using prometheus_client's
     public `Collector.collect()` surface. We use this in place of touching the
