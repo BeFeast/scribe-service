@@ -19,6 +19,29 @@ from scribe.runtime_config import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _reset_runtime_config_logger() -> None:
+    """Keep the ``scribe.runtime_config`` logger capturable regardless of test
+    ordering (#415).
+
+    The alembic migrations test calls ``fileConfig(alembic.ini)`` with the
+    default ``disable_existing_loggers=True``, which sets ``disabled=True`` on
+    every pre-existing logger not named in the alembic config — including
+    ``scribe.runtime_config`` — and can leave ``logging.disable()`` raised. That
+    state persists for the whole session, so in a mixed suite (CI, DB tests
+    enabled) the caplog assertions below saw an empty log. Re-enable the logger
+    and clear the global disable so these tests do not depend on ordering,
+    mirroring the guard in ``tests/test_worker_correlation_id.py``.
+    """
+    logging.disable(logging.NOTSET)
+    logger = logging.getLogger("scribe.runtime_config")
+    logger.disabled = False
+    logger.propagate = True
+    logger.setLevel(logging.NOTSET)
+    logger._cache.clear()
+    yield
+
+
 def _config(**overrides: object) -> InfisicalConfig:
     values = {
         "enabled": True,
