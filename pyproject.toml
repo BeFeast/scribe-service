@@ -27,7 +27,7 @@ dependencies = [
     "bgutil-ytdlp-pot-provider==1.3.1",
     "markdown>=3.10.2",
     "prometheus-client>=0.25.0",
-    "pyjwt[crypto]>=2.10",
+    "pyjwt[crypto]>=2.13.0",
     # Cloudflare R2 (S3-compatible) client for the upload-your-own-video
     # archival copy (#408). Only used by the media-store path; the upload
     # feature stays disabled (503) until the R2 credentials are configured.
