@@ -736,6 +736,7 @@ def process_job(session, job: Job) -> None:
                             tmpdir,
                             cookies=job_cookies,
                             pot_base_url=settings.bgutil_pot_base_url or None,
+                            max_bytes=settings.download_max_bytes,
                         )
                 was_pending_key = job.video_id.startswith("pending:")
                 job.title = dl.title

@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import datetime as dt
+from urllib.parse import urlsplit
 
-from pydantic import AnyHttpUrl, AwareDatetime, BaseModel, Field
+from pydantic import AnyHttpUrl, AwareDatetime, BaseModel, Field, field_validator
 
 # Per-job YouTube cookies blob ceiling. A real Netscape cookies.txt for
 # youtube.com sits around 8–20 KB; 256 KB is a generous cap that still
@@ -16,6 +17,46 @@ YOUTUBE_COOKIES_MAX_BYTES = 256 * 1024
 # custom Capture-sheet prompt can be at most as large as a stored template.
 # pydantic rejects anything longer at the API boundary (422).
 SUMMARY_PROMPT_MAX_CHARS = 16 * 1024
+
+
+# Schemes accepted by the ingestion API. Scribe only fetches media over
+# HTTP(S); every other scheme (file://, ftp://, data:, javascript:, …) is a
+# safety hazard — a file:// URL would make yt-dlp read local paths, so the
+# scheme is rejected at the API boundary before a Job row is ever created.
+INGEST_URL_SCHEMES = ("http", "https")
+
+
+class UrlValidationError(ValueError):
+    """Raised when a submitted ingestion URL fails scheme/format checks.
+    Callers surface the message in a 422 response and in log lines. The URL
+    is not a secret, so it may appear in the message."""
+
+
+def validate_ingest_url(url: str) -> str:
+    """Validate + normalize a submitted ingestion URL.
+
+    Accepts YouTube URLs and direct HTTP(S) video/audio URLs alike — the only
+    contract enforced here is that the value is a syntactically valid http(s)
+    URL with a host. Non-HTTP(S) schemes (``file://``, ``ftp://``, ``data:``,
+    ``javascript:``) and host-less values are rejected so unsafe inputs never
+    reach the download pipeline. Returns the surrounding-whitespace-stripped
+    URL. Raises :class:`UrlValidationError` with a clear message otherwise."""
+    candidate = (url or "").strip()
+    if not candidate:
+        raise UrlValidationError("url must not be empty")
+    try:
+        parts = urlsplit(candidate)
+    except ValueError as exc:
+        raise UrlValidationError("url is not a valid URL") from exc
+    scheme = parts.scheme.lower()
+    if scheme not in INGEST_URL_SCHEMES:
+        raise UrlValidationError(
+            "url must be an http(s) URL "
+            f"(got scheme {scheme or '(none)'!r})"
+        )
+    if not parts.netloc:
+        raise UrlValidationError("url must include a host")
+    return candidate
 
 
 class CookieValidationError(ValueError):
@@ -80,6 +121,18 @@ class JobCreate(BaseModel):
     summarize: bool = True
     notify: bool = True
     summary_prompt: str | None = Field(default=None, max_length=SUMMARY_PROMPT_MAX_CHARS)
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, value: str) -> str:
+        # Reject non-HTTP(S) schemes / host-less values at request parsing so a
+        # direct-media submission is validated the same way a YouTube one is,
+        # and unsafe inputs never create a Job row (#416). The message is
+        # value-safe to echo (a URL is not a credential).
+        try:
+            return validate_ingest_url(value)
+        except UrlValidationError as exc:
+            raise ValueError(str(exc)) from None
 
 
 class PreflightResponse(BaseModel):

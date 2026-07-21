@@ -14,6 +14,7 @@ from scribe.pipeline.downloader import (
     REASON_DOWNLOAD_TIMEOUT,
     REASON_NEEDS_COOKIES,
     REASON_OTHER,
+    REASON_TOO_LARGE,
     REASON_UNAVAILABLE,
     DownloadError,
     classify_ytdlp_failure,
@@ -238,6 +239,115 @@ def test_download_audio_with_cookies_writes_0600_temp_and_passes_flag(tmp_path, 
     assert not os.path.exists(seen_paths[0])
 
 
+def test_download_audio_accepts_direct_media_url(tmp_path, monkeypatch) -> None:
+    # A direct HTTP(S) media URL flows through the same path as YouTube and
+    # produces the same DownloadResult shape (#416).
+    media = tmp_path / "clip.mp4"
+    media.write_text("video", encoding="utf-8")
+
+    def fake_run(args, **kwargs):
+        if "--dump-single-json" in args:
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                stdout=json.dumps(
+                    {
+                        "extractor_key": "generic",
+                        "id": "clip",
+                        "title": "clip.mp4",
+                        "duration": 42,
+                    }
+                ),
+                stderr="",
+            )
+        return subprocess.CompletedProcess(args, 0, stdout=f"{media}\n", stderr="")
+
+    monkeypatch.setattr(downloader, "_run_ytdlp", fake_run)
+
+    result = downloader.download_audio(
+        "https://cdn.example.com/media/clip.mp4", tmp_path
+    )
+
+    assert result.audio_path == media
+    assert result.title == "clip.mp4"
+    assert result.duration_seconds == 42
+
+
+def test_download_audio_passes_max_filesize_on_download_only(tmp_path, monkeypatch) -> None:
+    media = tmp_path / "audio.m4a"
+    media.write_text("audio", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    fake = _fake_ytdlp_success(media)
+
+    def capture(args, **kwargs):
+        seen.append(list(args))
+        return fake(args)
+
+    monkeypatch.setattr(downloader, "_run_ytdlp", capture)
+
+    downloader.download_audio(
+        "https://youtu.be/jNQXAC9IVRw", tmp_path, max_bytes=1234
+    )
+
+    assert len(seen) == 2
+    meta_args = next(a for a in seen if "--skip-download" in a)
+    dl_args = next(a for a in seen if "--skip-download" not in a)
+    # --max-filesize only bounds the actual download, never the metadata dump.
+    assert "--max-filesize" not in meta_args
+    idx = dl_args.index("--max-filesize")
+    assert dl_args[idx + 1] == "1234"
+
+
+def test_download_audio_disables_max_filesize_when_non_positive(tmp_path, monkeypatch) -> None:
+    media = tmp_path / "audio.m4a"
+    media.write_text("audio", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    fake = _fake_ytdlp_success(media)
+
+    def capture(args, **kwargs):
+        seen.append(list(args))
+        return fake(args)
+
+    monkeypatch.setattr(downloader, "_run_ytdlp", capture)
+
+    downloader.download_audio("https://youtu.be/jNQXAC9IVRw", tmp_path, max_bytes=0)
+
+    for args in seen:
+        assert "--max-filesize" not in args
+
+
+def test_download_audio_raises_too_large_on_oversize_abort(tmp_path, monkeypatch) -> None:
+    # yt-dlp can abort an oversize download with rc=0, emitting the max-filesize
+    # notice and printing no filepath. That must surface as a typed too_large
+    # error, not an IndexError (#416).
+    def fake_run(args, **kwargs):
+        if "--dump-single-json" in args:
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                stdout=json.dumps(
+                    {"extractor_key": "generic", "id": "big", "title": "big", "duration": 1}
+                ),
+                stderr="",
+            )
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout="",
+            stderr="File is larger than max-filesize (9e9 bytes > 100 bytes). Aborting.",
+        )
+
+    monkeypatch.setattr(downloader, "_run_ytdlp", fake_run)
+
+    with pytest.raises(DownloadError) as excinfo:
+        downloader.download_audio(
+            "https://cdn.example.com/big.mp4", tmp_path, max_bytes=100
+        )
+    assert excinfo.value.reason == REASON_TOO_LARGE
+
+
 @pytest.mark.parametrize(
     ("stderr", "expected"),
     [
@@ -279,6 +389,12 @@ def test_download_audio_with_cookies_writes_0600_temp_and_passes_flag(tmp_path, 
             "ERROR: [youtube] wwwwwwwwwww: The uploader has not made this "
             "video available in your country",
             REASON_UNAVAILABLE,
+        ),
+        # Oversize media — a hard size abort no retry/cookie can change (#416).
+        (
+            "ERROR: File is larger than max-filesize "
+            "(3221225472 bytes > 2147483648 bytes). Aborting.",
+            REASON_TOO_LARGE,
         ),
         # Everything else.
         ("ERROR: unable to download webpage: HTTP Error 500", REASON_OTHER),

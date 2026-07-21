@@ -59,6 +59,9 @@ NEEDS_COOKIES_RE = re.compile(
     r"|sign in to view",
     re.IGNORECASE,
 )
+# Oversize media (#416): yt-dlp aborts when the target stream exceeds
+# --max-filesize. Terminal — retrying or adding cookies cannot shrink the file.
+TOO_LARGE_RE = re.compile(r"larger than max-filesize", re.IGNORECASE)
 # Terminal-unavailable states: not retryable, not unlockable with cookies.
 UNAVAILABLE_RE = re.compile(
     r"private video"
@@ -96,6 +99,9 @@ REASON_OTHER = "other"
 # retryable bot-wall path: a timeout means yt-dlp is stuck on a network read,
 # so the process group is killed and the job fails immediately.
 REASON_DOWNLOAD_TIMEOUT = "download_timeout"
+# Media exceeded the configured --max-filesize ceiling (#416). Terminal — the
+# job fails immediately with an actionable size error, no retry.
+REASON_TOO_LARGE = "too_large"
 
 
 class DownloadError(RuntimeError):
@@ -114,12 +120,15 @@ class DownloadError(RuntimeError):
 def classify_ytdlp_failure(stderr: str) -> str:
     """Map yt-dlp stderr to a stable ``DownloadError.reason``.
 
-    Checked in priority order: ``unavailable`` first (terminal states that
-    must not be retried), then ``needs_cookies`` (gated content where a
-    cookie blob would lift the gate), then ``botwall_transient`` (the
-    soft-ban that backoff is designed for), else ``other``.
+    Checked in priority order: ``too_large`` first (a hard size abort that no
+    retry/cookie can change), then ``unavailable`` (terminal states that must
+    not be retried), then ``needs_cookies`` (gated content where a cookie blob
+    would lift the gate), then ``botwall_transient`` (the soft-ban that backoff
+    is designed for), else ``other``.
     """
     text = stderr or ""
+    if TOO_LARGE_RE.search(text):
+        return REASON_TOO_LARGE
     if UNAVAILABLE_RE.search(text):
         return REASON_UNAVAILABLE
     if NEEDS_COOKIES_RE.search(text):
@@ -389,6 +398,7 @@ def download_audio(
     cookies: str | None = None,
     pot_base_url: str | None = None,
     timeout_seconds: float | None = None,
+    max_bytes: int | None = None,
 ) -> DownloadResult:
     """Download the audio stream of `url` into `dest_dir`, return metadata + path.
 
@@ -409,10 +419,20 @@ def download_audio(
     SIGKILLed (no orphan) and ``DownloadError(reason=download_timeout)`` is
     raised so the job error + metrics surface it like any other download
     failure.
+
+    ``max_bytes`` caps the size of the fetched media (#416): it is passed to
+    yt-dlp as ``--max-filesize`` so an oversize direct-media URL (or any
+    extractor) is aborted instead of filling the scratch disk. ``None`` falls
+    back to ``settings.download_max_bytes``; a value <= 0 disables the cap
+    (tests/canary only). An oversize abort surfaces as
+    ``DownloadError(reason=too_large)`` with an actionable message.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     if timeout_seconds is None:
         timeout_seconds = float(settings.download_timeout_s)
+    if max_bytes is None:
+        max_bytes = settings.download_max_bytes
+    size_args = ["--max-filesize", str(max_bytes)] if max_bytes and max_bytes > 0 else []
     deadline = (
         time.monotonic() + timeout_seconds if timeout_seconds and timeout_seconds > 0 else None
     )
@@ -437,10 +457,22 @@ def download_audio(
         # Download the raw audio stream only (no -x / ffmpeg). ffmpeg.py resamples.
         out_tmpl = str(dest_dir / "%(id)s.%(ext)s")
         dl = _run_ytdlp([
-            *base, *cookie_args, "-f", "ba/best[height<=360]/18",
+            *base, *cookie_args, *size_args, "-f", "ba/best[height<=360]/18",
             "-o", out_tmpl, "--print", "after_move:filepath", url,
         ], deadline=deadline)
-        audio_path = Path(dl.stdout.strip().splitlines()[-1])
+        # yt-dlp may abort an oversize download with rc=0, emitting the
+        # max-filesize notice to stderr and printing no filepath (#416). Guard
+        # the empty-output case and surface a typed too_large error instead of
+        # an IndexError so the size limit fails with an actionable reason.
+        printed = dl.stdout.strip().splitlines()
+        if not printed:
+            if TOO_LARGE_RE.search(dl.stderr or ""):
+                raise DownloadError(
+                    f"media exceeds the {max_bytes} byte download limit",
+                    reason=REASON_TOO_LARGE,
+                )
+            raise DownloadError("yt-dlp produced no output file")
+        audio_path = Path(printed[-1])
         if not audio_path.is_file():
             raise DownloadError(f"yt-dlp reported {audio_path} but the file is missing")
 

@@ -174,6 +174,13 @@ class Settings(BaseSettings):
     # not a hung subprocess read).
     download_timeout_s: int = 600
 
+    # Hard ceiling on a single downloaded media file (#416). Passed to yt-dlp as
+    # --max-filesize so a direct-media URL (or any extractor) that points at an
+    # oversize stream is aborted instead of filling the scratch disk. Audio-only
+    # YouTube pulls sit far under this, so the default leaves existing behavior
+    # unchanged; a value <= 0 disables the cap (tests/canary only).
+    download_max_bytes: int = 2 * 1024 * 1024 * 1024
+
     # Vast.ai — whisper only
     vast_api_key: str = ""
     transcribe_timeout_secs: int = 1800
