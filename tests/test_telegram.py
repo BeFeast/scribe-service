@@ -44,7 +44,7 @@ class _FakeResp:
     def read(self, size: int = -1) -> bytes:
         return self._buf.read(size)
 
-    def __enter__(self) -> "_FakeResp":
+    def __enter__(self) -> _FakeResp:
         return self
 
     def __exit__(self, *exc: object) -> bool:
