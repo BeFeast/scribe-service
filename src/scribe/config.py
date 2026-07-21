@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import math
+import os
+import sys
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from ipaddress import ip_network
@@ -11,7 +15,14 @@ from typing import Any, Literal
 from pydantic import AnyHttpUrl, PrivateAttr, TypeAdapter, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from scribe.runtime_config import RuntimeConfigError, load_infisical_settings, redact_values
+from scribe.runtime_config import (
+    InfisicalBootPolicy,
+    OverlayState,
+    RuntimeConfigError,
+    load_infisical_overlay,
+    load_infisical_overlay_with_retry,
+    redact_values,
+)
 
 # Default summary fallback chain (#388). Entries are `provider:model`; the
 # generic OpenAI-compatible HTTP backend (scribe.pipeline.summary_providers)
@@ -660,7 +671,22 @@ class Settings(BaseSettings):
         return "db" if key in self._runtime_sources else "env"
 
 
-def build_settings() -> Settings:
+def _running_under_pytest() -> bool:
+    return "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ
+
+
+def _record_runtime_config_state(state: OverlayState) -> None:
+    """Publish the boot load state as a Prometheus gauge (#415). Best-effort:
+    a metrics import failure must never block startup."""
+    try:
+        from scribe.obs.metrics import runtime_config_load_state
+    except Exception:  # pragma: no cover - metrics optional at import time
+        return
+    for name in ("infisical", "disabled", "degraded"):
+        runtime_config_load_state.labels(state=name).set(1.0 if name == state else 0.0)
+
+
+def build_settings(policy: InfisicalBootPolicy | None = None) -> Settings:
     """Build process settings with Infisical taking precedence over env.
 
     Empty Infisical values are dropped from the overlay so a missing/blank
@@ -668,18 +694,55 @@ def build_settings() -> Settings:
     sidecar setup the Agent renders secrets into an env-file that the
     container entrypoint sources before pydantic runs, making the in-process
     fetch redundant; this guard makes the redundancy safe.
+
+    Boot hardening (#415): when Infisical is enabled but unreachable, a transient
+    outage must not silently leave the process on env fallback (empty provider
+    credentials) for its whole lifetime. We retry with bounded exponential
+    backoff and then fail fast — raise, so the process exits non-zero and Docker's
+    restart policy converges once Infisical recovers — unless the operator sets
+    ``SCRIBE_INFISICAL_FAIL_FAST=false`` to run degraded on env fallback. Either
+    way the degraded state is surfaced via a log line and the
+    ``scribe_runtime_config_load_state`` metric. See
+    docs/runbooks/infisical-boot-fallback.md.
     """
-    overlay = {
-        key: value
-        for key, value in load_infisical_settings(Settings.model_fields).items()
-        if value != ""
-    }
+    if policy is None:
+        policy = InfisicalBootPolicy.from_env()
+        if _running_under_pytest():
+            policy = policy.without_boot_hardening()
+
+    load = load_infisical_overlay_with_retry(
+        Settings.model_fields,
+        policy,
+        fetch=lambda keys: load_infisical_overlay(keys),
+        sleep=time.sleep,
+    )
+
+    if load.state == "degraded":
+        _record_runtime_config_state("degraded")
+        if policy.fail_fast:
+            raise RuntimeConfigError(
+                "infisical is enabled but unreachable after boot retries; refusing to "
+                "start on env fallback (set SCRIBE_INFISICAL_FAIL_FAST=false to run "
+                "degraded). See docs/runbooks/infisical-boot-fallback.md"
+            )
+        logging.getLogger("scribe.runtime_config").error(
+            "running on env fallback (DEGRADED): infisical enabled but unreachable at "
+            "boot; provider credentials may be missing and summaries will fail until "
+            "infisical recovers or the process restarts. See "
+            "docs/runbooks/infisical-boot-fallback.md"
+        )
+
+    overlay = {key: value for key, value in load.overlay.items() if value != ""}
     try:
-        return Settings(**overlay)
+        settings_obj = Settings(**overlay)
     except ValidationError as exc:
         if not overlay:
             raise
         raise RuntimeConfigError(redact_values(str(exc), overlay.values())) from None
+
+    if load.state != "degraded":
+        _record_runtime_config_state(load.state)
+    return settings_obj
 
 
 settings = build_settings()

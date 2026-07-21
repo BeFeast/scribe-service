@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Iterable, Mapping
+import time
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from typing import Literal
 
 import httpx
 
@@ -72,6 +74,89 @@ class RuntimeConfigError(RuntimeError):
     """Sanitized Infisical runtime-config failure."""
 
 
+# Boot-time load state (#415). `disabled` — Infisical not enabled/configured, so
+# env is the intended source. `infisical` — overlay fetched successfully.
+# `degraded` — Infisical is configured but was unreachable, so the process is
+# running on env fallback (which can leave provider credentials empty).
+OverlayState = Literal["disabled", "infisical", "degraded"]
+
+
+@dataclass(frozen=True)
+class OverlayLoad:
+    """Result of a runtime-config overlay load: the overlay plus its state."""
+
+    overlay: dict[str, str]
+    state: OverlayState
+
+
+@dataclass(frozen=True)
+class InfisicalBootPolicy:
+    """How `build_settings` reacts when Infisical is configured but unreachable
+    at boot (#415). A transient outage must not silently degrade the process for
+    its whole lifetime, so we retry with bounded exponential backoff and then
+    fail fast (exit non-zero, let Docker's restart policy converge) unless the
+    operator opts into running on env fallback."""
+
+    retry_enabled: bool
+    max_seconds: float
+    initial_delay_seconds: float
+    max_delay_seconds: float
+    fail_fast: bool
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str] | None = None) -> InfisicalBootPolicy:
+        source = env if env is not None else os.environ
+        return cls(
+            retry_enabled=_bool_env(source.get("SCRIBE_INFISICAL_BOOT_RETRY_ENABLED"), True),
+            max_seconds=_float_env(source.get("SCRIBE_INFISICAL_BOOT_MAX_SECONDS"), 300.0),
+            initial_delay_seconds=_float_env(
+                source.get("SCRIBE_INFISICAL_BOOT_INITIAL_DELAY_SECONDS"), 2.0
+            ),
+            max_delay_seconds=_float_env(source.get("SCRIBE_INFISICAL_BOOT_MAX_DELAY_SECONDS"), 30.0),
+            fail_fast=_bool_env(source.get("SCRIBE_INFISICAL_FAIL_FAST"), True),
+        )
+
+    def without_boot_hardening(self) -> InfisicalBootPolicy:
+        """Disable retry + fail-fast (used under pytest / one-shot loads)."""
+        return InfisicalBootPolicy(
+            retry_enabled=False,
+            max_seconds=self.max_seconds,
+            initial_delay_seconds=self.initial_delay_seconds,
+            max_delay_seconds=self.max_delay_seconds,
+            fail_fast=False,
+        )
+
+
+def load_infisical_overlay(
+    allowed_keys: Iterable[str],
+    *,
+    config: InfisicalConfig | None = None,
+    client: httpx.Client | None = None,
+    logger: logging.Logger | None = None,
+) -> OverlayLoad:
+    """Load a sanitized Settings overlay from Infisical, tagged with its state.
+
+    Returns `disabled` when Infisical is not enabled/configured, `infisical`
+    with the sanitized overlay on success, and `degraded` with an empty overlay
+    when Infisical is configured but unreachable. Returned keys are pydantic
+    Settings field names.
+    """
+    cfg = config or InfisicalConfig.from_env()
+    log = logger or logging.getLogger("scribe.runtime_config")
+    if not cfg.configured:
+        return OverlayLoad({}, "disabled")
+
+    try:
+        overlay = _fetch_overlay(allowed_keys, cfg=cfg, client=client, log=log)
+    except RuntimeConfigError as exc:
+        log.warning(
+            "infisical runtime config unavailable; using env fallback",
+            extra={"error": str(exc)},
+        )
+        return OverlayLoad({}, "degraded")
+    return OverlayLoad(overlay, "infisical")
+
+
 def load_infisical_settings(
     allowed_keys: Iterable[str],
     *,
@@ -79,16 +164,59 @@ def load_infisical_settings(
     client: httpx.Client | None = None,
     logger: logging.Logger | None = None,
 ) -> dict[str, str]:
-    """Load a sanitized Settings overlay from Infisical.
+    """Back-compatible thin wrapper returning only the overlay mapping.
 
     Returns an empty mapping when Infisical is disabled, not configured, or
-    unavailable. Returned keys are pydantic Settings field names.
+    unavailable. Prefer `load_infisical_overlay` when the caller needs to
+    distinguish a genuine env fallback from a degraded (unreachable) load.
     """
-    cfg = config or InfisicalConfig.from_env()
-    if not cfg.configured:
-        return {}
+    return load_infisical_overlay(
+        allowed_keys, config=config, client=client, logger=logger
+    ).overlay
 
-    log = logger or logging.getLogger("scribe.runtime_config")
+
+def load_infisical_overlay_with_retry(
+    allowed_keys: Iterable[str],
+    policy: InfisicalBootPolicy,
+    *,
+    fetch: Callable[[Iterable[str]], OverlayLoad] = load_infisical_overlay,
+    sleep: Callable[[float], None] = time.sleep,
+) -> OverlayLoad:
+    """Fetch the overlay, retrying with bounded exponential backoff while the
+    load is `degraded` (Infisical configured but unreachable).
+
+    Retries stop as soon as the load is no longer degraded, or once the cumulative
+    backoff budget (`policy.max_seconds`) is exhausted. `disabled`/`infisical`
+    loads return immediately. `sleep`/`fetch` are injectable for tests.
+    """
+    load = fetch(allowed_keys)
+    if load.state != "degraded" or not policy.retry_enabled:
+        return load
+
+    elapsed = 0.0
+    delay = max(policy.initial_delay_seconds, 0.0)
+    while elapsed < policy.max_seconds:
+        nap = min(delay, policy.max_seconds - elapsed)
+        if nap <= 0:
+            break
+        sleep(nap)
+        elapsed += nap
+        load = fetch(allowed_keys)
+        if load.state != "degraded":
+            return load
+        delay = min(delay * 2, policy.max_delay_seconds)
+    return load
+
+
+def _fetch_overlay(
+    allowed_keys: Iterable[str],
+    *,
+    cfg: InfisicalConfig,
+    client: httpx.Client | None,
+    log: logging.Logger,
+) -> dict[str, str]:
+    """Fetch and normalize the overlay. Raises a sanitized RuntimeConfigError on
+    any transport/parse failure (the caller decides how to react)."""
     owns_client = client is None
     http = client or httpx.Client(base_url=cfg.api_url.rstrip("/"), timeout=cfg.timeout_seconds)
     try:
@@ -96,9 +224,7 @@ def load_infisical_settings(
         project_id = _project_id(http, token, cfg.project)
         raw = _secrets(http, token, cfg, project_id)
     except (httpx.HTTPError, KeyError, TypeError, ValueError, RuntimeConfigError) as exc:
-        message = redact_text(str(exc), cfg)
-        log.warning("infisical runtime config unavailable; using env fallback", extra={"error": message})
-        return {}
+        raise RuntimeConfigError(redact_text(str(exc), cfg)) from None
     finally:
         if owns_client:
             http.close()
@@ -218,6 +344,15 @@ def _first_env(source: Mapping[str, str], *keys: str) -> str:
         if value:
             return value
     return ""
+
+
+def _float_env(value: str | None, default: float) -> float:
+    if value is None or not value.strip():
+        return default
+    try:
+        return float(value.strip())
+    except ValueError:
+        return default
 
 
 def _bool_env(value: str | None, default: bool) -> bool:
