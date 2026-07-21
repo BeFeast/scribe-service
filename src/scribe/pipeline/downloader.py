@@ -208,10 +208,18 @@ def extract_video_id(url: str) -> str:
 
 
 def initial_video_key(url: str) -> str:
+    # Telegram media references (#417) resolve to a stable telegram:<digest>
+    # key so submit-time dedup and the worker's is-telegram dispatch both see a
+    # deterministic marker (never a pending: key that would route to yt-dlp).
+    stripped = url.strip()
+    if stripped.lower().startswith("tg:"):
+        file_id = stripped[3:].strip()
+        digest = hashlib.sha256(file_id.encode("utf-8")).hexdigest()[:24]
+        return f"telegram:{digest}"
     youtube_id = parse_youtube_video_id(url)
     if youtube_id is not None:
         return youtube_id
-    digest = hashlib.sha256(url.strip().encode("utf-8")).hexdigest()[:24]
+    digest = hashlib.sha256(stripped.encode("utf-8")).hexdigest()[:24]
     return f"pending:{digest}"
 
 

@@ -30,6 +30,7 @@ _SECRET_SETTING_FIELDS = (
     "clerk_secret_key",
     "shortlink_api_key",
     "admin_telegram_bot_token",
+    "telegram_bot_token",
     "config_api_bearer_token",
     "auth_clerk_jwks_json",
 )

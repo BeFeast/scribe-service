@@ -44,6 +44,7 @@ from scribe.pipeline import (
     ffmpeg,
     media_store,
     summarizer,
+    telegram,
     transcribe_providers,
     uploads,
     whisper_client,
@@ -461,6 +462,16 @@ def _is_upload_job(job: Job) -> bool:
     return bool(job.video_id) and job.video_id.startswith("upload:")
 
 
+def _is_telegram_job(job: Job) -> bool:
+    """True for Telegram media-reference jobs (#417); False for URL/YouTube/upload.
+
+    A ``tg:<file_id>`` submission is keyed to ``telegram:<digest>`` by
+    ``downloader.initial_video_key`` at submit time, so the video_id prefix is a
+    stable, migration-free marker the worker uses to route the download stage
+    through the secure Telegram adapter instead of yt-dlp."""
+    return bool(job.video_id) and job.video_id.startswith("telegram:")
+
+
 def _archive_object_key(transcript: Transcript, ext: str) -> str:
     """Stable, per-transcript R2 object key for the archival media copy."""
     safe_video = transcript.video_id.replace(":", "_").replace("/", "_")
@@ -686,6 +697,11 @@ def process_job(session, job: Job) -> None:
     # for URL/YouTube jobs, so every `archive_source=upload_source` below is a
     # no-op for them and their pipeline stays byte-identical to today.
     is_upload = _is_upload_job(job)
+    # Telegram media references (#417) skip yt-dlp: the download stage resolves
+    # the opaque `tg:<file_id>` through the secure adapter (Bot API getFile +
+    # download) and presents a DownloadResult so the rest of the pipeline is
+    # unchanged. Mutually exclusive with is_upload (distinct video_id prefixes).
+    is_telegram = _is_telegram_job(job)
     upload_source = uploads.find_source(job_id) if is_upload else None
     try:
         try:
@@ -724,6 +740,13 @@ def process_job(session, job: Job) -> None:
                         duration_seconds=probe.duration_seconds,
                         source_platform="upload",
                     )
+                elif is_telegram:
+                    # Telegram jobs resolve+download through the secure adapter.
+                    # A TelegramRefError (expired/inaccessible/oversize/not
+                    # configured) carries a user-facing, secret-free message that
+                    # lands in job.error via the outer handler below.
+                    with _time_stage("download"):
+                        dl = telegram.resolve_and_download(job.url, tmpdir)
                 else:
                     # Per-job YouTube cookies (#313): the API handler stashed
                     # the validated blob keyed by job_id; take it once and let
