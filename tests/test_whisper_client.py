@@ -20,8 +20,9 @@ def _offer(
     cuda: float = 12.8,
     reliability: float = 0.99,
     inet_down: float = 1000.0,
+    gpu_frac: float | None = None,
 ) -> dict:
-    return {
+    offer = {
         "id": offer_id,
         "gpu_name": gpu_name,
         "dph_total": price,
@@ -29,6 +30,9 @@ def _offer(
         "reliability": reliability,
         "inet_down": inet_down,
     }
+    if gpu_frac is not None:
+        offer["gpu_frac"] = gpu_frac
+    return offer
 
 
 _BROADENED_FIXTURE_OFFERS = [
@@ -96,6 +100,36 @@ def test_select_offers_raises_with_clear_message_when_pool_is_empty(monkeypatch)
             gpu_regex=r"\bRTX\s+4090\b",
             min_cuda=12.4,
         )
+
+
+def test_select_offers_rejects_fractional_gpu_slices(monkeypatch):
+    """#421: cheapest market offers are often gpu_frac=0.25 slices that still
+    advertise full gpu_ram. Loading large-v3-turbo OOMs them and SSH drops
+    mid-job. Only dedicated GPUs (gpu_frac≈1, or missing field) must match."""
+    captured: list[dict] = []
+
+    def fake_vast(_api_key, _method, _path, payload=None, timeout=60):
+        captured.append(payload or {})
+        return {
+            "offers": [
+                _offer(1, "RTX 5060 Ti", price=0.07, gpu_frac=0.25),
+                _offer(2, "RTX 5060 Ti", price=0.08, gpu_frac=0.5),
+                _offer(3, "RTX 5060 Ti", price=0.09, gpu_frac=1.0),
+                _offer(4, "RTX A4000", price=0.10),  # missing gpu_frac → dedicated
+            ],
+        }
+
+    monkeypatch.setattr(whisper_client, "_vast", fake_vast)
+
+    candidates = _select_offers(
+        "vast-test-key",
+        max_price=3.0,
+        gpu_regex=settings.vast_gpu_regex,
+        min_cuda=12.4,
+    )
+
+    assert [offer["id"] for offer in candidates] == [3, 4]
+    assert captured and captured[0].get("gpu_frac") == {"eq": 1.0}
 
 
 def test_select_offers_respects_caller_overrides(monkeypatch):
