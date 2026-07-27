@@ -209,6 +209,9 @@ def _select_offers(
         "limit": 400, "type": "on-demand",
         "rentable": {"eq": True}, "rented": {"eq": False}, "verified": {"eq": True},
         "gpu_ram": {"gte": 16000}, "num_gpus": {"eq": 1},
+        # Fractional slices still advertise full gpu_ram; require a whole GPU
+        # so large-v3-turbo does not OOM-kill the container mid-SSH (#421).
+        "gpu_frac": {"eq": 1.0},
     }
     offers = _vast(api_key, "POST", "/bundles/", query, timeout=60).get("offers", [])
     pattern = re.compile(gpu_regex, re.IGNORECASE)
@@ -217,6 +220,12 @@ def _select_offers(
         price = float(offer.get("dph_total") or 999)
         cuda = float(offer.get("cuda_max_good") or 0)
         reliability = float(offer.get("reliability") or offer.get("reliability2") or 0)
+        # Missing gpu_frac → treat as dedicated (back-compat with fixtures /
+        # older market payloads). Anything < 1.0 is a slice and is rejected.
+        try:
+            gpu_frac = float(offer["gpu_frac"]) if offer.get("gpu_frac") is not None else 1.0
+        except (TypeError, ValueError):
+            gpu_frac = 0.0
         host_id_raw = offer.get("host_id")
         try:
             host_id = int(host_id_raw) if host_id_raw is not None else None
@@ -225,11 +234,13 @@ def _select_offers(
         if host_id is not None and host_id in excluded:
             continue
         if (price <= max_price and cuda >= min_cuda and reliability >= 0.90
+                and gpu_frac >= 0.999
                 and pattern.search(str(offer.get("gpu_name") or ""))):
             candidates.append(offer)
     if not candidates:
         raise WhisperError(
-            f"no Vast offer matched (max_price={max_price}, cuda_max_good>={min_cuda}, gpu_regex, reliability>=0.90)"
+            f"no Vast offer matched (max_price={max_price}, cuda_max_good>={min_cuda}, "
+            f"gpu_frac>=1.0, gpu_regex, reliability>=0.90)"
         )
     # Cheapest first; prefer high reliability and a fast network on ties so the
     # CUDA image pull does not eat the ready-timeout budget.
