@@ -27,7 +27,7 @@ import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import select
@@ -57,6 +57,10 @@ log = logging.getLogger("scribe.worker")
 _POLL_INTERVAL = 5.0
 # Loop tick in milliseconds — surfaced by the ops rollcall ("loop tick {LOOP_TICK_MS}ms").
 LOOP_TICK_MS = int(_POLL_INTERVAL * 1000)
+# Floor between destroy-retry attempts for one job. Re-firing on every 5s
+# poll tick during a Vast rate-limit episode keeps the per-endpoint limiter
+# tripped (a stable failure attractor — job 491, 2026-08-08).
+_VAST_DESTROY_RETRY_FLOOR_SECONDS = 60.0
 _WEBHOOK_TIMEOUT_S = 10.0
 # Base retry schedule for webhook delivery. Each interval is randomized with
 # ±10% partial jitter before sleeping, so concurrent deliveries to a
@@ -191,7 +195,21 @@ def _time_stage(stage: str):
 def _set_job_status(session, job: Job, status: JobStatus) -> None:
     """Update Job.status, count the transition, commit."""
     if status == JobStatus.done and job.destroy_failed_at is not None:
-        raise RuntimeError(f"job {job.id} cannot be marked done while Vast destroy is unconfirmed")
+        # The transcript is paid work — finish the job regardless; the destroy
+        # sweep + reaper (both status-independent) own the cleanup. Only when
+        # the last failure is older than the sweep floor do we take one
+        # synchronous last-chance destroy here: a younger timestamp means the
+        # teardown just exhausted its retries seconds ago, and re-firing into
+        # the same rate-limit window (while holding this session's row locks)
+        # is exactly what the floor exists to prevent.
+        age = datetime.now(UTC) - job.destroy_failed_at
+        if age >= timedelta(seconds=_VAST_DESTROY_RETRY_FLOOR_SECONDS):
+            _retry_job_vast_destroy(job)
+        if job.destroy_failed_at is not None:
+            log.warning(
+                "job marked done with unconfirmed Vast destroy; sweep/reaper continue cleanup",
+                extra={"job_id": job.id, "vast_instance_id": job.vast_instance_id},
+            )
     transition_job_status(session, job, status)
 
 
@@ -238,21 +256,35 @@ def _retry_job_vast_destroy(job: Job) -> bool:
         return True
     api_key = settings.vast_api_key.strip()
     if not api_key:
-        job.destroy_failed_at = datetime.now(UTC)
+        # No attempt was made — leave the timestamp alone so it keeps meaning
+        # "last actual destroy attempt" for the sweep's backoff floor.
         return False
     try:
         whisper_client._destroy_instance(api_key, job.vast_instance_id)
-    except Exception:
+    except Exception as exc:
         job.destroy_failed_at = datetime.now(UTC)
+        log.warning(
+            "vast destroy retry failed",
+            extra={
+                "job_id": job.id,
+                "vast_instance_id": job.vast_instance_id,
+                "error": str(exc),
+            },
+        )
         return False
     job.destroy_failed_at = None
     return True
 
 
 def retry_failed_vast_destroys(session) -> int:
+    floor = datetime.now(UTC) - timedelta(seconds=_VAST_DESTROY_RETRY_FLOOR_SECONDS)
     jobs = session.scalars(
         select(Job)
-        .where(Job.vast_instance_id.is_not(None), Job.destroy_failed_at.is_not(None))
+        .where(
+            Job.vast_instance_id.is_not(None),
+            Job.destroy_failed_at.is_not(None),
+            Job.destroy_failed_at <= floor,
+        )
         .order_by(Job.id)
         .with_for_update(skip_locked=True)
     ).all()

@@ -10,8 +10,10 @@ display driver / cuda driver combination" failure seen on 2026-05-14).
 """
 from __future__ import annotations
 
+import http.client
 import json
 import queue
+import random
 import shlex
 import socket
 import subprocess
@@ -54,6 +56,14 @@ class VastInstanceFailedError(WhisperError):
 
 class VastReadyTimeoutError(WhisperError):
     """Vast container did not become ready within the per-attempt ready budget."""
+
+
+class VastRateLimitedError(WhisperError):
+    """Vast API kept returning HTTP 429 after the client's bounded retries.
+
+    Distinct type (rather than substring matching on the message) so the
+    provider layer can classify sustained rate-limit pressure as usage_limit
+    without misreading aggregated errors that merely embed "HTTP 429"."""
 
 
 class VastBudgetExceededError(WhisperError):
@@ -155,19 +165,128 @@ def _run(cmd: list[str], *, check: bool = True, timeout: int | None = None) -> s
     return proc
 
 
-def _vast(api_key: str, method: str, path: str, payload: dict | None = None, timeout: int = 45) -> dict:
+# Vast rate-limits per endpoint + per identity as a minimum interval between
+# requests (documented endpoint thresholds are ~1.0-4.5s) and sends no
+# Retry-After header, so clients must bring their own backoff — both official
+# Vast clients retry 429 out of the box. The base delay starts above the
+# largest documented threshold so the first retry can already clear the
+# closed interval; the 429 JSON body sometimes carries a `retry_after` hint.
+_VAST_RETRY_HTTP_CODES = frozenset({408, 429, 502, 503, 504})
+_VAST_RETRY_ATTEMPTS = 4
+_VAST_RETRY_BASE_SECONDS = 2.5
+_VAST_RETRY_MAX_SLEEP_SECONDS = 30.0
+# Hard cap on cumulative backoff per call so server hints cannot stretch one
+# API call into minutes while an instance is billing.
+_VAST_RETRY_MAX_TOTAL_SLEEP_SECONDS = 45.0
+# Indirection so tests can stub pacing/transport/jitter deterministically
+# without patching the process-global stdlib modules.
+_sleep = time.sleep
+_urlopen = urllib.request.urlopen
+
+
+def _jitter() -> float:
+    return random.uniform(0.0, 1.0)
+
+
+def _retry_hint_seconds(headers, detail: str) -> float | None:
+    """Server-suggested wait: Retry-After header (documented absent, honored
+    if present and numeric) falling back to the `retry_after` JSON-body field
+    (observed live: 10-17s)."""
+    candidates: list[object] = []
+    if headers is not None:
+        candidates.append(headers.get("Retry-After"))
+    if detail:
+        try:
+            parsed = json.loads(detail)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            candidates.append(parsed.get("retry_after"))
+    for value in candidates:
+        try:
+            seconds = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+        if seconds >= 0:
+            return seconds
+    return None
+
+
+def vast_api_request(
+    api_key: str,
+    method: str,
+    path: str,
+    payload: dict | None = None,
+    *,
+    timeout: int = 45,
+    error_factory: Callable[[str], Exception] = WhisperError,
+    retry_codes: frozenset[int] = _VAST_RETRY_HTTP_CODES,
+    retry_network: bool = True,
+    attempts: int = _VAST_RETRY_ATTEMPTS,
+) -> dict:
+    """One Vast API call with bounded retry on 429/transient failures.
+
+    Shared by the whisper client, the orphan reaper, and the budget monitor
+    (each with its own `error_factory`). Non-idempotent calls (instance
+    create) must pass `retry_codes=frozenset({429})` and
+    `retry_network=False`: a 429 is rejected before processing, while
+    5xx/timeout/network failures are ambiguous — a blind resend could
+    double-create a billing instance.
+    """
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {"Authorization": f"Bearer {api_key}"}
     if data is not None:
         headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(f"{VAST_API}{path}", data=data, method=method, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise WhisperError(f"Vast API {method} {path}: HTTP {exc.code}: {detail}") from exc
-    return json.loads(body) if body.strip() else {}
+    attempts = max(1, attempts)
+    slept = 0.0
+    message = f"Vast API {method} {path}: retries exhausted"
+
+    def _pause(delay: float) -> None:
+        nonlocal slept
+        remaining = _VAST_RETRY_MAX_TOTAL_SLEEP_SECONDS - slept
+        wait = min(delay + _jitter(), remaining)
+        if wait > 0:
+            _sleep(wait)
+            slept += wait
+
+    for attempt in range(attempts):
+        req = urllib.request.Request(f"{VAST_API}{path}", data=data, method=method, headers=headers)
+        delay = min(_VAST_RETRY_BASE_SECONDS * (2**attempt), _VAST_RETRY_MAX_SLEEP_SECONDS)
+        try:
+            with _urlopen(req, timeout=timeout) as resp:
+                body = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            message = f"Vast API {method} {path}: HTTP {exc.code}: {detail}"
+            if exc.code not in retry_codes or attempt + 1 >= attempts:
+                if exc.code == 429 and error_factory is WhisperError:
+                    raise VastRateLimitedError(message) from exc
+                raise error_factory(message) from exc
+            hint = _retry_hint_seconds(exc.headers, detail)
+            if hint is not None:
+                delay = min(max(delay, hint), _VAST_RETRY_MAX_SLEEP_SECONDS)
+            _pause(delay)
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
+            message = f"Vast API {method} {path}: {exc}"
+            if not retry_network or attempt + 1 >= attempts:
+                raise error_factory(message) from exc
+            _pause(delay)
+        else:
+            return json.loads(body) if body.strip() else {}
+    # Unreachable while attempts >= 1 (every branch above returns or raises);
+    # kept as a guard against a misconfigured attempts constant.
+    raise error_factory(message)
+
+
+def _vast(
+    api_key: str,
+    method: str,
+    path: str,
+    payload: dict | None = None,
+    timeout: int = 45,
+    **retry_kwargs,
+) -> dict:
+    return vast_api_request(api_key, method, path, payload, timeout=timeout, **retry_kwargs)
 
 
 # --- ssh key ------------------------------------------------------------
@@ -286,7 +405,19 @@ def _create_instance(api_key: str, offer: dict, public_key: str) -> int:
         "cancel_unavail": True, "template_hash_id": None, "user": None,
         "runtype": "ssh_direc ssh_proxy",
     }
-    resp = _vast(api_key, "PUT", f"/asks/{offer['id']}/", payload, timeout=60)
+    # Create is non-idempotent and starts billing server-side: only a 429
+    # (rejected before processing) is safe to resend. An ambiguous 5xx or
+    # network failure must fail this offer — a blind resend could create a
+    # second, untracked billing instance.
+    resp = _vast(
+        api_key,
+        "PUT",
+        f"/asks/{offer['id']}/",
+        payload,
+        timeout=60,
+        retry_codes=frozenset({429}),
+        retry_network=False,
+    )
     iid = resp.get("new_contract") or resp.get("id") or resp.get("instance_id")
     if not iid:
         raise WhisperError(f"Vast create response missing instance id: {resp}")
@@ -297,12 +428,42 @@ def _create_instance(api_key: str, offer: dict, public_key: str) -> int:
     return int(iid)
 
 
+# Documented min-interval for GET /instances/{id}/ is ~2s; give the confirm
+# read its own window instead of bursting it right behind the DELETE (the
+# exact burst that tripped `endpoint threshold=2.0*1.0` on job 491).
+_DESTROY_CONFIRM_DELAY_SECONDS = 2.0
+# Teardown gets a reduced retry budget: it is called from the worker claim
+# loop and job finalize, and it already has its own retry layers (destroy
+# sweep + reaper), so blocking a worker thread for minutes buys nothing.
+_VAST_DESTROY_ATTEMPTS = 2
+
+
+def _is_gone_error(exc: BaseException) -> bool:
+    text = str(exc)
+    return "HTTP 404" in text or "HTTP 410" in text
+
+
 def _destroy_instance(api_key: str, instance_id: int) -> None:
-    _vast(api_key, "DELETE", f"/instances/{instance_id}/", {}, timeout=45)
     try:
-        confirm = _vast(api_key, "GET", f"/instances/{instance_id}/", timeout=45)
+        _vast(
+            api_key, "DELETE", f"/instances/{instance_id}/", {},
+            timeout=45, attempts=_VAST_DESTROY_ATTEMPTS,
+        )
     except WhisperError as exc:
-        if "HTTP 404" in str(exc):
+        # Likely already gone (a prior DELETE landed but its confirm failed) —
+        # that must read as success or the destroy sweep re-fires this DELETE
+        # forever. Still fall through to the confirm below instead of trusting
+        # the DELETE-404 alone.
+        if not _is_gone_error(exc):
+            raise
+    _sleep(_DESTROY_CONFIRM_DELAY_SECONDS)
+    try:
+        confirm = _vast(
+            api_key, "GET", f"/instances/{instance_id}/",
+            timeout=45, attempts=_VAST_DESTROY_ATTEMPTS,
+        )
+    except WhisperError as exc:
+        if _is_gone_error(exc):
             return
         raise
     if confirm.get("instances") is None:
@@ -508,6 +669,7 @@ def _transcribe_impl(
     deadline = started + MAX_INSTANCE_SECONDS
     last_err: Exception | None = None
     attempts = 0
+    vanished = 0
     # Per-job host blacklist: hosts whose offers failed to start in this run
     # are skipped on subsequent attempts so we don't pick a sibling offer
     # from the same broken physical box (e.g. NVIDIA driver mismatch).
@@ -543,6 +705,16 @@ def _transcribe_impl(
                     file=sys.stderr,
                 )
                 instance_id = None
+                vanished += 1
+                if vanished >= offer_attempts * 3:
+                    print(
+                        "Notice: too many vanished Vast offers; stopping this round",
+                        file=sys.stderr,
+                    )
+                    break
+                # Pace the create endpoint: back-to-back PUT /asks/ across a
+                # contended market is a self-inflicted rate-limit burst.
+                _sleep(1.0)
                 continue
             attempts += 1
             print(f"Warning: Vast offer {offer.get('id')} unusable: {exc}", file=sys.stderr)
@@ -581,6 +753,13 @@ def _transcribe_impl(
             ):
                 excluded_hosts.add(offer_host_id)
             if instance_id is not None:
+                # Deliberately NOT wrapped: the job has a single bookkeeping
+                # slot (vast_instance_id/destroy_failed_at), so if this
+                # destroy fails and we moved on to another offer, the next
+                # on_instance_created would overwrite this instance's record
+                # and orphan it silently. Failing the job keeps the sweep +
+                # reaper pointed at the right instance; with retries in the
+                # client a failure here already signals a persistent outage.
                 context.destroy_instance()
                 instance_id = None
             host = port = None
@@ -634,7 +813,15 @@ def _transcribe_impl(
                 vast_cost=price * elapsed / 3600 if price else 0.0,
             )
     finally:
-        context.destroy_instance()
+        try:
+            context.destroy_instance()
+        except Exception as destroy_exc:
+            # A rate-limited teardown must not discard a finished (paid)
+            # transcription; the destroy sweep + reaper own the retry.
+            print(
+                f"Warning: Vast destroy after transcription failed (sweep will retry): {destroy_exc}",
+                file=sys.stderr,
+            )
 
 
 def transcribe(
@@ -685,7 +872,14 @@ def transcribe(
         result = results.get(timeout=timeout_secs)
     except queue.Empty as exc:
         context.cancel()
-        context.destroy_instance()
+        try:
+            context.destroy_instance()
+        except Exception as destroy_exc:
+            # Keep the timeout as the job's error; cleanup is the sweep's job.
+            print(
+                f"Warning: Vast destroy on timeout failed (sweep will retry): {destroy_exc}",
+                file=sys.stderr,
+            )
         raise TranscribeTimeoutError(f"transcribe timed out after {timeout_secs}s") from exc
     if isinstance(result, BaseException):
         raise result
