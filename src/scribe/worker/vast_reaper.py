@@ -3,16 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
-import json
 import logging
 import re
-import urllib.error
-import urllib.request
 from typing import Any
 
 from scribe.config import settings
 from scribe.obs import metrics
-from scribe.pipeline.whisper_client import VAST_API
+from scribe.pipeline.whisper_client import vast_api_request
 from scribe.worker.vast_budget import instance_burn
 
 log = logging.getLogger("scribe.worker.vast_reaper")
@@ -32,20 +29,9 @@ class VastReaperError(RuntimeError):
 
 
 def _vast(api_key: str, method: str, path: str, payload: dict[str, Any] | None = None, timeout: int = 45) -> dict:
-    data = None if payload is None else json.dumps(payload).encode("utf-8")
-    headers = {"Authorization": f"Bearer {api_key}"}
-    if data is not None:
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(f"{VAST_API}{path}", data=data, method=method, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise VastReaperError(f"Vast API {method} {path}: HTTP {exc.code}: {detail}") from exc
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise VastReaperError(f"Vast API {method} {path}: {exc}") from exc
-    return json.loads(body) if body.strip() else {}
+    # Shared retrying client: a momentary 429 must not abort a whole sweep —
+    # the reaper is the safety net that has to survive rate-limit episodes.
+    return vast_api_request(api_key, method, path, payload, timeout=timeout, error_factory=VastReaperError)
 
 
 def _instance_label(instance: dict[str, Any]) -> str:

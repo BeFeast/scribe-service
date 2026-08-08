@@ -358,3 +358,73 @@ def test_reap_reason_predicate_cost_takes_priority():
         )
         == "age"
     )
+
+
+def test_reaper_vast_client_retries_429_and_raises_reaper_error(monkeypatch):
+    """The reaper shares the retrying Vast client (#426): transient 429s are
+    absorbed; exhaustion surfaces as VastReaperError, not WhisperError."""
+    import io
+    import urllib.error
+
+    from scribe.pipeline import whisper_client
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(whisper_client, "_sleep", sleeps.append)
+    monkeypatch.setattr(whisper_client, "_jitter", lambda: 0.0)
+
+    def fake_urlopen(_req, timeout=45):
+        raise urllib.error.HTTPError(
+            "https://console.vast.ai/api/v0/instances/",
+            429,
+            "err",
+            {},
+            io.BytesIO(b"API requests too frequent"),
+        )
+
+    monkeypatch.setattr(whisper_client, "_urlopen", fake_urlopen)
+
+    import pytest
+
+    with pytest.raises(vast_reaper.VastReaperError, match="HTTP 429"):
+        vast_reaper._vast("k", "GET", "/instances/")
+    assert sleeps == [2.5, 5.0, 10.0]
+
+
+def test_reaper_sweep_continues_past_failed_destroy(monkeypatch):
+    """One rate-limited DELETE must not stop the sweep from reaping the
+    remaining eligible instances (#426)."""
+    counter = _patch_counter(monkeypatch)
+    calls: list[tuple[str, str]] = []
+    now = dt.datetime(2026, 8, 8, 12, 0, tzinfo=dt.UTC)
+
+    def fake_vast(_api_key, method, path, payload=None, timeout=45, **_retry_kwargs):
+        calls.append((method, path))
+        if method == "GET":
+            return {
+                "instances": [
+                    {
+                        "id": 100,
+                        "label": "devbox-scribe-whisper-20260808T090000Z",
+                        "actual_status": "running",
+                    },
+                    {
+                        "id": 200,
+                        "label": "devbox-scribe-whisper-20260808T090100Z",
+                        "actual_status": "running",
+                    },
+                ]
+            }
+        if path == "/instances/100/":
+            raise vast_reaper.VastReaperError(
+                "Vast API DELETE /instances/100/: HTTP 429: too frequent"
+            )
+        return {}
+
+    monkeypatch.setattr(vast_reaper, "_vast", fake_vast)
+
+    reaped = vast_reaper.reap_vast_orphans(api_key="fixture-key", now=now)
+
+    assert reaped == 2  # both attempted
+    assert ("DELETE", "/instances/100/") in calls
+    assert ("DELETE", "/instances/200/") in calls
+    assert counter.value == 2

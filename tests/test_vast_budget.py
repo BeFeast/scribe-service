@@ -262,7 +262,10 @@ def test_fetch_instances_calls_v0_instances_endpoint(monkeypatch) -> None:
         assert timeout == 45
         return FakeResp()
 
-    monkeypatch.setattr(vast_budget.urllib.request, "urlopen", fake_urlopen)
+    # fetch_instances now goes through the shared retrying Vast client (#426).
+    from scribe.pipeline import whisper_client
+
+    monkeypatch.setattr(whisper_client, "_urlopen", fake_urlopen)
 
     assert vast_budget.fetch_instances("fixture-key") == [{"id": 401}]
     assert requests[0].full_url == "https://console.vast.ai/api/v0/instances/"

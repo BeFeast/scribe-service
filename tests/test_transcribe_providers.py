@@ -334,6 +334,38 @@ def test_vast_provider_translates_whisper_error(monkeypatch) -> None:
     assert "no Vast instance" in exc.value.details
 
 
+def test_vast_provider_classifies_post_retry_429_as_usage_limit(monkeypatch) -> None:
+    """A typed VastRateLimitedError (429 survived the client's bounded
+    retries, #426) is rate-limit pressure, not an outage."""
+    from scribe.pipeline.whisper_client import VastRateLimitedError
+
+    def boom(*_a, **_k):
+        raise VastRateLimitedError(
+            "Vast API GET /instances/47189946/: HTTP 429: too frequent"
+        )
+
+    monkeypatch.setattr(transcribe_providers.whisper_client, "transcribe", boom)
+    with pytest.raises(TranscribeProviderUsageLimitError) as exc:
+        VastProvider().transcribe(_req())
+    assert exc.value.reason == "vast_rate_limited"
+
+
+def test_vast_provider_aggregated_429_text_stays_unavailable(monkeypatch) -> None:
+    """An offers-exhausted error that merely EMBEDS "HTTP 429" text (last
+    per-offer error) must not be misread as rate-limit pressure (#426)."""
+
+    def boom(*_a, **_k):
+        raise WhisperError(
+            "no Vast instance became ready; last error: Vast API GET /instances/: "
+            "HTTP 429: too frequent; blacklisted host_ids=[]"
+        )
+
+    monkeypatch.setattr(transcribe_providers.whisper_client, "transcribe", boom)
+    with pytest.raises(TranscribeProviderUnavailableError) as exc:
+        VastProvider().transcribe(_req())
+    assert exc.value.reason == "vast_unavailable"
+
+
 def test_vast_provider_propagates_wallclock_timeout(monkeypatch) -> None:
     def boom(*_a, **_k):
         raise TranscribeTimeoutError("transcribe timed out after 1800s")

@@ -46,6 +46,7 @@ from scribe.pipeline.summary_providers import CircuitBreaker
 from scribe.pipeline.whisper_client import (
     TranscribeResult,
     TranscribeTimeoutError,
+    VastRateLimitedError,
     WhisperError,
 )
 
@@ -329,8 +330,10 @@ class VastProvider:
     keeps the exact Vast bookkeeping the worker relied on. `WhisperError`
     (offers exhausted, instance never ready, container failed) is translated
     into `TranscribeProviderUnavailableError` so the chain falls through to a
-    configured fallback; the `TranscribeTimeoutError` wall-clock guard is left
-    to propagate (hard abort).
+    configured fallback; a `VastRateLimitedError` (post-retry 429) becomes
+    `TranscribeProviderUsageLimitError` ("vast_rate_limited"); the
+    `TranscribeTimeoutError` wall-clock guard is left to propagate (hard
+    abort).
     """
 
     name = "vast"
@@ -369,6 +372,14 @@ class VastProvider:
             # Whole-job wall-clock budget elapsed — do not chain to a slower
             # provider; let the worker fail the job with the original error.
             raise
+        except VastRateLimitedError as exc:
+            # Post-retry 429: sustained rate-limit pressure, not an outage —
+            # classify like the hosted providers so metrics and webhooks
+            # distinguish it from vast_unavailable. (Typed check: aggregated
+            # errors that merely embed "HTTP 429" text stay unavailable.)
+            raise TranscribeProviderUsageLimitError(
+                reason="vast_rate_limited", details=str(exc)
+            ) from exc
         except WhisperError as exc:
             raise TranscribeProviderUnavailableError(
                 reason="vast_unavailable", details=str(exc)

@@ -185,6 +185,8 @@ def test_transcribe_impl_skips_vanished_offer_without_consuming_attempt(monkeypa
     offers were tried even though `vast_offer_attempts=1`."""
     _stub_run_context_dependencies(monkeypatch, tmp_path)
     monkeypatch.setattr(settings, "vast_offer_attempts", 1)
+    sleeps: list[float] = []
+    monkeypatch.setattr(whisper_client, "_sleep", sleeps.append)
 
     fixture_offers = [
         _offer(101, "RTX 3090", price=0.30),  # vanishes
@@ -233,6 +235,8 @@ def test_transcribe_impl_skips_vanished_offer_without_consuming_attempt(monkeypa
 
     assert create_calls == [101, 102]
     assert destroyed == [9001]
+    # The vanished branch paces the create endpoint (#426).
+    assert sleeps == [1.0]
 
 
 def test_transcribe_impl_reads_tunables_from_settings(monkeypatch, tmp_path):
@@ -307,3 +311,321 @@ def test_transcribe_impl_invokes_monthly_cap_check_before_provisioning(monkeypat
 
     assert select_calls == []
     assert create_calls == []
+
+
+# --- Vast API 429 retry/backoff (#426) -----------------------------------
+
+
+def _http_error(code: int, body: str, headers: dict | None = None):
+    import io
+    import urllib.error
+
+    return urllib.error.HTTPError(
+        "https://console.vast.ai/api/v0/test/",
+        code,
+        "err",
+        headers or {},
+        io.BytesIO(body.encode("utf-8")),
+    )
+
+
+class _FakeResponse:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def _patch_retry_pacing(monkeypatch) -> list[float]:
+    sleeps: list[float] = []
+    monkeypatch.setattr(whisper_client, "_sleep", sleeps.append)
+    monkeypatch.setattr(whisper_client, "_jitter", lambda: 0.0)
+    return sleeps
+
+
+def test_vast_api_request_retries_429_then_succeeds(monkeypatch):
+    """One transient per-endpoint 429 (job 491's killer) must be absorbed by
+    bounded backoff instead of surfacing as WhisperError."""
+    sleeps = _patch_retry_pacing(monkeypatch)
+    calls: list[int] = []
+
+    def fake_urlopen(_req, timeout=45):
+        calls.append(timeout)
+        if len(calls) < 3:
+            raise _http_error(429, "API requests too frequent: endpoint threshold=2.0*1.0")
+        return _FakeResponse(b'{"ok": true}')
+
+    monkeypatch.setattr(whisper_client, "_urlopen", fake_urlopen)
+
+    assert whisper_client.vast_api_request("k", "GET", "/instances/1/") == {"ok": True}
+    assert len(calls) == 3
+    assert sleeps == [2.5, 5.0]
+
+
+def test_vast_api_request_exhausts_retries_and_raises(monkeypatch):
+    sleeps = _patch_retry_pacing(monkeypatch)
+
+    def fake_urlopen(_req, timeout=45):
+        raise _http_error(429, "API requests too frequent")
+
+    monkeypatch.setattr(whisper_client, "_urlopen", fake_urlopen)
+
+    # Typed post-retry 429 so the provider layer can classify rate-limit
+    # pressure without substring-matching aggregated error text.
+    with pytest.raises(whisper_client.VastRateLimitedError, match="HTTP 429"):
+        whisper_client.vast_api_request("k", "GET", "/instances/1/")
+    assert sleeps == [2.5, 5.0, 10.0]
+
+
+def test_vast_api_request_honors_retry_after_body_hint(monkeypatch):
+    """Vast sends no Retry-After header, but the 429 JSON body sometimes
+    carries `retry_after` (observed 10s/17s in production) — honor it when it
+    exceeds the computed backoff."""
+    sleeps = _patch_retry_pacing(monkeypatch)
+    calls: list[int] = []
+
+    def fake_urlopen(_req, timeout=45):
+        calls.append(1)
+        if len(calls) == 1:
+            raise _http_error(429, '{"detail": "too frequent", "retry_after": 17}')
+        return _FakeResponse(b"{}")
+
+    monkeypatch.setattr(whisper_client, "_urlopen", fake_urlopen)
+
+    assert whisper_client.vast_api_request("k", "GET", "/instances/1/") == {}
+    assert sleeps == [17.0]
+
+
+def test_vast_api_request_does_not_retry_client_errors(monkeypatch):
+    """4xx (except 408/429) must fail fast — e.g. the no_such_ask offer race
+    relies on the immediate HTTP 400 surfacing to the offer loop."""
+    sleeps = _patch_retry_pacing(monkeypatch)
+    calls: list[int] = []
+
+    def fake_urlopen(_req, timeout=45):
+        calls.append(1)
+        raise _http_error(400, '{"error": "no_such_ask", "msg": "ask is not available"}')
+
+    monkeypatch.setattr(whisper_client, "_urlopen", fake_urlopen)
+
+    with pytest.raises(WhisperError, match="HTTP 400"):
+        whisper_client.vast_api_request("k", "PUT", "/asks/1/", {})
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_vast_api_request_retries_network_errors_as_whisper_error(monkeypatch):
+    import urllib.error
+
+    sleeps = _patch_retry_pacing(monkeypatch)
+    calls: list[int] = []
+
+    def fake_urlopen(_req, timeout=45):
+        calls.append(1)
+        if len(calls) < 2:
+            raise urllib.error.URLError("connection reset")
+        return _FakeResponse(b'{"ok": true}')
+
+    monkeypatch.setattr(whisper_client, "_urlopen", fake_urlopen)
+
+    assert whisper_client.vast_api_request("k", "GET", "/instances/") == {"ok": True}
+    assert sleeps == [2.5]
+
+
+def test_transcribe_returns_result_when_final_destroy_fails(monkeypatch, tmp_path):
+    """#426 D2: a rate-limited teardown after a successful transcription must
+    not discard the finished (paid) transcript — the destroy sweep + reaper
+    own the cleanup retry via the on_destroy_failed bookkeeping."""
+    import subprocess
+
+    _stub_run_context_dependencies(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        whisper_client, "_select_offers", lambda *_a, **_k: [_offer(1, "RTX 3090", price=0.3)]
+    )
+    monkeypatch.setattr(whisper_client, "_create_instance", lambda *_a, **_k: 4242)
+    monkeypatch.setattr(whisper_client, "_wait_for_ssh", lambda *_a, **_k: ("gpu.example", 22))
+    monkeypatch.setattr(whisper_client, "_wait_remote_ready", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        whisper_client, "_run", lambda *_a, **_k: subprocess.CompletedProcess([], 0, "", "")
+    )
+    monkeypatch.setattr(whisper_client, "_scp_to", lambda *_a, **_k: None)
+
+    def fake_scp_from(_host, _port, _key, src, target):
+        if str(src).endswith("result.json"):
+            target.write_text(
+                '{"detected_language": "en", "duration_seconds": 12.5, "backend": "fake"}',
+                encoding="utf-8",
+            )
+        else:
+            target.write_text("# transcript", encoding="utf-8")
+
+    monkeypatch.setattr(whisper_client, "_scp_from", fake_scp_from)
+
+    destroy_attempts: list[int] = []
+
+    def failing_destroy(_api_key, instance_id):
+        destroy_attempts.append(instance_id)
+        raise WhisperError("Vast API GET /instances/4242/: HTTP 429: API requests too frequent")
+
+    monkeypatch.setattr(whisper_client, "_destroy_instance", failing_destroy)
+
+    failed_callback: list[int] = []
+    wav = tmp_path / "input-16k.wav"
+    wav.write_text("wav", encoding="utf-8")
+
+    result = whisper_client.transcribe(
+        wav,
+        title="teardown 429 video",
+        source_url="https://youtu.be/teardown-429",
+        on_destroy_failed=failed_callback.append,
+    )
+
+    assert result.transcript_md == "# transcript"
+    assert result.vast_instance_id == 4242
+    assert destroy_attempts == [4242]
+    assert failed_callback == [4242]
+
+
+def test_vast_api_request_honors_retry_after_header(monkeypatch):
+    sleeps = _patch_retry_pacing(monkeypatch)
+    calls: list[int] = []
+
+    def fake_urlopen(_req, timeout=45):
+        calls.append(1)
+        if len(calls) == 1:
+            raise _http_error(429, "too frequent", headers={"Retry-After": "12"})
+        return _FakeResponse(b"{}")
+
+    monkeypatch.setattr(whisper_client, "_urlopen", fake_urlopen)
+
+    assert whisper_client.vast_api_request("k", "GET", "/instances/1/") == {}
+    assert sleeps == [12.0]
+
+
+def test_vast_api_request_clamps_absurd_retry_hints(monkeypatch):
+    sleeps = _patch_retry_pacing(monkeypatch)
+    calls: list[int] = []
+
+    def fake_urlopen(_req, timeout=45):
+        calls.append(1)
+        if len(calls) == 1:
+            raise _http_error(429, '{"retry_after": 3600}')
+        return _FakeResponse(b"{}")
+
+    monkeypatch.setattr(whisper_client, "_urlopen", fake_urlopen)
+
+    assert whisper_client.vast_api_request("k", "GET", "/instances/1/") == {}
+    assert sleeps == [whisper_client._VAST_RETRY_MAX_SLEEP_SECONDS]
+
+
+def test_vast_api_request_falls_back_when_hint_is_garbage(monkeypatch):
+    sleeps = _patch_retry_pacing(monkeypatch)
+    calls: list[int] = []
+
+    def fake_urlopen(_req, timeout=45):
+        calls.append(1)
+        if len(calls) == 1:
+            raise _http_error(
+                429, '{"retry_after": "soon"}', headers={"Retry-After": "later"}
+            )
+        return _FakeResponse(b"{}")
+
+    monkeypatch.setattr(whisper_client, "_urlopen", fake_urlopen)
+
+    assert whisper_client.vast_api_request("k", "GET", "/instances/1/") == {}
+    assert sleeps == [2.5]
+
+
+def test_create_instance_does_not_retry_ambiguous_failures(monkeypatch):
+    """PUT /asks/ is non-idempotent and starts billing server-side: a 502 or
+    network failure is ambiguous (the create may have landed), so it must be
+    sent exactly once and fail this offer instead of double-creating."""
+    import urllib.error
+
+    sleeps = _patch_retry_pacing(monkeypatch)
+    calls: list[int] = []
+
+    def fake_urlopen_502(_req, timeout=45):
+        calls.append(1)
+        raise _http_error(502, "bad gateway")
+
+    monkeypatch.setattr(whisper_client, "_urlopen", fake_urlopen_502)
+    with pytest.raises(WhisperError, match="HTTP 502"):
+        whisper_client._create_instance("k", _offer(1, "RTX 3090"), "ssh-ed25519 test")
+    assert len(calls) == 1
+    assert sleeps == []
+
+    calls.clear()
+
+    def fake_urlopen_neterr(_req, timeout=45):
+        calls.append(1)
+        raise urllib.error.URLError("connection reset")
+
+    monkeypatch.setattr(whisper_client, "_urlopen", fake_urlopen_neterr)
+    with pytest.raises(WhisperError, match="connection reset"):
+        whisper_client._create_instance("k", _offer(1, "RTX 3090"), "ssh-ed25519 test")
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_create_instance_still_retries_429(monkeypatch):
+    """A 429 on the create is rejected by Vast's limiter before processing,
+    so resending is safe — and required, or one collision kills the offer."""
+    sleeps = _patch_retry_pacing(monkeypatch)
+    calls: list[int] = []
+
+    def fake_urlopen(_req, timeout=45):
+        calls.append(1)
+        if len(calls) == 1:
+            raise _http_error(429, "too frequent")
+        return _FakeResponse(b'{"new_contract": 9009}')
+
+    monkeypatch.setattr(whisper_client, "_urlopen", fake_urlopen)
+
+    assert whisper_client._create_instance("k", _offer(1, "RTX 3090"), "key") == 9009
+    # create (429), create (ok), then the best-effort ssh-key attach POST
+    assert len(calls) == 3
+    assert sleeps == [2.5]
+
+
+def test_transcribe_impl_caps_vanished_offer_churn(monkeypatch, tmp_path):
+    """#426: a contended market must not machine-gun PUT /asks/ across the
+    whole candidate list — the vanished-offer path stops after
+    3 x vast_offer_attempts."""
+    _stub_run_context_dependencies(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, "vast_offer_attempts", 1)
+    monkeypatch.setattr(whisper_client, "_sleep", lambda _s: None)
+
+    fixture_offers = [_offer(200 + i, "RTX 3090", price=0.3) for i in range(10)]
+    monkeypatch.setattr(
+        whisper_client, "_select_offers", lambda *_a, **_k: list(fixture_offers)
+    )
+
+    create_calls: list[int] = []
+
+    def fake_create(_api_key, offer, _public_key):
+        create_calls.append(int(offer["id"]))
+        raise WhisperError(
+            f"Vast API PUT /asks/{offer['id']}/: HTTP 400: "
+            '{"error":"no_such_ask","msg":"ask is not available"}'
+        )
+
+    monkeypatch.setattr(whisper_client, "_create_instance", fake_create)
+
+    wav = tmp_path / "input-16k.wav"
+    wav.write_text("wav", encoding="utf-8")
+
+    with pytest.raises(WhisperError, match="no Vast instance became ready"):
+        whisper_client.transcribe(
+            wav, title="churn video", source_url="https://youtu.be/churn"
+        )
+
+    # vanished cap = offer_attempts * 3 = 3 creates, not all 10 candidates
+    assert len(create_calls) == 3

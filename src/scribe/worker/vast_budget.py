@@ -6,11 +6,8 @@ charges, invoices, payment, or destructive instance endpoints.
 from __future__ import annotations
 
 import datetime as dt
-import json
 import logging
 import threading
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,8 +21,8 @@ from scribe.db.session import SessionLocal
 from scribe.obs import metrics
 from scribe.pipeline.whisper_client import (
     MAX_INSTANCE_SECONDS,
-    VAST_API,
     WhisperError,
+    vast_api_request,
 )
 
 log = logging.getLogger("scribe.vast_budget")
@@ -185,17 +182,10 @@ def enforce_monthly_cap(session: Session, *, now: dt.datetime | None = None) -> 
 
 
 def fetch_instances(api_key: str, *, timeout: int = 45) -> list[dict[str, Any]]:
-    req = urllib.request.Request(
-        f"{VAST_API}/instances/",
-        method="GET",
-        headers={"Authorization": f"Bearer {api_key}"},
+    # Shared retrying client (429/transient backoff) — see whisper_client.
+    payload = vast_api_request(
+        api_key, "GET", "/instances/", timeout=timeout, error_factory=RuntimeError
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8") or "{}")
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Vast API GET /instances/: HTTP {exc.code}: {detail}") from exc
 
     instances = payload.get("instances", [])
     if isinstance(instances, dict):
