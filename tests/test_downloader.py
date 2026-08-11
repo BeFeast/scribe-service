@@ -12,6 +12,7 @@ from scribe.pipeline import downloader
 from scribe.pipeline.downloader import (
     REASON_BOTWALL_TRANSIENT,
     REASON_DOWNLOAD_TIMEOUT,
+    REASON_MEDIA_403_TRANSIENT,
     REASON_NEEDS_COOKIES,
     REASON_OTHER,
     REASON_TOO_LARGE,
@@ -396,6 +397,12 @@ def test_download_audio_raises_too_large_on_oversize_abort(tmp_path, monkeypatch
             "(3221225472 bytes > 2147483648 bytes). Aborting.",
             REASON_TOO_LARGE,
         ),
+        # Transient CDN 403 on the media payload — retried like the bot wall
+        # (#430, jobs 500/502 on 2026-08-11).
+        (
+            "ERROR: unable to download video data: HTTP Error 403: Forbidden",
+            REASON_MEDIA_403_TRANSIENT,
+        ),
         # Everything else.
         ("ERROR: unable to download webpage: HTTP Error 500", REASON_OTHER),
         ("", REASON_OTHER),
@@ -403,6 +410,34 @@ def test_download_audio_raises_too_large_on_oversize_abort(tmp_path, monkeypatch
 )
 def test_classify_ytdlp_failure(stderr: str, expected: str) -> None:
     assert classify_ytdlp_failure(stderr) == expected
+
+
+def test_run_ytdlp_retries_media_403_with_backoff(monkeypatch) -> None:
+    """#430: a 403 on the signed media URL is transient — a fresh yt-dlp run
+    re-extracts fresh URLs, so the loop retries instead of failing the job."""
+    calls = {"n": 0}
+
+    def fake_run(args, capture_output, text):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            return subprocess.CompletedProcess(
+                args,
+                1,
+                stdout="",
+                stderr="ERROR: unable to download video data: HTTP Error 403: Forbidden",
+            )
+        return subprocess.CompletedProcess(args, 0, stdout="ok\n", stderr="")
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(downloader.subprocess, "run", fake_run)
+    monkeypatch.setattr(downloader.time, "sleep", lambda d: sleeps.append(d))
+    monkeypatch.setattr(downloader.random, "uniform", lambda a, b: 0.0)
+
+    result = downloader._run_ytdlp(["yt-dlp", "x"])
+
+    assert result.returncode == 0
+    assert calls["n"] == 2
+    assert sleeps == [8.0]
 
 
 def test_run_ytdlp_retries_botwall_with_backoff(monkeypatch) -> None:

@@ -62,6 +62,14 @@ NEEDS_COOKIES_RE = re.compile(
 # Oversize media (#416): yt-dlp aborts when the target stream exceeds
 # --max-filesize. Terminal — retrying or adding cookies cannot shrink the file.
 TOO_LARGE_RE = re.compile(r"larger than max-filesize", re.IGNORECASE)
+# Transient 403 on the media download itself (observed 2026-08-11, jobs
+# 500/502): extraction succeeded, but the signed media URL was rejected by
+# the CDN edge. A fresh yt-dlp run re-extracts fresh signed URLs, so this
+# retries on the same backoff schedule as the bot wall. Kept narrow — a 403
+# during *extraction* still classifies via the walls above.
+MEDIA_403_RE = re.compile(
+    r"unable to download video data: HTTP Error 403", re.IGNORECASE
+)
 # Terminal-unavailable states: not retryable, not unlockable with cookies.
 UNAVAILABLE_RE = re.compile(
     r"private video"
@@ -95,6 +103,8 @@ REASON_BOTWALL_TRANSIENT = "botwall_transient"
 REASON_NEEDS_COOKIES = "needs_cookies"
 REASON_UNAVAILABLE = "unavailable"
 REASON_OTHER = "other"
+# Transient CDN 403 on the media payload (#430) — retried like the bot wall.
+REASON_MEDIA_403_TRANSIENT = "media_403_transient"
 # Wall-clock timeout on the download stage (#346). Distinct from the
 # retryable bot-wall path: a timeout means yt-dlp is stuck on a network read,
 # so the process group is killed and the job fails immediately.
@@ -103,13 +113,19 @@ REASON_DOWNLOAD_TIMEOUT = "download_timeout"
 # job fails immediately with an actionable size error, no retry.
 REASON_TOO_LARGE = "too_large"
 
+# Failure classes the _run_ytdlp loop retries with backoff; everything else
+# bails on the first attempt.
+_TRANSIENT_RETRY_REASONS = frozenset(
+    {REASON_BOTWALL_TRANSIENT, REASON_MEDIA_403_TRANSIENT}
+)
+
 
 class DownloadError(RuntimeError):
     """Raised when the download stage cannot produce audio.
 
-    ``reason`` is one of ``botwall_transient`` / ``needs_cookies`` /
-    ``unavailable`` / ``other`` and is the contract the mobile error
-    surface (#306) branches on.
+    ``reason`` is one of ``botwall_transient`` / ``media_403_transient`` /
+    ``needs_cookies`` / ``unavailable`` / ``other`` and is the contract the
+    mobile error surface (#306) branches on.
     """
 
     def __init__(self, message: str, *, reason: str = REASON_OTHER) -> None:
@@ -135,6 +151,8 @@ def classify_ytdlp_failure(stderr: str) -> str:
         return REASON_NEEDS_COOKIES
     if BOTWALL_RE.search(text):
         return REASON_BOTWALL_TRANSIENT
+    if MEDIA_403_RE.search(text):
+        return REASON_MEDIA_403_TRANSIENT
     return REASON_OTHER
 
 
@@ -327,10 +345,10 @@ def _invoke_ytdlp(
 def _run_ytdlp(
     args: list[str], *, deadline: float | None = None
 ) -> subprocess.CompletedProcess:
-    """Run yt-dlp; retry on the YouTube bot-wall signature with jittered
-    exponential backoff, capped by ``MAX_TOTAL_BACKOFF_SECONDS`` of
-    cumulative sleep. Non-bot-wall failures bail immediately and surface
-    a typed ``DownloadError.reason``.
+    """Run yt-dlp; retry transient failures (bot-wall signature, media 403)
+    with jittered exponential backoff, capped by ``MAX_TOTAL_BACKOFF_SECONDS``
+    of cumulative sleep. Other failures bail immediately and surface a typed
+    ``DownloadError.reason``.
 
     ``deadline`` (monotonic seconds) is a wall-clock budget for the whole
     download stage; a hung yt-dlp subprocess is killed and surfaced as
@@ -345,7 +363,7 @@ def _run_ytdlp(
             return last
         stderr = last.stderr or ""
         reason = classify_ytdlp_failure(stderr)
-        if reason != REASON_BOTWALL_TRANSIENT or attempt >= MAX_TRIES:
+        if reason not in _TRANSIENT_RETRY_REASONS or attempt >= MAX_TRIES:
             break
         delay = _backoff_delay(attempt)
         if total_slept + delay > MAX_TOTAL_BACKOFF_SECONDS:
