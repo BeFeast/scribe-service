@@ -483,8 +483,12 @@ def download_audio(
 
         # Download the raw audio stream only (no -x / ffmpeg). ffmpeg.py resamples.
         out_tmpl = str(dest_dir / "%(id)s.%(ext)s")
+        # SABR-throttled videos are served as thousands of tiny fragments at
+        # ~150 KiB/s per connection (#433); parallel fragment fetches restore
+        # usable throughput (measured 4.2x) and are a no-op for direct URLs.
         dl = _run_ytdlp([
-            *base, *cookie_args, *size_args, "-f", "ba/best[height<=360]/18",
+            *base, *cookie_args, *size_args, "--concurrent-fragments", "4",
+            "-f", "ba/best[height<=360]/18",
             "-o", out_tmpl, "--print", "after_move:filepath", url,
         ], deadline=deadline)
         # yt-dlp may abort an oversize download with rc=0, emitting the

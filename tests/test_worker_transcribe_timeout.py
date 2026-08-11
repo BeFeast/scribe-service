@@ -132,4 +132,5 @@ def test_download_timeout_configurable_default(monkeypatch):
     from scribe.config import Settings
 
     defaults = Settings()
-    assert defaults.download_timeout_s == 600
+    # 1800 since #433: SABR-only videos trickle at a few hundred KiB/s.
+    assert defaults.download_timeout_s == 1800

@@ -141,7 +141,8 @@ services:
       - "4416"
     healthcheck:
       # The provider exposes a JSON ping endpoint on its listen port.
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4416/ping || exit 1"]
+      # node-based probe: the bgutil image has no wget/curl (#432)
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4416/ping').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
       timeout: 5s
       retries: 3
