@@ -12,6 +12,7 @@ from scribe.pipeline import downloader
 from scribe.pipeline.downloader import (
     REASON_BOTWALL_TRANSIENT,
     REASON_DOWNLOAD_TIMEOUT,
+    REASON_MEDIA_403_TRANSIENT,
     REASON_NEEDS_COOKIES,
     REASON_OTHER,
     REASON_TOO_LARGE,
@@ -176,14 +177,12 @@ def test_download_audio_with_pot_base_url_passes_bgutil_extractor_arg(tmp_path, 
     assert len(seen) == 2
     expected = "youtubepot-bgutilhttp:base_url=http://scribe-pot:4416"
     for args in seen:
-        # The bgutil extractor-arg appears alongside the youtube:player_client
-        # one; both share the --extractor-args flag but yt-dlp accepts
-        # repeating it for independent provider/extractor scopes.
         idx_flags = [i for i, a in enumerate(args) if a == "--extractor-args"]
         flag_values = [args[i + 1] for i in idx_flags]
         assert expected in flag_values
-        # The pre-existing player_client arg is preserved.
-        assert any(v.startswith("youtube:player_client=") for v in flag_values)
+        # No player_client override: client choice is left to yt-dlp defaults
+        # (#430 — the pinned list + PO tokens drew deterministic media 403s).
+        assert not any(v.startswith("youtube:player_client=") for v in flag_values)
 
 
 def test_download_audio_without_cookies_omits_cookies_flag(tmp_path, monkeypatch) -> None:
@@ -396,6 +395,12 @@ def test_download_audio_raises_too_large_on_oversize_abort(tmp_path, monkeypatch
             "(3221225472 bytes > 2147483648 bytes). Aborting.",
             REASON_TOO_LARGE,
         ),
+        # Transient CDN 403 on the media payload — retried like the bot wall
+        # (#430, jobs 500/502 on 2026-08-11).
+        (
+            "ERROR: unable to download video data: HTTP Error 403: Forbidden",
+            REASON_MEDIA_403_TRANSIENT,
+        ),
         # Everything else.
         ("ERROR: unable to download webpage: HTTP Error 500", REASON_OTHER),
         ("", REASON_OTHER),
@@ -403,6 +408,34 @@ def test_download_audio_raises_too_large_on_oversize_abort(tmp_path, monkeypatch
 )
 def test_classify_ytdlp_failure(stderr: str, expected: str) -> None:
     assert classify_ytdlp_failure(stderr) == expected
+
+
+def test_run_ytdlp_retries_media_403_with_backoff(monkeypatch) -> None:
+    """#430: a 403 on the signed media URL is transient — a fresh yt-dlp run
+    re-extracts fresh URLs, so the loop retries instead of failing the job."""
+    calls = {"n": 0}
+
+    def fake_run(args, capture_output, text):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            return subprocess.CompletedProcess(
+                args,
+                1,
+                stdout="",
+                stderr="ERROR: unable to download video data: HTTP Error 403: Forbidden",
+            )
+        return subprocess.CompletedProcess(args, 0, stdout="ok\n", stderr="")
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(downloader.subprocess, "run", fake_run)
+    monkeypatch.setattr(downloader.time, "sleep", lambda d: sleeps.append(d))
+    monkeypatch.setattr(downloader.random, "uniform", lambda a, b: 0.0)
+
+    result = downloader._run_ytdlp(["yt-dlp", "x"])
+
+    assert result.returncode == 0
+    assert calls["n"] == 2
+    assert sleeps == [8.0]
 
 
 def test_run_ytdlp_retries_botwall_with_backoff(monkeypatch) -> None:
