@@ -177,14 +177,12 @@ def test_download_audio_with_pot_base_url_passes_bgutil_extractor_arg(tmp_path, 
     assert len(seen) == 2
     expected = "youtubepot-bgutilhttp:base_url=http://scribe-pot:4416"
     for args in seen:
-        # The bgutil extractor-arg appears alongside the youtube:player_client
-        # one; both share the --extractor-args flag but yt-dlp accepts
-        # repeating it for independent provider/extractor scopes.
         idx_flags = [i for i, a in enumerate(args) if a == "--extractor-args"]
         flag_values = [args[i + 1] for i in idx_flags]
         assert expected in flag_values
-        # The pre-existing player_client arg is preserved.
-        assert any(v.startswith("youtube:player_client=") for v in flag_values)
+        # No player_client override: client choice is left to yt-dlp defaults
+        # (#430 — the pinned list + PO tokens drew deterministic media 403s).
+        assert not any(v.startswith("youtube:player_client=") for v in flag_values)
 
 
 def test_download_audio_without_cookies_omits_cookies_flag(tmp_path, monkeypatch) -> None:

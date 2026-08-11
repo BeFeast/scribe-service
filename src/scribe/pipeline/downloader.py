@@ -10,10 +10,9 @@ window; (2) at the job level (#312), by accepting a per-job YouTube cookie
 blob that lifts age/sign-in/members gates; (3) via an optional bgutil
 PO-token provider (#309) — when configured, the provider base URL is
 forwarded as ``--extractor-args "youtubepot-bgutilhttp:base_url=…"`` so
-yt-dlp can keep mweb/web in the client chain (without a GVS PO token it logs
-a warning and falls back to clients more likely to trip bot checks). The
-token-free ``android_vr`` client remains the workhorse; web clients use EJS +
-deno for JS challenges.
+yt-dlp's default client chain can use PO tokens where they help. Player
+clients themselves are NOT pinned (#430): yt-dlp's defaults track YouTube's
+client churn; web clients use EJS + deno for JS challenges.
 
 Failures are surfaced via :class:`DownloadError` with a typed ``reason``
 field so callers (worker, mobile UI #306) can branch on retryable vs
@@ -40,9 +39,12 @@ from pathlib import Path
 
 from scribe.config import settings
 
-# yt-dlp tries these clients in order. android_vr is the token-free workhorse;
-# the web clients use EJS + deno for JS-challenge solving.
-PLAYER_CLIENTS = "mweb,web_safari,android_vr,web_embedded"
+# Player-client selection is deliberately left to yt-dlp's defaults. The
+# June-2026 pinned list (mweb,web_safari,android_vr,web_embedded) combined
+# with bgutil PO tokens started drawing deterministic 403s on the signed
+# media URL (#430, 2026-08-11, jobs 500/502) while upstream defaults with
+# the same PO provider download fine — upstream tracks YouTube's client
+# churn faster than a hardcoded pin can.
 # Bot-wall (transient IP-reputation soft-ban). Tight enough to not collide
 # with the age-gate "Sign in to confirm your age" string.
 BOTWALL_RE = re.compile(
@@ -258,7 +260,6 @@ def _base_args(deno_path: str, pot_base_url: str | None = None) -> list[str]:
         "--no-playlist",
         "--remote-components", "ejs:github",
         "--js-runtimes", f"deno:{deno_path}",
-        "--extractor-args", f"youtube:player_client={PLAYER_CLIENTS}",
         "--sleep-requests", "1",
         "--min-sleep-interval", "1",
         "--max-sleep-interval", "3",
