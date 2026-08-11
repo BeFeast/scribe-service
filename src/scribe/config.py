@@ -182,8 +182,11 @@ class Settings(BaseSettings):
     # process group is SIGKILLed (no orphan) and the job fails with a typed
     # DownloadError(reason=download_timeout). 0 disables the timeout (not
     # recommended — see MAX_TOTAL_BACKOFF_SECONDS only bounds backoff sleeps,
-    # not a hung subprocess read).
-    download_timeout_s: int = 600
+    # not a hung subprocess read). 1800 (was 600): YouTube serves some videos
+    # SABR-only at a few hundred KiB/s regardless of client (#433, job 508) —
+    # a long video legitimately needs tens of minutes even with concurrent
+    # fragment downloads.
+    download_timeout_s: int = 1800
 
     # Hard ceiling on a single downloaded media file (#416). Passed to yt-dlp as
     # --max-filesize so a direct-media URL (or any extractor) that points at an
