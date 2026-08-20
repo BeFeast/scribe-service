@@ -15,6 +15,9 @@ from scribe.pipeline.downloader import (
     REASON_MEDIA_403_TRANSIENT,
     REASON_NEEDS_COOKIES,
     REASON_OTHER,
+    REASON_POST_LIVE_PROCESSING,
+    REASON_STREAM_LIVE,
+    REASON_STREAM_UPCOMING,
     REASON_TOO_LARGE,
     REASON_UNAVAILABLE,
     DownloadError,
@@ -675,3 +678,122 @@ def test_download_audio_timeout_zero_disables_timeout(monkeypatch, tmp_path):
         "https://youtu.be/jNQXAC9IVRw", tmp_path, timeout_seconds=0
     )
     assert result.video_id == "jNQXAC9IVRw"
+
+
+def _meta_json(live_status: str | None) -> str:
+    payload = {
+        "extractor_key": "Youtube", "id": "zcLPGCtvgk1"[:11],
+        "title": "live stream", "duration": 3399,
+    }
+    if live_status is not None:
+        payload["live_status"] = live_status
+    return json.dumps(payload)
+
+
+@pytest.mark.parametrize(
+    "live_status, expected_reason, expected_hint",
+    [
+        ("is_live", REASON_STREAM_LIVE, "still live"),
+        ("is_upcoming", REASON_STREAM_UPCOMING, "not started"),
+    ],
+)
+def test_download_audio_fails_fast_before_media_fetch_for_live_streams(
+    tmp_path, monkeypatch, live_status, expected_reason, expected_hint
+) -> None:
+    """#437: an upcoming/in-progress stream can never yield a full recording,
+    so the job fails on the metadata probe with an actionable message instead
+    of fetching media until the download budget expires."""
+    calls: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        assert "--dump-single-json" in args, "media download must never start"
+        return subprocess.CompletedProcess(args, 0, stdout=_meta_json(live_status), stderr="")
+
+    monkeypatch.setattr(downloader, "_run_ytdlp", fake_run)
+
+    with pytest.raises(DownloadError) as exc_info:
+        downloader.download_audio("https://www.youtube.com/live/zcLPGC-tvgk", tmp_path)
+
+    assert exc_info.value.reason == expected_reason
+    assert expected_hint in str(exc_info.value)
+    assert len(calls) == 1
+
+
+def test_download_audio_post_live_403_fails_once_with_actionable_error(
+    tmp_path, monkeypatch
+) -> None:
+    """#437: a `post_live` VOD 403s until YouTube finishes processing —
+    minutes, not the seconds backoff can bridge. One attempt, no sleeps,
+    typed `post_live_processing` with a resubmit-later message (job 543,
+    2026-08-19)."""
+    calls = {"meta": 0, "dl": 0}
+
+    def fake_run(args, capture_output, text):
+        if "--dump-single-json" in args:
+            calls["meta"] += 1
+            return subprocess.CompletedProcess(args, 0, stdout=_meta_json("post_live"), stderr="")
+        calls["dl"] += 1
+        return subprocess.CompletedProcess(
+            args, 1, stdout="",
+            stderr="ERROR: unable to download video data: HTTP Error 403: Forbidden",
+        )
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(downloader.subprocess, "run", fake_run)
+    monkeypatch.setattr(downloader.time, "sleep", lambda d: sleeps.append(d))
+
+    with pytest.raises(DownloadError) as exc_info:
+        downloader.download_audio(
+            "https://www.youtube.com/live/zcLPGC-tvgk", tmp_path, timeout_seconds=0
+        )
+
+    assert exc_info.value.reason == REASON_POST_LIVE_PROCESSING
+    assert "still processing" in str(exc_info.value)
+    assert "submit the link again" in str(exc_info.value)
+    assert calls == {"meta": 1, "dl": 1}
+    assert sleeps == []
+
+
+def test_download_audio_post_live_succeeds_when_media_is_available(
+    tmp_path, monkeypatch
+) -> None:
+    """#437: `post_live` is a hint, not a block — when YouTube already serves
+    the media the download proceeds normally."""
+    media = tmp_path / "audio.m4a"
+    media.write_text("audio", encoding="utf-8")
+    dl_kwargs: list[dict] = []
+
+    def fake_run(args, **kwargs):
+        if "--dump-single-json" in args:
+            return subprocess.CompletedProcess(args, 0, stdout=_meta_json("post_live"), stderr="")
+        dl_kwargs.append(kwargs)
+        return subprocess.CompletedProcess(args, 0, stdout=f"{media}\n", stderr="")
+
+    monkeypatch.setattr(downloader, "_run_ytdlp", fake_run)
+
+    result = downloader.download_audio("https://www.youtube.com/live/zcLPGC-tvgk", tmp_path)
+
+    assert result.audio_path == media
+    assert dl_kwargs and dl_kwargs[0].get("transient_retries") is False
+
+
+def test_download_audio_was_live_keeps_transient_retries(tmp_path, monkeypatch) -> None:
+    """A finished, fully processed recording keeps the #430 transient-retry
+    behaviour — the gate only changes `post_live` and earlier lifecycles."""
+    media = tmp_path / "audio.m4a"
+    media.write_text("audio", encoding="utf-8")
+    dl_kwargs: list[dict] = []
+
+    def fake_run(args, **kwargs):
+        if "--dump-single-json" in args:
+            return subprocess.CompletedProcess(args, 0, stdout=_meta_json("was_live"), stderr="")
+        dl_kwargs.append(kwargs)
+        return subprocess.CompletedProcess(args, 0, stdout=f"{media}\n", stderr="")
+
+    monkeypatch.setattr(downloader, "_run_ytdlp", fake_run)
+
+    result = downloader.download_audio("https://www.youtube.com/live/zcLPGC-tvgk", tmp_path)
+
+    assert result.audio_path == media
+    assert dl_kwargs and dl_kwargs[0].get("transient_retries") is True
