@@ -410,6 +410,7 @@ def _validate_clerk_user(token: str) -> dict[str, object]:
         raise HTTPException(status_code=401, detail="invalid Clerk JWT") from exc
     if not isinstance(claims, dict):
         return {}
+    _enforce_authorized_party(claims)
     allowed = _allowed_emails()
     if allowed:
         email = _claims_email(claims)
@@ -422,6 +423,33 @@ def _allowed_emails() -> frozenset[str]:
     return frozenset(
         email.strip().lower() for email in settings.auth_allowed_emails.replace("\n", ",").split(",") if email.strip()
     )
+
+
+def _authorized_parties() -> frozenset[str]:
+    return frozenset(
+        origin.strip().rstrip("/")
+        for origin in settings.auth_clerk_authorized_parties.replace("\n", ",").split(",")
+        if origin.strip()
+    )
+
+
+def _enforce_authorized_party(claims: dict) -> None:
+    """Reject a Clerk JWT whose ``azp`` is not an allowed origin.
+
+    Production auth cookies are scoped to the root domain, so every subdomain
+    of it receives them; ``azp`` names the origin that actually minted the
+    session token. With no configured parties the check is skipped (dev / LAN
+    setups), and a token without ``azp`` passes because machine-minted tokens
+    legitimately omit it.
+    """
+    parties = _authorized_parties()
+    if not parties:
+        return
+    azp = claims.get("azp")
+    if azp is None:
+        return
+    if not isinstance(azp, str) or azp.strip().rstrip("/") not in parties:
+        raise HTTPException(status_code=401, detail="Clerk token azp is not an authorized party")
 
 
 def _actor_from_user(user: User, *, kind: str) -> Actor:

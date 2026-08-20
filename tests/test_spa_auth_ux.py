@@ -27,12 +27,16 @@ def production_sources() -> str:
 
 
 def test_use_auth_exposes_clerk_sign_in_with_loop_protection() -> None:
+    """#129 wired the redirect flow with loop protection; #439 puts the
+    in-app dialog (openSignIn, styled from design tokens) first, keeping the
+    redirect + its sessionStorage guards as the fallback path."""
     source = read("hooks/useAuth.tsx")
 
+    assert "openSignIn" in source
+    assert "openSignUp" in source
+    assert "currentClerkAppearance" in source
     assert "redirectToSignIn" in source
     assert "redirectToSignUp" in source
-    assert "openSignIn" not in source
-    assert "openSignUp" not in source
     assert "sessionStorage" in source
     assert "maybeAutoSignIn" in source
     assert "authRedirectInFlight" in source

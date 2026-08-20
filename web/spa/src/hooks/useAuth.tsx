@@ -1,4 +1,5 @@
 import React from "react";
+import { currentClerkAppearance } from "./clerkAppearance";
 
 type AuthConfig = {
 	clerk_publishable_key: string;
@@ -10,10 +11,16 @@ type ClerkSession = {
 	getToken: () => Promise<string | null>;
 };
 
+type ClerkLoadOptions = {
+	ui?: { ClerkUI: unknown };
+};
+
 type ClerkRuntime = {
-	load: () => Promise<void>;
+	load: (options?: ClerkLoadOptions) => Promise<void>;
 	redirectToSignIn: (options?: ClerkRedirectOptions) => Promise<unknown>;
 	redirectToSignUp: (options?: ClerkRedirectOptions) => Promise<unknown>;
+	openSignIn?: (options?: ClerkOpenOptions) => void;
+	openSignUp?: (options?: ClerkOpenOptions) => void;
 	signOut: () => Promise<void>;
 	addListener?: (
 		listener: (resources: { session: ClerkSession | null }) => void,
@@ -24,6 +31,7 @@ type ClerkRuntime = {
 declare global {
 	interface Window {
 		Clerk?: ClerkRuntime;
+		__internal_ClerkUICtor?: unknown;
 	}
 }
 
@@ -74,6 +82,12 @@ type ClerkRedirectOptions = {
 	signInFallbackRedirectUrl?: string;
 	signUpForceRedirectUrl?: string;
 	signUpFallbackRedirectUrl?: string;
+};
+
+type ClerkOpenOptions = ClerkRedirectOptions & {
+	forceRedirectUrl?: string;
+	fallbackRedirectUrl?: string;
+	appearance?: ReturnType<typeof currentClerkAppearance>;
 };
 
 export function clerkRedirectOptions(
@@ -134,6 +148,18 @@ function appendScript(
 
 async function loadClerk(config: AuthConfig): Promise<void> {
 	const host = clerkFrontendHost(config);
+	// The @clerk/ui bundle provides the constructor behind the in-app
+	// sign-in/sign-up dialog (#439). It is optional: when it fails to load
+	// (blocker, offline CDN path) Clerk.load() falls back to headless mode
+	// and startRedirect takes the hosted-portal path instead.
+	const uiScript = appendScript(
+		`https://${host}/npm/@clerk/ui@1/dist/ui.browser.js`,
+	).catch((error) => {
+		console.warn(
+			"Clerk UI bundle failed to load; falling back to redirect",
+			error,
+		);
+	});
 	if (window.Clerk === undefined) {
 		await appendScript(
 			`https://${host}/npm/@clerk/clerk-js@6/dist/clerk.browser.js`,
@@ -145,7 +171,9 @@ async function loadClerk(config: AuthConfig): Promise<void> {
 	if (window.Clerk === undefined) {
 		throw new Error("Clerk browser runtime failed to load");
 	}
-	await window.Clerk.load();
+	await uiScript;
+	const uiCtor = window.__internal_ClerkUICtor;
+	await window.Clerk.load(uiCtor ? { ui: { ClerkUI: uiCtor } } : undefined);
 }
 
 function mergeAuthHeader(init: RequestInit, token: string): RequestInit {
@@ -402,12 +430,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 	const startRedirect = React.useCallback(
 		async (mode: "sign-in" | "sign-up") => {
-			if (!window.Clerk) {
+			const clerk = window.Clerk;
+			if (!clerk) {
 				setAuthRequired(true);
 				return;
 			}
 			if (authRedirectInFlight) {
 				return;
+			}
+			// In-app dialog styled with the active design tokens (#439). The
+			// session listener registered at bootstrap picks up the successful
+			// sign-in; the hosted-portal redirect below stays as the fallback.
+			if (clerk.openSignIn && clerk.openSignUp) {
+				setAuthBlocked(null);
+				const redirectUrl = currentAppUrl();
+				const options: ClerkOpenOptions = {
+					...clerkRedirectOptions(mode, redirectUrl),
+					forceRedirectUrl: redirectUrl,
+					fallbackRedirectUrl: redirectUrl,
+					appearance: currentClerkAppearance(),
+				};
+				try {
+					if (mode === "sign-in") {
+						clerk.openSignIn(options);
+					} else {
+						clerk.openSignUp(options);
+					}
+					return;
+				} catch (error) {
+					console.warn(
+						"Clerk in-app dialog failed, falling back to redirect",
+						error,
+					);
+				}
 			}
 			navigationStartedRef.current = false;
 			setAuthBlocked(null);
@@ -416,13 +471,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			const redirectUrl = currentAppUrl();
 			try {
 				if (mode === "sign-in") {
-					await window.Clerk.redirectToSignIn(
-						clerkRedirectOptions(mode, redirectUrl),
-					);
+					await clerk.redirectToSignIn(clerkRedirectOptions(mode, redirectUrl));
 				} else {
-					await window.Clerk.redirectToSignUp(
-						clerkRedirectOptions(mode, redirectUrl),
-					);
+					await clerk.redirectToSignUp(clerkRedirectOptions(mode, redirectUrl));
 				}
 				await new Promise((resolve) =>
 					window.setTimeout(resolve, REDIRECT_NAVIGATION_GRACE_MS),

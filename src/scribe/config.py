@@ -486,6 +486,11 @@ class Settings(BaseSettings):
     auth_clerk_issuer: str = ""
     auth_clerk_jwks_url: str = ""
     auth_clerk_jwks_json: str = ""
+    # Comma-separated origins allowed as the `azp` (authorized party) claim of
+    # Clerk session JWTs, e.g. "https://scribe.oklabs.uk". Production auth
+    # cookies live on the root domain, so without this any subdomain could
+    # replay a session token (Clerk production checklist). Empty = no check.
+    auth_clerk_authorized_parties: str = ""
     clerk_publishable_key: str = ""
     clerk_frontend_api: str = ""
     clerk_backend_api_url: str = "https://api.clerk.com"
