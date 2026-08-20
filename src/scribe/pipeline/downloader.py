@@ -114,6 +114,15 @@ REASON_DOWNLOAD_TIMEOUT = "download_timeout"
 # Media exceeded the configured --max-filesize ceiling (#416). Terminal — the
 # job fails immediately with an actionable size error, no retry.
 REASON_TOO_LARGE = "too_large"
+# Live-lifecycle states (#437), detected from the metadata probe before any
+# media fetch. `stream_live`/`stream_upcoming` fail fast — downloading an
+# in-progress stream only hangs until the download budget expires. A
+# `post_live` VOD (stream ended, YouTube still processing) gets one download
+# attempt; a transient 403/botwall on it becomes `post_live_processing` with
+# a resubmit-later message instead of the generic 403 after the retry loop.
+REASON_STREAM_LIVE = "stream_live"
+REASON_STREAM_UPCOMING = "stream_upcoming"
+REASON_POST_LIVE_PROCESSING = "post_live_processing"
 
 # Failure classes the _run_ytdlp loop retries with backoff; everything else
 # bails on the first attempt.
@@ -121,13 +130,28 @@ _TRANSIENT_RETRY_REASONS = frozenset(
     {REASON_BOTWALL_TRANSIENT, REASON_MEDIA_403_TRANSIENT}
 )
 
+_POST_LIVE_MESSAGE = (
+    "this live stream just ended and YouTube is still processing the recording"
+    " — submit the link again in 15-30 minutes"
+)
+# live_status values that never yield a downloadable recording right now.
+_LIVE_GATES = {
+    "is_upcoming": (
+        REASON_STREAM_UPCOMING,
+        "this stream has not started yet — submit the link again after it ends",
+    ),
+    "is_live": (
+        REASON_STREAM_LIVE,
+        "this stream is still live — submit the link again after it ends",
+    ),
+}
+
 
 class DownloadError(RuntimeError):
     """Raised when the download stage cannot produce audio.
 
-    ``reason`` is one of ``botwall_transient`` / ``media_403_transient`` /
-    ``needs_cookies`` / ``unavailable`` / ``other`` and is the contract the
-    mobile error surface (#306) branches on.
+    ``reason`` is one of the ``REASON_*`` constants above and is the contract
+    the mobile error surface (#306) branches on.
     """
 
     def __init__(self, message: str, *, reason: str = REASON_OTHER) -> None:
@@ -344,7 +368,7 @@ def _invoke_ytdlp(
 
 
 def _run_ytdlp(
-    args: list[str], *, deadline: float | None = None
+    args: list[str], *, deadline: float | None = None, transient_retries: bool = True
 ) -> subprocess.CompletedProcess:
     """Run yt-dlp; retry transient failures (bot-wall signature, media 403)
     with jittered exponential backoff, capped by ``MAX_TOTAL_BACKOFF_SECONDS``
@@ -355,6 +379,10 @@ def _run_ytdlp(
     download stage; a hung yt-dlp subprocess is killed and surfaced as
     ``reason=download_timeout``. Backoff sleeps are skipped once the deadline
     is close so the timeout is honoured even inside the bot-wall retry loop.
+
+    ``transient_retries=False`` disables the backoff loop so every failure
+    bails on the first attempt (#437: a `post_live` VOD 403s until YouTube
+    finishes processing — minutes, not the seconds backoff can bridge).
     """
     last: subprocess.CompletedProcess | None = None
     total_slept = 0.0
@@ -364,7 +392,7 @@ def _run_ytdlp(
             return last
         stderr = last.stderr or ""
         reason = classify_ytdlp_failure(stderr)
-        if reason not in _TRANSIENT_RETRY_REASONS or attempt >= MAX_TRIES:
+        if not transient_retries or reason not in _TRANSIENT_RETRY_REASONS or attempt >= MAX_TRIES:
             break
         delay = _backoff_delay(attempt)
         if total_slept + delay > MAX_TOTAL_BACKOFF_SECONDS:
@@ -481,16 +509,33 @@ def download_audio(
         except (ValueError, TypeError):
             duration_seconds = None
 
+        # Live-lifecycle gate (#437). An upcoming/in-progress stream can never
+        # yield a full recording now, so fail before fetching any media.
+        live_status = info.get("live_status")
+        if live_status in _LIVE_GATES:
+            gate_reason, gate_message = _LIVE_GATES[live_status]
+            raise DownloadError(gate_message, reason=gate_reason)
+
         # Download the raw audio stream only (no -x / ffmpeg). ffmpeg.py resamples.
         out_tmpl = str(dest_dir / "%(id)s.%(ext)s")
         # SABR-throttled videos are served as thousands of tiny fragments at
         # ~150 KiB/s per connection (#433); parallel fragment fetches restore
         # usable throughput (measured 4.2x) and are a no-op for direct URLs.
-        dl = _run_ytdlp([
-            *base, *cookie_args, *size_args, "--concurrent-fragments", "4",
-            "-f", "ba/best[height<=360]/18",
-            "-o", out_tmpl, "--print", "after_move:filepath", url,
-        ], deadline=deadline)
+        # A `post_live` VOD gets one attempt without the transient-retry loop:
+        # if YouTube still 403s it, the wait is minutes long and the user
+        # should be told to resubmit rather than watch backoff burn.
+        try:
+            dl = _run_ytdlp([
+                *base, *cookie_args, *size_args, "--concurrent-fragments", "4",
+                "-f", "ba/best[height<=360]/18",
+                "-o", out_tmpl, "--print", "after_move:filepath", url,
+            ], deadline=deadline, transient_retries=live_status != "post_live")
+        except DownloadError as exc:
+            if live_status == "post_live" and exc.reason in _TRANSIENT_RETRY_REASONS:
+                raise DownloadError(
+                    _POST_LIVE_MESSAGE, reason=REASON_POST_LIVE_PROCESSING
+                ) from exc
+            raise
         # yt-dlp may abort an oversize download with rc=0, emitting the
         # max-filesize notice to stderr and printing no filepath (#416). Guard
         # the empty-output case and surface a typed too_large error instead of
