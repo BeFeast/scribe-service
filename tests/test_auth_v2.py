@@ -479,3 +479,33 @@ def test_library_is_owner_scoped_for_users_and_broad_for_admin(db_session, monke
     assert user_ids == {first_transcript.id}
     admin_ids = {row["id"] for row in admin_resp.json()["rows"]}
     assert {first_transcript.id, second_transcript.id}.issubset(admin_ids)
+
+
+def test_enforce_authorized_party_accepts_allowed_azp(monkeypatch):
+    """#439: with authorized parties configured, a token minted by the app
+    origin passes (trailing slashes normalised on both sides)."""
+    monkeypatch.setattr(
+        settings, "auth_clerk_authorized_parties", "https://scribe.oklabs.uk/, https://other.example"
+    )
+    auth_module._enforce_authorized_party({"azp": "https://scribe.oklabs.uk"})
+
+
+def test_enforce_authorized_party_rejects_foreign_azp(monkeypatch):
+    """A session token minted by another subdomain sharing the root-domain
+    cookie must not authenticate against the API."""
+    import pytest
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(settings, "auth_clerk_authorized_parties", "https://scribe.oklabs.uk")
+    with pytest.raises(HTTPException) as exc_info:
+        auth_module._enforce_authorized_party({"azp": "https://evil.oklabs.uk"})
+    assert exc_info.value.status_code == 401
+
+
+def test_enforce_authorized_party_skips_without_config_or_azp(monkeypatch):
+    """Empty setting keeps current behavior; a token without azp (machine
+    minted) passes even when parties are configured."""
+    monkeypatch.setattr(settings, "auth_clerk_authorized_parties", "")
+    auth_module._enforce_authorized_party({"azp": "https://anything.example"})
+    monkeypatch.setattr(settings, "auth_clerk_authorized_parties", "https://scribe.oklabs.uk")
+    auth_module._enforce_authorized_party({})
