@@ -120,6 +120,22 @@ def spa_shell(request: Request, spa_path: str = "") -> HTMLResponse:
     )
 
 
+@router.get("/about", response_class=HTMLResponse)
+def about_page(request: Request) -> HTMLResponse:
+    """Plain server-rendered product page: no scripts, absolute policy links.
+
+    This is the URL to give to automated reviewers (Google OAuth brand
+    verification points its "Application home page" here): the SPA shell is
+    JS-painted and login-gated, which such checkers repeatedly failed."""
+    return _TEMPLATES.TemplateResponse(request, "about.html", {})
+
+
+@router.get("/robots.txt", include_in_schema=False)
+def robots_txt() -> Response:
+    # Explicit allow-all so crawler-facing behaviour is ours, not inferred.
+    return Response("User-agent: *\nAllow: /\n", media_type="text/plain")
+
+
 @router.get("/privacy", response_class=HTMLResponse)
 def privacy_page(request: Request) -> HTMLResponse:
     return _legal_page(request, "privacy")
