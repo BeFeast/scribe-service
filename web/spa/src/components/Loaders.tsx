@@ -152,6 +152,41 @@ export function AuthGate({
 				)}
 			</div>
 
+			{phase === "signin" ? (
+				<section className="auth-gate-about" aria-labelledby="about-scribe">
+					<h2 id="about-scribe">Scribe</h2>
+					<p>
+						Scribe turns a video or podcast link into a searchable transcript
+						and a short written summary, so a two-hour recording can be read in
+						a couple of minutes and found again later by keyword or tag.
+					</p>
+					<ul>
+						<li>Paste a link — Scribe fetches the audio and transcribes it.</li>
+						<li>
+							Get a summary with key points, plus the full transcript to search,
+							copy or download.
+						</li>
+						<li>
+							Everything you submit stays in your own library; nothing is public
+							unless you create a share link.
+						</li>
+					</ul>
+					<p className="auth-gate-about-note">
+						Signing in with Google is used only to identify you: Scribe reads
+						your name, email address and profile picture to create your account.
+						It never posts anything, and never reads your Google data. Access is
+						invite-only — an operator adds your address before you can sign in.
+					</p>
+					<p className="auth-gate-about-links">
+						<a href="/privacy">Privacy</a>
+						<span aria-hidden="true"> · </span>
+						<a href="/terms">Terms</a>
+						<span aria-hidden="true"> · </span>
+						<a href="mailto:oleg@befeast.com">Contact</a>
+					</p>
+				</section>
+			) : null}
+
 			<div className="auth-gate-footer">
 				<span>scribe</span>
 				<span className="sep">·</span>
