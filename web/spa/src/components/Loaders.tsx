@@ -78,114 +78,126 @@ export function AuthGate({
 	return (
 		// biome-ignore lint/a11y/useSemanticElements: output is form-associated and can reset interactive auth controls.
 		<div role="status" className="auth-gate" aria-live="polite">
-			<div className="auth-gate-card">
-				<div className="auth-gate-mark">
-					<svg
-						viewBox="0 0 24 24"
-						width="28"
-						height="28"
-						fill="none"
-						role="img"
-						aria-label="Scribe"
-						stroke="currentColor"
-						strokeWidth="1.8"
-						strokeLinecap="round"
-					>
-						<line x1="4" y1="9" x2="4" y2="15" />
-						<line x1="7.5" y1="6" x2="7.5" y2="18" />
-						<line x1="11" y1="8.5" x2="11" y2="15.5" />
-						<line x1="14" y1="8" x2="20" y2="8" />
-						<line x1="14" y1="12" x2="20" y2="12" />
-						<line x1="14" y1="16" x2="18" y2="16" />
-					</svg>
+			<div className="auth-gate-inner">
+				<div className="auth-gate-card">
+					<div className="auth-gate-mark">
+						<svg
+							viewBox="0 0 24 24"
+							width="28"
+							height="28"
+							fill="none"
+							role="img"
+							aria-label="Scribe"
+							stroke="currentColor"
+							strokeWidth="1.8"
+							strokeLinecap="round"
+						>
+							<line x1="4" y1="9" x2="4" y2="15" />
+							<line x1="7.5" y1="6" x2="7.5" y2="18" />
+							<line x1="11" y1="8.5" x2="11" y2="15.5" />
+							<line x1="14" y1="8" x2="20" y2="8" />
+							<line x1="14" y1="12" x2="20" y2="12" />
+							<line x1="14" y1="16" x2="18" y2="16" />
+						</svg>
+					</div>
+
+					<h1 className="auth-gate-title">{TITLE_BY_PHASE[phase]}</h1>
+
+					{phase === "signin" ? (
+						<>
+							<p className={signInMessageClass}>{signInMessage}</p>
+							<div className="auth-gate-signin-actions">
+								<button
+									type="button"
+									className="btn primary"
+									onClick={onSignIn}
+								>
+									Sign in with Clerk
+								</button>
+								<a href="/feed.xml" className="btn ghost">
+									Read-only RSS
+								</a>
+							</div>
+						</>
+					) : phase === "error" ? (
+						<>
+							<p className="auth-gate-help auth-gate-help-error">
+								{error ??
+									"Couldn't load auth config. The service may be restarting."}
+							</p>
+							<div className="auth-gate-signin-actions">
+								<button type="button" className="btn primary" onClick={onRetry}>
+									Retry
+								</button>
+								<button
+									type="button"
+									className="btn ghost"
+									onClick={onContinueOffline}
+								>
+									Continue offline
+								</button>
+							</div>
+						</>
+					) : (
+						<>
+							<div className="auth-gate-progress" aria-hidden="true" />
+							<p className="auth-gate-status">
+								<span className="spinner" aria-hidden="true" />
+								<span>{STATUS_BY_PHASE[phase] ?? "Working…"}</span>
+							</p>
+							<div className="auth-gate-steps" aria-hidden="true">
+								{STEP_ORDER.map((step, idx) => (
+									<span
+										key={step}
+										className={`auth-gate-step ${stepState(idx)}`}
+									>
+										<span className="step-dot" />
+										<span>{STEP_LABEL[step]}</span>
+									</span>
+								))}
+							</div>
+						</>
+					)}
 				</div>
 
-				<h1 className="auth-gate-title">{TITLE_BY_PHASE[phase]}</h1>
-
 				{phase === "signin" ? (
-					<>
-						<p className={signInMessageClass}>{signInMessage}</p>
-						<div className="auth-gate-signin-actions">
-							<button type="button" className="btn primary" onClick={onSignIn}>
-								Sign in with Clerk
-							</button>
-							<a href="/feed.xml" className="btn ghost">
-								Read-only RSS
-							</a>
-						</div>
-					</>
-				) : phase === "error" ? (
-					<>
-						<p className="auth-gate-help auth-gate-help-error">
-							{error ??
-								"Couldn't load auth config. The service may be restarting."}
+					<section className="auth-gate-about" aria-labelledby="about-scribe">
+						<h2 id="about-scribe">Scribe</h2>
+						<p>
+							Scribe turns a video or podcast link into a searchable transcript
+							and a short written summary, so a two-hour recording can be read
+							in a couple of minutes and found again later by keyword or tag.
 						</p>
-						<div className="auth-gate-signin-actions">
-							<button type="button" className="btn primary" onClick={onRetry}>
-								Retry
-							</button>
-							<button
-								type="button"
-								className="btn ghost"
-								onClick={onContinueOffline}
-							>
-								Continue offline
-							</button>
-						</div>
-					</>
-				) : (
-					<>
-						<div className="auth-gate-progress" aria-hidden="true" />
-						<p className="auth-gate-status">
-							<span className="spinner" aria-hidden="true" />
-							<span>{STATUS_BY_PHASE[phase] ?? "Working…"}</span>
+						<ul>
+							<li>
+								Paste a link — Scribe fetches the audio and transcribes it.
+							</li>
+							<li>
+								Get a summary with key points, plus the full transcript to
+								search, copy or download.
+							</li>
+							<li>
+								Everything you submit stays in your own library; nothing is
+								public unless you create a share link.
+							</li>
+						</ul>
+						<p className="auth-gate-about-note">
+							Signing in with Google is used only to identify you: Scribe reads
+							your name, email address and profile picture to create your
+							account. It never posts anything, and never reads your Google
+							data. Access is invite-only — an operator adds your address before
+							you can sign in.
 						</p>
-						<div className="auth-gate-steps" aria-hidden="true">
-							{STEP_ORDER.map((step, idx) => (
-								<span key={step} className={`auth-gate-step ${stepState(idx)}`}>
-									<span className="step-dot" />
-									<span>{STEP_LABEL[step]}</span>
-								</span>
-							))}
-						</div>
-					</>
-				)}
+						<p className="auth-gate-about-links">
+							<a href="/privacy">Privacy</a>
+							<span aria-hidden="true"> · </span>
+							<a href="/terms">Terms</a>
+							<span aria-hidden="true"> · </span>
+							<a href="mailto:oleg@befeast.com">Contact</a>
+						</p>
+					</section>
+				) : null}
 			</div>
-
-			{phase === "signin" ? (
-				<section className="auth-gate-about" aria-labelledby="about-scribe">
-					<h2 id="about-scribe">Scribe</h2>
-					<p>
-						Scribe turns a video or podcast link into a searchable transcript
-						and a short written summary, so a two-hour recording can be read in
-						a couple of minutes and found again later by keyword or tag.
-					</p>
-					<ul>
-						<li>Paste a link — Scribe fetches the audio and transcribes it.</li>
-						<li>
-							Get a summary with key points, plus the full transcript to search,
-							copy or download.
-						</li>
-						<li>
-							Everything you submit stays in your own library; nothing is public
-							unless you create a share link.
-						</li>
-					</ul>
-					<p className="auth-gate-about-note">
-						Signing in with Google is used only to identify you: Scribe reads
-						your name, email address and profile picture to create your account.
-						It never posts anything, and never reads your Google data. Access is
-						invite-only — an operator adds your address before you can sign in.
-					</p>
-					<p className="auth-gate-about-links">
-						<a href="/privacy">Privacy</a>
-						<span aria-hidden="true"> · </span>
-						<a href="/terms">Terms</a>
-						<span aria-hidden="true"> · </span>
-						<a href="mailto:oleg@befeast.com">Contact</a>
-					</p>
-				</section>
-			) : null}
 
 			<div className="auth-gate-footer">
 				<span>scribe</span>
