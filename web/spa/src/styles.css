@@ -1699,7 +1699,18 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   background: var(--bg);
   display: grid;
   place-items: center;
+  /* The public product copy (#443) makes this taller than the viewport on
+     short screens, so the gate scrolls instead of clipping. */
+  overflow-y: auto;
+  padding: 2.5rem 1rem 4.5rem;
   animation: gate-fade-in 0.18s ease-out;
+}
+.auth-gate-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
 }
 @keyframes gate-fade-in {
   from { opacity: 0; }
