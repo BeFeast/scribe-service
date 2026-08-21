@@ -1864,6 +1864,42 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   max-width: 20rem;
   line-height: 1.55;
 }
+.auth-gate-about {
+  max-width: 34rem;
+  margin: 2.25rem auto 0;
+  padding: 0 1.25rem;
+  text-align: left;
+  color: var(--fg-soft);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+.auth-gate-about h2 {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  color: var(--fg);
+  margin: 0 0 0.5rem;
+  letter-spacing: 0.01em;
+}
+.auth-gate-about p { margin: 0 0 0.75rem; }
+.auth-gate-about ul {
+  margin: 0 0 0.9rem;
+  padding-left: 1.1rem;
+}
+.auth-gate-about li { margin-bottom: 0.3rem; }
+.auth-gate-about-note {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  border-left: 2px solid var(--border);
+  padding-left: 0.75rem;
+}
+.auth-gate-about-links {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.auth-gate-about-links a { color: var(--link); }
+
 .auth-gate-help-error {
   color: var(--err);
 }
