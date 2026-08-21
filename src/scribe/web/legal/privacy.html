@@ -1,0 +1,47 @@
+<h2>What Scribe is</h2>
+<p>Scribe is a private, invite-only service that turns a video or audio link you
+submit into a transcript and a summary. Accounts are created by an operator; there
+is no public sign-up.</p>
+
+<h2>What we store</h2>
+<ul>
+  <li><strong>Account data</strong> — your email address, display name and the
+  identifier issued by our authentication provider. Passwords are never stored by
+  Scribe.</li>
+  <li><strong>What you submit</strong> — the URLs you send, and any media you
+  upload, together with the resulting transcript, summary, title, tags and
+  processing metadata (timings, cost, error messages).</li>
+  <li><strong>Operational logs</strong> — request and job logs used to run and
+  debug the service.</li>
+</ul>
+
+<h2>Who else processes it</h2>
+<p>Running a job means sending data to a small number of processors:</p>
+<ul>
+  <li><strong>Clerk</strong> — authentication (sign-in, session tokens, your
+  email and profile fields).</li>
+  <li><strong>Google</strong> — only if you choose “Continue with Google”. Scribe
+  receives your email address, name and profile picture; nothing is written back
+  to your Google account.</li>
+  <li><strong>Transcription and summarisation providers</strong> — the extracted
+  audio is transcribed on a rented GPU instance, and the transcript text is sent
+  to a large-language-model provider to produce the summary. Which provider is
+  used depends on the operator's configuration at the time of the job.</li>
+  <li><strong>Object storage</strong> — uploaded media is kept in a private
+  bucket when the upload feature is used.</li>
+</ul>
+<p>Scribe does not sell your data, does not serve advertising, and does not use
+your transcripts to train models.</p>
+
+<h2>Retention and deletion</h2>
+<p>Transcripts and summaries are kept until you or the operator delete them.
+Intermediate audio is temporary and removed after a job completes. To have your
+account and its content deleted, write to the contact address below.</p>
+
+<h2>Sharing</h2>
+<p>Content is private to your account unless you create a share link, which makes
+that single transcript or summary readable by anyone holding the link until you
+revoke it.</p>
+
+<h2>Contact</h2>
+<p>Questions, access and deletion requests: <a href="mailto:oleg@befeast.com">oleg@befeast.com</a>.</p>

@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} · scribe{% endblock %}
+{% block subtitle %}{{ page_title }}{% endblock %}
+{% block content %}
+<div class="body">
+  <p><em>Last updated {{ updated }}.</em></p>
+  {{ body | safe }}
+</div>
+{% endblock %}

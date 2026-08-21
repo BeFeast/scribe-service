@@ -160,6 +160,10 @@ export function AuthGate({
 						? "no data sent until you sign in"
 						: "establishing secure session…"}
 				</span>
+				<span className="sep">·</span>
+				<a href="/privacy">Privacy</a>
+				<span className="sep">·</span>
+				<a href="/terms">Terms</a>
 			</div>
 		</div>
 	);

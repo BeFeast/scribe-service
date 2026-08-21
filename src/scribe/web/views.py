@@ -36,6 +36,15 @@ _TEMPLATES = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
 _SPA_STATIC_DIR = _WEB_DIR / "static" / "spa"
 _SPA_MANIFEST_PATH = _SPA_STATIC_DIR / ".vite" / "manifest.json"
 _BRAND_DIR = _WEB_DIR / "static" / "brand"
+# Privacy policy / terms bodies live as HTML fragments so the text can be edited
+# without touching Python. Google's OAuth consent screen requires both to be
+# publicly reachable on the app's own domain before an app can be published.
+_LEGAL_DIR = _WEB_DIR / "legal"
+_LEGAL_PAGES = {
+    "privacy": ("Privacy", "privacy.html"),
+    "terms": ("Terms of Service", "terms.html"),
+}
+_LEGAL_UPDATED = "21 August 2026"
 # Hard cap on the rows the home page renders. Keeps the page fast even after
 # years of accretion; older entries are still reachable by tag/search.
 _LIST_LIMIT = 200
@@ -108,6 +117,29 @@ def spa_shell(request: Request, spa_path: str = "") -> HTMLResponse:
         request,
         "spa.html",
         {"scripts": assets["scripts"], "styles": assets["styles"]},
+    )
+
+
+@router.get("/privacy", response_class=HTMLResponse)
+def privacy_page(request: Request) -> HTMLResponse:
+    return _legal_page(request, "privacy")
+
+
+@router.get("/terms", response_class=HTMLResponse)
+def terms_page(request: Request) -> HTMLResponse:
+    return _legal_page(request, "terms")
+
+
+def _legal_page(request: Request, key: str) -> HTMLResponse:
+    title, filename = _LEGAL_PAGES[key]
+    return _TEMPLATES.TemplateResponse(
+        request,
+        "legal.html",
+        {
+            "page_title": title,
+            "updated": _LEGAL_UPDATED,
+            "body": (_LEGAL_DIR / filename).read_text(encoding="utf-8"),
+        },
     )
 
 
