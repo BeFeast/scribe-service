@@ -33,3 +33,29 @@ def test_landing_explains_google_sign_in_usage_and_links_policies() -> None:
     assert "never posts anything" in source
     assert 'href="/privacy"' in source
     assert 'href="/terms"' in source
+
+
+def test_shell_landing_matches_the_in_app_copy() -> None:
+    """The server-rendered fallback in spa.html and the React section must tell
+    the same story — Google's reviewer reads the raw document, users read the
+    rendered one, and a drift between them is how the app failed review twice."""
+    raw_shell = (
+        Path(__file__).resolve().parents[1]
+        / "src" / "scribe" / "web" / "templates" / "spa.html"
+    ).read_text(encoding="utf-8")
+    # Both files wrap prose across lines, so compare on collapsed whitespace.
+    shell = " ".join(raw_shell.split())
+    react = " ".join(_read("components/Loaders.tsx").split())
+
+    for phrase in (
+        "searchable transcript",
+        "Signing in with Google is used only to identify you",
+        "never posts anything",
+        "invite-only",
+    ):
+        assert phrase in shell, phrase
+        assert phrase in react, phrase
+
+    # Product name in the raw document must equal the consent-screen app name.
+    assert "<h1>Scribe</h1>" in raw_shell
+    assert 'class="shell-landing"' in raw_shell

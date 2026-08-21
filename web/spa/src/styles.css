@@ -1875,6 +1875,28 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   max-width: 20rem;
   line-height: 1.55;
 }
+/* Server-rendered fallback copy in spa.html: visible to anything reading the
+   raw document (crawlers, reviewers, JS-off), replaced the moment React fills
+   #root so users only ever see the real UI. */
+.shell-landing {
+  max-width: 34rem;
+  margin: 4rem auto;
+  padding: 0 1.25rem;
+  color: var(--fg-soft);
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+.shell-landing h1 {
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  color: var(--fg);
+  margin: 0 0 0.75rem;
+}
+.shell-landing ul { padding-left: 1.1rem; }
+.shell-landing a { color: var(--link); }
+#root:not(:empty) ~ .shell-landing { display: none; }
+
 .auth-gate-about {
   max-width: 34rem;
   margin: 2.25rem auto 0;
