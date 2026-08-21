@@ -1867,6 +1867,14 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   gap: 0.5rem;
   margin-top: 0.25rem;
 }
+.auth-gate-tagline {
+  font-size: 0.95rem;
+  color: var(--fg);
+  margin: -0.75rem 0 0;
+  max-width: 22rem;
+  line-height: 1.5;
+}
+
 .auth-gate-help {
   font-family: var(--font-mono);
   font-size: 0.72rem;

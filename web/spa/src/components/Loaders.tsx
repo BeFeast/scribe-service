@@ -18,7 +18,7 @@ export type AuthGatePhase =
 const TITLE_BY_PHASE: Record<Exclude<AuthGatePhase, "ready">, string> = {
 	config: "Connecting to Scribe",
 	clerk: "Authenticating",
-	signin: "Sign in to Scribe",
+	signin: "Scribe",
 	workspace: "Loading your workspace",
 	error: "Couldn't reach Scribe",
 };
@@ -105,6 +105,10 @@ export function AuthGate({
 
 					{phase === "signin" ? (
 						<>
+							<p className="auth-gate-tagline">
+								Turns video and podcast links into searchable transcripts and
+								short written summaries.
+							</p>
 							<p className={signInMessageClass}>{signInMessage}</p>
 							<div className="auth-gate-signin-actions">
 								<button
