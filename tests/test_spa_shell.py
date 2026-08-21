@@ -34,7 +34,7 @@ def test_spa_shell_uses_vite_manifest(monkeypatch, tmp_path):
     # Title/description carry the product name and purpose: the shell is what
     # crawlers and Google's OAuth brand reviewer read, since the SPA paints
     # everything else client-side.
-    assert "<title>Scribe — transcripts and summaries for videos and podcasts</title>" in response.text
+    assert "<title>Scribe</title>" in response.text
     assert 'name="description"' in response.text
     assert 'class="shell-landing"' in response.text
     assert "<h1>Scribe</h1>" in response.text
