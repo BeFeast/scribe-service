@@ -120,14 +120,14 @@ formats differ — mixing them up crash-loops scribe at import:
   each Infisical secret as a kwarg into `Settings(...)`, so the raw string
   reaches the `field_validator(mode="before")` directly (no env-source
   JSON decode). Comma-separated values work here, e.g.
-  `SCRIBE_SUMMARY_PROVIDERS=ollama-cloud:glm-5.2,ollama-cloud:gemma4:31b,freellmapi:gemini-2.5-flash,codex`
+  `SCRIBE_SUMMARY_PROVIDERS=cliproxy:scribe/gpt-5.5,freellmapi:gemini-2.5-flash`
   or `SCRIBE_TRANSCRIBE_PROVIDERS=vast,openai,local-whisper`.
 - **Raw env (`SCRIBE_*` shell/`.env`).** pydantic-settings' env source
   JSON-decodes `list[str]` fields BEFORE the validator runs, so a bare
   comma-separated string fails JSON parsing and raises
   `SettingsError: error parsing value for field summary_providers` at
   boot. Raw env MUST be a JSON array, e.g.
-  `SCRIBE_SUMMARY_PROVIDERS=["ollama-cloud:glm-5.2","codex"]`.
+  `SCRIBE_SUMMARY_PROVIDERS=["cliproxy:scribe/gpt-5.5","freellmapi:gemini-2.5-flash"]`.
 
 The Infisical Agent sidecar env-file template (`scribe.env.tpl`) only
 renders scalar boot secrets for this reason; the provider chains are
