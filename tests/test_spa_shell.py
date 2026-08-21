@@ -31,7 +31,13 @@ def test_spa_shell_uses_vite_manifest(monkeypatch, tmp_path):
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "<title>Scribe SPA</title>" in response.text
+    # Title/description carry the product name and purpose: the shell is what
+    # crawlers and Google's OAuth brand reviewer read, since the SPA paints
+    # everything else client-side.
+    assert "<title>Scribe — transcripts and summaries for videos and podcasts</title>" in response.text
+    assert 'name="description"' in response.text
+    assert 'class="shell-landing"' in response.text
+    assert "<h1>Scribe</h1>" in response.text
     assert (
         '<html lang="en" data-variant="field" data-theme="light" '
         'data-density="compact" data-library-layout="feed">'

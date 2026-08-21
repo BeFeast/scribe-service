@@ -110,7 +110,7 @@ def test_production_home_serves_spa_and_classic_list_is_explicit(client, db_sess
 
     home = client.get("/")
     assert home.status_code == 200
-    assert "<title>Scribe SPA</title>" in home.text
+    assert "<title>Scribe — transcripts and summaries for videos and podcasts</title>" in home.text
     assert '<div id="root"></div>' in home.text
     assert "Classic List Entry" not in home.text
 
@@ -125,7 +125,7 @@ def test_production_spa_deep_links_serve_shell(client):
     for route in ("/queue", "/history", "/ops", "/settings"):
         resp = client.get(route)
         assert resp.status_code == 200
-        assert "<title>Scribe SPA</title>" in resp.text
+        assert "<title>Scribe — transcripts and summaries for videos and podcasts</title>" in resp.text
         assert '<div id="root"></div>' in resp.text
 
 

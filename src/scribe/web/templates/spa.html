@@ -3,7 +3,11 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Scribe SPA</title>
+    <title>Scribe — transcripts and summaries for videos and podcasts</title>
+    <meta name="description" content="Scribe turns a video or podcast link into a searchable transcript and a short written summary. Invite-only.">
+    <meta property="og:site_name" content="Scribe">
+    <meta property="og:title" content="Scribe — transcripts and summaries for videos and podcasts">
+    <meta property="og:description" content="Scribe turns a video or podcast link into a searchable transcript and a short written summary. Invite-only.">
     <link rel="icon" href="/favicon.ico" sizes="any">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -18,6 +22,36 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Server-rendered product description. The SPA paints everything else
+         client-side, so a visitor (or a reviewer) reading the raw document
+         would otherwise find an empty page — which is exactly why Google's
+         OAuth brand review kept reporting "your home page does not explain the
+         purpose of your app". Hidden by CSS as soon as React fills #root.
+         Keep the copy in sync with the AuthGate section in Loaders.tsx. -->
+    <section class="shell-landing">
+      <h1>Scribe</h1>
+      <p>
+        Scribe turns a video or podcast link into a searchable transcript and a
+        short written summary, so a two-hour recording can be read in a couple
+        of minutes and found again later by keyword or tag.
+      </p>
+      <ul>
+        <li>Paste a link — Scribe fetches the audio and transcribes it.</li>
+        <li>Get a summary with key points, plus the full transcript to search, copy or download.</li>
+        <li>Everything you submit stays in your own library; nothing is public unless you create a share link.</li>
+      </ul>
+      <p>
+        Signing in with Google is used only to identify you: Scribe reads your
+        name, email address and profile picture to create your account. It never
+        posts anything, and never reads your Google data. Access is invite-only —
+        an operator adds your address before you can sign in.
+      </p>
+      <p>
+        <a href="/privacy">Privacy</a> ·
+        <a href="/terms">Terms</a> ·
+        <a href="mailto:oleg@befeast.com">Contact</a>
+      </p>
+    </section>
     {% for src in scripts %}
     <script type="module" crossorigin src="{{ src }}"></script>
     {% endfor %}
