@@ -405,6 +405,18 @@ class Settings(BaseSettings):
     ollama_model: str = "glm-5.2"
     ollama_timeout_secs: int = 600
 
+    # cliproxy (CLIProxyAPI broker) — OpenAI-compatible HTTP front for the
+    # ChatGPT/Codex subscription pool. Summarising through it instead of the
+    # codex CLI keeps the flat-subscription cost while dropping the harness and,
+    # crucially, the global codex flock: the broker owns and refreshes the OAuth
+    # tokens centrally, so concurrent summaries no longer revoke each other.
+    # A chain entry addresses one pooled account by model prefix, e.g.
+    # `cliproxy:scribe/gpt-5.5`. Empty base URL = Unavailable, chain advances.
+    cliproxy_base_url: str = ""
+    cliproxy_api_key: str = ""
+    cliproxy_model: str = "gpt-5.5"
+    cliproxy_timeout_secs: int = 600
+
     # Directory containing transcript-summary.v*.md and transcript-summary.active.
     # Operators can bind-mount this path to persist prompt edits across deploys.
     prompt_dir: str = ""

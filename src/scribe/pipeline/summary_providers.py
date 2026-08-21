@@ -312,7 +312,7 @@ def summarize_with_chain(
 
     for provider in providers:
         name = getattr(provider, "name", type(provider).__name__)
-        breaker = get_breaker(name)
+        breaker = get_breaker(getattr(provider, "breaker_key", None) or name)
         mode = breaker.acquire()
         _publish_state(breaker)
 
@@ -482,6 +482,7 @@ class CodexProvider:
         # Per-chain model override (#388, `codex:<model>`); None → use the
         # configured `codex_model` (which itself may be empty = codex config.toml).
         self._model = model
+        self.breaker_key = f"codex:{model}" if model else "codex"
         self.last_token_revoked_stderr: str | None = None
 
     def summarize(self, prompt: str) -> SummaryResult:
@@ -585,6 +586,7 @@ class ClaudeProvider:
         self._settings = settings_obj or default_settings
         # Per-chain model override (#388, `claude:<model>`); None → claude_model.
         self._model = model
+        self.breaker_key = f"claude:{model}" if model else "claude"
 
     def summarize(self, prompt: str) -> SummaryResult:
         return validate_and_canonicalize(self.complete(prompt))
@@ -695,6 +697,12 @@ class OpenAICompatibleProvider:
         require_api_key: bool = True,
     ) -> None:
         self.name = name
+        # Breaker identity is per (provider, model): one chain may list the same
+        # backend several times with different models (`freellmapi:gemini-2.5-flash`
+        # + `freellmapi:gpt-oss-120b`). Keying the breaker on the bare provider
+        # name would let one failing model trip every sibling entry, defeating
+        # the point of the `provider:model` chain format.
+        self.breaker_key = f"{name}:{model}" if model else name
         self._base_url = (base_url or "").strip()
         self._api_key = (api_key or "").strip()
         self._model = model
@@ -823,6 +831,35 @@ class OllamaCloudProvider(OpenAICompatibleProvider):
         )
 
 
+class CliproxyProvider(OpenAICompatibleProvider):
+    """`cliproxy` instance of `OpenAICompatibleProvider`.
+
+    Fronts the CLIProxyAPI broker, which holds the ChatGPT/Codex subscription
+    OAuth tokens and refreshes them centrally. That is the whole point of using
+    it over `CodexProvider`: the codex CLI rotates a single-use refresh token
+    per run, which is why `CodexProvider` serialises every summary behind one
+    flock — the broker removes that constraint, so summaries run concurrently
+    at `worker_concurrency`.
+
+    A chain entry addresses one pooled account through the broker's model
+    prefix, e.g. `cliproxy:scribe/gpt-5.5` routes to the credential registered
+    with `prefix: scribe` and leaves unprefixed accounts for other consumers.
+    """
+
+    def __init__(
+        self, settings_obj: Settings | None = None, *, model: str | None = None
+    ) -> None:
+        s = settings_obj or default_settings
+        super().__init__(
+            name="cliproxy",
+            base_url=s.cliproxy_base_url,
+            api_key=s.cliproxy_api_key,
+            model=model or s.cliproxy_model,
+            timeout=s.cliproxy_timeout_secs,
+            require_api_key=True,
+        )
+
+
 # A factory builds one provider instance from settings + an optional per-chain
 # model override (parsed from a `provider:model` entry). Keeping factories rather
 # than bare classes lets one backend type (OpenAICompatibleProvider) be
@@ -846,11 +883,16 @@ def _build_ollama_cloud(s: Settings, model: str | None) -> SummaryProvider:
     return OllamaCloudProvider(s, model=model)
 
 
+def _build_cliproxy(s: Settings, model: str | None) -> SummaryProvider:
+    return CliproxyProvider(s, model=model)
+
+
 PROVIDER_REGISTRY: dict[str, ProviderFactory] = {
     "codex": _build_codex,
     "claude": _build_claude,
     "freellmapi": _build_freellmapi,
     "ollama-cloud": _build_ollama_cloud,
+    "cliproxy": _build_cliproxy,
 }
 
 

@@ -749,8 +749,9 @@ def test_chain_falls_through_failing_model_to_next_ollama_model(
     result = summarize_with_chain(chain, "prompt")
     assert isinstance(result, SummaryResult)
     assert seen_models == ["glm-5.2", "gemma4:31b"]
-    # The shared ollama-cloud breaker only saw one failure this run → still closed.
-    assert summary_providers.get_breaker("ollama-cloud").state == "closed"
+    # Breakers are per (provider, model), so the 5xx is recorded against
+    # glm-5.2 only and gemma4:31b stays untouched.
+    assert summary_providers.get_breaker("ollama-cloud:gemma4:31b").state == "closed"
 
 
 # ---------- summarize() integration with mocked providers --------------------
@@ -933,3 +934,117 @@ def test_summarize_codex_token_revoked_but_claude_recovers_no_alert(
     result = summarizer.summarize("transcript", title="Title")
     assert isinstance(result, SummaryResult)
     assert alerts == []
+
+
+def test_tripped_model_does_not_skip_sibling_model_of_same_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression (2026-08-20 outage): breakers used to be keyed on the bare
+    provider name, so one failing model tripped every sibling entry of the same
+    backend — the live chain logged `freellmapi=skipped_tripped` for all its
+    models and the summary failed with nothing left to try. Keys are now
+    (provider, model)."""
+    monkeypatch.setattr(summarizer.settings, "freellmapi_base_url", "http://gw:13032/v1")
+    monkeypatch.setattr(summarizer.settings, "freellmapi_api_key", "key")
+    monkeypatch.setattr(summarizer.settings, "freellmapi_timeout_secs", 30)
+    monkeypatch.setattr(
+        summarizer.settings,
+        "summary_providers",
+        ["freellmapi:broken-model", "freellmapi:good-model"],
+    )
+
+    seen_models: list[str] = []
+
+    def fake_post(url, *, content, headers, timeout):  # noqa: ARG001
+        model = json.loads(content)["model"]
+        seen_models.append(model)
+        if model == "broken-model":
+            return httpx.Response(502, text="upstream billing", request=httpx.Request("POST", url))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": _OK_MARKDOWN}}]},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(summary_providers.httpx, "post", fake_post)
+
+    # Trip the broken model's breaker outright (threshold failures in-window).
+    broken = summary_providers.get_breaker("freellmapi:broken-model")
+    for _ in range(summarizer.settings.summary_breaker_threshold):
+        mode = broken.acquire()
+        broken.record("unavailable", mode=mode)
+    assert broken.state == "tripped"
+
+    result = summarize_with_chain(build_provider_chain(), "prompt")
+
+    assert isinstance(result, SummaryResult)
+    # The tripped entry is skipped without a call; its sibling still runs.
+    assert seen_models == ["good-model"]
+    assert summary_providers.get_breaker("freellmapi:good-model").state == "closed"
+
+
+def test_cliproxy_provider_wires_settings_and_prefixed_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`cliproxy:scribe/gpt-5.5` targets the broker credential registered with
+    `prefix: scribe`, sends the bearer key, and carries no codex flock (the
+    broker owns token refresh) so summaries are not serialised."""
+    monkeypatch.setattr(summarizer.settings, "cliproxy_base_url", "http://10.10.0.13:8317/v1")
+    monkeypatch.setattr(summarizer.settings, "cliproxy_api_key", "sk-scribe-test")
+    monkeypatch.setattr(summarizer.settings, "cliproxy_timeout_secs", 30)
+    monkeypatch.setattr(
+        summarizer.settings, "summary_providers", ["cliproxy:scribe/gpt-5.5"]
+    )
+
+    seen: dict[str, object] = {}
+
+    def fake_post(url, *, content, headers, timeout):  # noqa: ARG001
+        seen["url"] = url
+        seen["model"] = json.loads(content)["model"]
+        seen["auth"] = headers.get("Authorization")
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": _OK_MARKDOWN}}]},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(summary_providers.httpx, "post", fake_post)
+
+    chain = build_provider_chain()
+    assert [p.name for p in chain] == ["cliproxy"]
+    assert chain[0].breaker_key == "cliproxy:scribe/gpt-5.5"
+
+    result = summarize_with_chain(chain, "prompt")
+
+    assert isinstance(result, SummaryResult)
+    assert seen["url"] == "http://10.10.0.13:8317/v1/chat/completions"
+    assert seen["model"] == "scribe/gpt-5.5"
+    assert seen["auth"] == "Bearer sk-scribe-test"
+
+
+def test_cliproxy_without_api_key_is_unavailable_and_chain_advances(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unconfigured broker key must not crash the pipeline: the provider
+    reports Unavailable and the next chain entry runs."""
+    monkeypatch.setattr(summarizer.settings, "cliproxy_base_url", "http://10.10.0.13:8317/v1")
+    monkeypatch.setattr(summarizer.settings, "cliproxy_api_key", "")
+    monkeypatch.setattr(summarizer.settings, "freellmapi_base_url", "http://gw:13032/v1")
+    monkeypatch.setattr(summarizer.settings, "freellmapi_api_key", "key")
+    monkeypatch.setattr(
+        summarizer.settings,
+        "summary_providers",
+        ["cliproxy:scribe/gpt-5.5", "freellmapi:gemini-2.5-flash"],
+    )
+
+    def fake_post(url, *, content, headers, timeout):  # noqa: ARG001
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": _OK_MARKDOWN}}]},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(summary_providers.httpx, "post", fake_post)
+
+    result = summarize_with_chain(build_provider_chain(), "prompt")
+    assert isinstance(result, SummaryResult)
