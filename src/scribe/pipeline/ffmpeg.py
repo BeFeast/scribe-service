@@ -20,8 +20,20 @@ class FfmpegError(RuntimeError):
     pass
 
 
+NO_AUDIO_STREAM_MESSAGE = (
+    "media has no decodable audio stream; Scribe summarizes speech audio only"
+)
+
+
 def to_wav_16k_mono(src: Path, dest: Path) -> Path:
     """Resample `src` to a 16 kHz mono wav at `dest`. Returns `dest`."""
+    # This is the shared normalization boundary for uploads, Telegram media,
+    # and URL downloads. Keep the guard here as defense in depth even though
+    # upload routes validate before enqueueing: a video-only container plus
+    # ffmpeg's ``-vn`` otherwise fails with the opaque "no stream" stderr.
+    if not probe_media(src).has_audio:
+        raise FfmpegError(NO_AUDIO_STREAM_MESSAGE)
+
     dest.parent.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(
         [
