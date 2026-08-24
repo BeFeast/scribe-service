@@ -11,7 +11,7 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "alembic>=1.14",
     "pydantic-settings>=2.7",
-    "jinja2>=3.1",
+    "jinja2>=3.1.6",
     "httpx>=0.28",
     "python-multipart>=0.0.20",
     # yt-dlp pinned (not floating): a bad upstream release or a YouTube-side
