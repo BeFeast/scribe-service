@@ -12,7 +12,7 @@ dependencies = [
     "alembic>=1.14",
     "pydantic-settings>=2.7",
     "jinja2>=3.1",
-    "httpx>=0.28",
+    "httpx>=0.28.1",
     "python-multipart>=0.0.20",
     # yt-dlp pinned (not floating): a bad upstream release or a YouTube-side
     # change can break downloads silently. Bumping is a deliberate one-line
