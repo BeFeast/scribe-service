@@ -41,6 +41,17 @@ def _make_audio(path):
     )
 
 
+def _make_video_only(path):
+    subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10:duration=1",
+            "-an", str(path),
+        ],
+        check=True,
+    )
+
+
 def test_probe_video_has_video_and_audio(tmp_path):
     src = tmp_path / "clip.mp4"
     _make_video(src)
@@ -56,6 +67,41 @@ def test_probe_audio_only(tmp_path):
     probe = ffmpeg.probe_media(src)
     assert probe.has_video is False
     assert probe.has_audio is True
+
+
+def test_probe_video_only_reports_no_audio(tmp_path):
+    src = tmp_path / "silent.mp4"
+    _make_video_only(src)
+    probe = ffmpeg.probe_media(src)
+    assert probe.has_video is True
+    assert probe.has_audio is False
+
+
+def test_to_wav_rejects_video_only_with_actionable_error(tmp_path):
+    src = tmp_path / "silent.mp4"
+    dest = tmp_path / "audio.wav"
+    _make_video_only(src)
+
+    with pytest.raises(ffmpeg.FfmpegError, match="summarizes speech audio only"):
+        ffmpeg.to_wav_16k_mono(src, dest)
+
+    assert not dest.exists()
+
+
+@pytest.mark.parametrize(("filename", "make_media"), [
+    ("clip.mp4", _make_video),
+    ("clip.mp3", _make_audio),
+])
+def test_to_wav_accepts_media_with_audio(tmp_path, filename, make_media):
+    src = tmp_path / filename
+    dest = tmp_path / "audio.wav"
+    make_media(src)
+
+    ffmpeg.to_wav_16k_mono(src, dest)
+
+    probe = ffmpeg.probe_media(dest)
+    assert probe.has_audio is True
+    assert probe.has_video is False
 
 
 def test_probe_rejects_non_media(tmp_path):
