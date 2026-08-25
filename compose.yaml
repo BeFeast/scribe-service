@@ -12,6 +12,7 @@
 #   <stack>/prompts/        transcript-summary.*.md (copied from src/scribe/prompts)
 #   <stack>/infisical-agent/{agent.yaml,scribe.env.tpl,identity/...}
 #   <stack>/src/            this repo checkout (build context for scribe-backups)
+#   <stack>/gpu-ssh/        ed25519 key for the pinned meeting GPU (UID 1001, 0600)
 #
 # Non-root runtime (#348): the scribe image runs as fixed UID/GID 1001 (user
 # `scribe`). Every host bind-mount below MUST be owned by UID 1001 on the host
@@ -39,6 +40,16 @@ services:
       # bgutil PO-token provider sidecar (#309). Container-DNS over the
       # implicit project network. Empty string disables the integration.
       SCRIBE_BGUTIL_POT_BASE_URL: http://scribe-pot:4416
+      # Optional always-on meeting GPU (Lane 1 Vast instance). Empty/0 = off;
+      # busy/stolen/SSH failure falls through to per-job market rent. The
+      # pinned id must never be destroyed. Host bind ./gpu-ssh is UID 1001
+      # mode 0700, key 0600.
+      SCRIBE_PINNED_VAST_ID: "48673124"
+      SCRIBE_PINNED_SSH_HOST: ssh3.vast.ai
+      SCRIBE_PINNED_SSH_PORT: "33124"
+      SCRIBE_PINNED_SSH_USER: root
+      SCRIBE_PINNED_SSH_KEY: /run/gpu-ssh/id_ed25519
+      SCRIBE_PINNED_HOURLY_USD: "0.058"
     ports:
       - "13120:8000"
     volumes:
@@ -61,6 +72,7 @@ services:
       - scribe-backups:/backups:ro
       # Infisical Agent-rendered SCRIBE_* boot secrets (#261), read-only.
       - scribe-secrets:/secrets:ro
+      - ./gpu-ssh:/run/gpu-ssh:ro
     depends_on:
       infisical-agent:
         condition: service_started

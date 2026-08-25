@@ -43,6 +43,10 @@ def _instance_label(instance: dict[str, Any]) -> str:
 
 
 def _is_scribe_instance(instance: dict[str, Any]) -> bool:
+    instance_id = _instance_id(instance)
+    pinned = int(getattr(settings, "pinned_vast_id", 0) or 0)
+    if pinned and instance_id == pinned:
+        return False
     return SCRIBE_LABEL_MARKER in _instance_label(instance)
 
 
