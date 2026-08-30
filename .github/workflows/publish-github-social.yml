@@ -1,0 +1,70 @@
+name: Publish GitHub social mirror
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+concurrency:
+  group: publish-github-social-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    # GitHub receives this workflow through the mirror. It must never publish
+    # back into itself or become a second development authority.
+    if: ${{ github.server_url != 'https://github.com' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Publish the exact canonical ref
+        shell: bash
+        env:
+          GH_SOCIAL_PUBLISH_TOKEN: ${{ secrets.GH_SOCIAL_PUBLISH_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_SERVER_URL}" != "https://git.oklabs.uk" ]]; then
+            echo "Refusing publication from non-canonical forge: ${GITHUB_SERVER_URL}" >&2
+            exit 1
+          fi
+          if [[ -z "${GH_SOCIAL_PUBLISH_TOKEN}" ]]; then
+            echo "GH_SOCIAL_PUBLISH_TOKEN is required" >&2
+            exit 1
+          fi
+
+          github_url="https://github.com/BeFeast/scribe-service.git"
+          askpass_script="$(mktemp)"
+          trap 'rm -f "${askpass_script}"' EXIT
+          # The helper expands the secret only when Git invokes it.
+          # shellcheck disable=SC2016
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'case "$1" in' \
+            '  *Username*) printf "%s\\n" "x-access-token" ;;' \
+            '  *Password*) printf "%s\\n" "${GH_SOCIAL_PUBLISH_TOKEN}" ;;' \
+            '  *) exit 1 ;;' \
+            'esac' > "${askpass_script}"
+          chmod 700 "${askpass_script}"
+          export GIT_ASKPASS="${askpass_script}"
+          export GIT_TERMINAL_PROMPT=0
+
+          case "${GITHUB_REF}" in
+            refs/heads/main)
+              git push "${github_url}" HEAD:refs/heads/main
+              ;;
+            refs/tags/v*)
+              tag_name="${GITHUB_REF#refs/tags/}"
+              git push "${github_url}" "refs/tags/${tag_name}:refs/tags/${tag_name}"
+              ;;
+            *)
+              echo "Refusing unexpected publication ref: ${GITHUB_REF}" >&2
+              exit 1
+              ;;
+          esac
