@@ -28,9 +28,27 @@ Style:
 - Markdown only. No HTML.`;
 
 export const CLERK_PROFILE_UNAVAILABLE = "Clerk profile management is unavailable in this deployment";
+export const OPTIONAL_CLERK_UNAVAILABLE = "Clerk sign-in is unavailable right now. LAN access remains available; retry when ready.";
 
 export function canRenderAccessGroup(currentUser) {
   return currentUser?.role === "admin";
+}
+
+export function shouldOfferTrustedClerkSignIn(auth) {
+  return auth.trustedNetwork && auth.clerkConfigured && !auth.signedIn;
+}
+
+export function canGenerateExtensionToken(auth, pending = false) {
+  return auth.signedIn && !pending;
+}
+
+export async function mintExtensionToken(auth) {
+  if (!auth.signedIn) throw new Error("Sign in with Clerk before generating a user token");
+  return fetchJson(auth, "/api/auth/extension-token", undefined, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label: "Settings access token" }),
+  });
 }
 
 export function SettingsPage({ t, setTweak, users: runtimeUsers = [], currentUser = null, onConfigSaved }) {
@@ -162,11 +180,7 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [], currentUse
     if (!auth.signedIn) return;
     setExtensionTokenState({ pending: true, error: null, token: null, copied: false });
     try {
-      const body = await fetchJson(auth, "/api/auth/extension-token", undefined, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ label: "Settings access token" }),
-      });
+      const body = await mintExtensionToken(auth);
       setExtensionTokenState({ pending: false, error: null, token: body?.token ?? "", copied: false });
     } catch (error) {
       setExtensionTokenState({ pending: false, error: messageOf(error), token: null, copied: false });
@@ -447,6 +461,29 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [], currentUse
         <h2>API access</h2>
         <p className="group-sub">Used by the Telegram bot, Obsidian plugin, and curl-from-anywhere.</p>
 
+        {shouldOfferTrustedClerkSignIn(auth) && (
+          <div className="settings-row" data-auth-action="trusted-lan-clerk-sign-in">
+            <div className="row-label">
+              Optional Clerk session
+              <span className="hint">LAN access stays passwordless. Sign in only when you need a portable, user-scoped token.</span>
+            </div>
+            <div className="row-control">
+              <div className="row" style={{gap: 8, alignItems: "center"}}>
+                <button className="btn primary"
+                        onClick={() => void auth.signIn()}
+                        disabled={auth.authRedirectInFlight}>
+                  <IconExternal size={13}/> Sign in with Clerk
+                </button>
+                {!auth.clerkReady && !auth.authBlockedMessage && <span className="muted mono" style={{fontSize: 11.5}}>Clerk is loading in the background</span>}
+              </div>
+              {auth.authBlockedMessage && <span className="chip err" role="alert">{OPTIONAL_CLERK_UNAVAILABLE}</span>}
+              <span className="muted mono" style={{fontSize: 11.5}}>
+                Your trusted-network workspace remains available without signing in.
+              </span>
+            </div>
+          </div>
+        )}
+
         <div className="settings-row">
           <div className="row-label">
             Bearer token
@@ -460,7 +497,7 @@ export function SettingsPage({ t, setTweak, users: runtimeUsers = [], currentUse
                      style={{maxWidth: 420}}/>
               <button className="btn primary"
                       onClick={generateExtensionToken}
-                      disabled={!auth.signedIn || extensionTokenState.pending}
+                      disabled={!canGenerateExtensionToken(auth, extensionTokenState.pending)}
                       title={auth.signedIn ? "Create a new user-scoped extension token" : "Trusted-network access cannot create a user token without a Clerk session"}>
                 {extensionTokenState.pending ? <span className="spinner"/> : <IconRefresh size={14}/>}
                 {extensionTokenState.pending ? "Generating..." : "Generate token"}
