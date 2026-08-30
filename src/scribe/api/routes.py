@@ -1096,10 +1096,13 @@ async def create_upload_job(
 
     # ffprobe validation before the file enters the transcribe pipeline.
     try:
-        ffmpeg.probe_media(staging_path)
+        probe = ffmpeg.probe_media(staging_path)
     except ffmpeg.FfmpegError as exc:
         uploads.discard_staging(staging_path)
         raise HTTPException(status_code=422, detail=f"invalid media file: {exc}") from None
+    if not probe.has_audio:
+        uploads.discard_staging(staging_path)
+        raise HTTPException(status_code=422, detail=ffmpeg.NO_AUDIO_STREAM_MESSAGE)
 
     video_id = f"upload:{hasher.hexdigest()[:16]}"
     filename = uploads.safe_filename(file.filename)

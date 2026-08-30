@@ -1,4 +1,4 @@
-"""POST /jobs/upload gating: 503 unconfigured, 413 oversize, 422 empty/invalid.
+"""POST /jobs/upload gating: 503 unconfigured, 413 oversize, 422 unusable media.
 
 DB-free: every path here is reached before the route touches the session
 (config gate, size cap, ffprobe validation), so the session is a forbidden
@@ -80,6 +80,29 @@ def test_upload_422_when_not_media(client, monkeypatch):
     r = client.post("/jobs/upload", files={"file": ("junk.mp4", b"not a real video", "video/mp4")})
     assert r.status_code == 422
     assert "invalid media file" in r.json()["detail"]
+
+
+def test_upload_422_when_video_has_no_audio(client, monkeypatch, tmp_path):
+    _configure_media(monkeypatch)
+    monkeypatch.setattr(
+        routes_module.ffmpeg,
+        "probe_media",
+        lambda _path: ffmpeg.MediaProbe(
+            has_video=True,
+            has_audio=False,
+            duration_seconds=33,
+        ),
+    )
+
+    r = client.post(
+        "/jobs/upload",
+        files={"file": ("silent.mp4", b"video-only bytes", "video/mp4")},
+    )
+
+    assert r.status_code == 422
+    assert r.json()["detail"] == ffmpeg.NO_AUDIO_STREAM_MESSAGE
+    staging = tmp_path / "uploads" / "_staging"
+    assert not staging.exists() or not any(staging.iterdir())
 
 
 def test_upload_422_when_summary_prompt_too_long(client, monkeypatch):

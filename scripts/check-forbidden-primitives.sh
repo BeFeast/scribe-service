@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${ROOT}/web/spa/src"
 
+if ! command -v rg >/dev/null 2>&1; then
+	echo "Forbidden primitive check requires ripgrep (rg); install ripgrep and retry." >&2
+	exit 127
+fi
+
 # Destructive or blocking UX must go through SPA primitives such as
 # ConfirmDialog. Browser-native dialogs cannot be themed or audited.
 pattern='(^|[^A-Za-z0-9_$.])((window\.)?(alert|confirm|prompt))[[:space:]]*\('

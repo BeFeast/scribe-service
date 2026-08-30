@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${ROOT}/web/spa/src"
 
+if ! command -v rg >/dev/null 2>&1; then
+	echo "Design nesting check requires ripgrep (rg); install ripgrep and retry." >&2
+	exit 127
+fi
+
 # Same-tier recipe surfaces must not be nested by default. If a route needs a
 # second tier, give it an explicit recipe class such as .detail-section or
 # .share-sheet so the hierarchy is reviewable.
