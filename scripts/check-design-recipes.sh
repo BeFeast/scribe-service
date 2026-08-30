@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${ROOT}/web/spa/src"
 
+if ! command -v rg >/dev/null 2>&1; then
+	echo "Design recipe check requires ripgrep (rg); install ripgrep and retry." >&2
+	exit 127
+fi
+
 "${ROOT}/scripts/check-design-source-parity.sh"
 
 # Consumers should use exported recipe classes (.pane, .card, .metric, .btn,

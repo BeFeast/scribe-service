@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${ROOT}/web/spa/src"
 
+if ! command -v rg >/dev/null 2>&1; then
+	echo "Design token check requires ripgrep (rg); install ripgrep and retry." >&2
+	exit 127
+fi
+
 # Production SPA sources should use design tokens, literal approved hex values,
 # or semantic classes. Raw framework color families make later route ports drift.
 pattern='(bg|text|border|ring|from|to|via|stroke|fill)-(slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-[0-9]{2,3}'
