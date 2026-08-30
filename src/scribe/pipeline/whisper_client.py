@@ -10,6 +10,7 @@ display driver / cuda driver combination" failure seen on 2026-05-14).
 """
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import queue
@@ -64,6 +65,14 @@ class VastRateLimitedError(WhisperError):
     Distinct type (rather than substring matching on the message) so the
     provider layer can classify sustained rate-limit pressure as usage_limit
     without misreading aggregated errors that merely embed "HTTP 429"."""
+
+
+class PinnedGpuBusy(WhisperError):
+    """Always-on meeting GPU is held by a meeting or another scribe job."""
+
+
+class PinnedGpuUnavailable(WhisperError):
+    """Pinned GPU SSH/job failed; caller should fall back to market rent."""
 
 
 class VastBudgetExceededError(WhisperError):
@@ -443,7 +452,26 @@ def _is_gone_error(exc: BaseException) -> bool:
     return "HTTP 404" in text or "HTTP 410" in text
 
 
+def _is_pinned_instance(instance_id: int) -> bool:
+    pinned = int(getattr(settings, "pinned_vast_id", 0) or 0)
+    return pinned > 0 and int(instance_id) == pinned
+
+
+def _pinned_configured() -> bool:
+    return bool(
+        int(getattr(settings, "pinned_vast_id", 0) or 0)
+        and str(getattr(settings, "pinned_ssh_host", "") or "").strip()
+        and str(getattr(settings, "pinned_ssh_key", "") or "").strip()
+    )
+
+
 def _destroy_instance(api_key: str, instance_id: int) -> None:
+    if _is_pinned_instance(instance_id):
+        print(
+            f"Notice: refusing to destroy pinned meeting GPU {instance_id}",
+            file=sys.stderr,
+        )
+        return
     try:
         _vast(
             api_key, "DELETE", f"/instances/{instance_id}/", {},
@@ -630,6 +658,101 @@ def _wait_remote_ready(
         time.sleep(10)
 
 
+def _pinned_ssh_base(host: str, port: int, key_path: Path) -> list[str]:
+    return [
+        "ssh", "-q", "-i", str(key_path),
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "BatchMode=yes",
+        "-o", "IdentitiesOnly=yes",
+        "-o", "UserKnownHostsFile=/tmp/scribe-gpu-known_hosts",
+        "-o", "GlobalKnownHostsFile=/dev/null",
+        "-o", "ConnectTimeout=30",
+        "-o", "ServerAliveInterval=15",
+        "-o", "ServerAliveCountMax=4",
+        "-p", str(port), f"{settings.pinned_ssh_user}@{host}",
+    ]
+
+
+def _pinned_scp_base(host: str, port: int, key_path: Path) -> list[str]:
+    return [
+        "scp", "-q", "-i", str(key_path),
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "BatchMode=yes",
+        "-o", "IdentitiesOnly=yes",
+        "-o", "UserKnownHostsFile=/tmp/scribe-gpu-known_hosts",
+        "-o", "GlobalKnownHostsFile=/dev/null",
+        "-P", str(port),
+    ]
+
+
+def _transcribe_pinned(
+    wav: Path, *, title: str, source_url: str,
+    model_size: str, compute_type: str, language: str, beam_size: int,
+) -> TranscribeResult:
+    key_path = Path(settings.pinned_ssh_key)
+    if not key_path.is_file():
+        raise PinnedGpuUnavailable(f"pinned SSH key missing: {key_path}")
+    host = str(settings.pinned_ssh_host).strip()
+    port = int(settings.pinned_ssh_port)
+    user = str(settings.pinned_ssh_user or "root")
+    digest = hashlib.sha256(f"{wav}:{wav.stat().st_mtime_ns}:{wav.stat().st_size}".encode()).hexdigest()[:16]
+    remote_dir = f"/workspace/scribe-jobs/{digest}"
+    remote_audio = f"{remote_dir}/input-16k.wav"
+    remote_json = f"{remote_dir}/result.json"
+    remote_md = f"{remote_dir}/transcript.md"
+    ssh = _pinned_ssh_base(host, port, key_path)
+    scp = _pinned_scp_base(host, port, key_path)
+    started = time.monotonic()
+    _run([*ssh, f"mkdir -p {shlex.quote(remote_dir)}"], timeout=45)
+    _run([*scp, str(wav), f"{user}@{host}:{remote_audio}"], timeout=600)
+    remote_cmd = (
+        "cd /workspace && "
+        "env LD_LIBRARY_PATH=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib"
+        ":/opt/conda/lib/python3.11/site-packages/ctranslate2.libs "
+        "HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=/workspace "
+        "python -m lane1.scribe_job "
+        f"--audio {shlex.quote(remote_audio)} "
+        f"--model-root /workspace/models "
+        f"--title {shlex.quote(title)} "
+        f"--source-url {shlex.quote(source_url)} "
+        f"--job-id {shlex.quote(digest)} "
+        f"--output-json {shlex.quote(remote_json)} "
+        f"--output-markdown {shlex.quote(remote_md)} "
+        f"--language {shlex.quote(language)} "
+        f"--beam-size {int(beam_size)} "
+        f"--compute-type {shlex.quote(compute_type)}"
+    )
+    completed = subprocess.run(
+        [*ssh, remote_cmd],
+        text=True,
+        capture_output=True,
+        timeout=max(120, int(settings.transcribe_timeout_secs)),
+    )
+    if completed.returncode == 75:
+        raise PinnedGpuBusy((completed.stderr or completed.stdout or "GPU busy").strip()[-500:])
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()[-1500:]
+        raise PinnedGpuUnavailable(
+            f"pinned GPU job failed ({completed.returncode}): {detail}"
+        )
+    with tempfile.TemporaryDirectory(prefix="scribe-pinned-") as tmp:
+        local_json = Path(tmp) / "result.json"
+        local_md = Path(tmp) / "transcript.md"
+        _run([*scp, f"{user}@{host}:{remote_json}", str(local_json)], timeout=120)
+        _run([*scp, f"{user}@{host}:{remote_md}", str(local_md)], timeout=120)
+        payload = json.loads(local_json.read_text(encoding="utf-8"))
+        elapsed = time.monotonic() - started
+        hourly = float(getattr(settings, "pinned_hourly_usd", 0.0) or 0.0)
+        return TranscribeResult(
+            transcript_md=local_md.read_text(encoding="utf-8"),
+            detected_language=str(payload.get("detected_language") or "unknown"),
+            duration_seconds=payload.get("duration_seconds"),
+            backend=str(payload.get("backend") or "pinned-gpu"),
+            vast_instance_id=int(settings.pinned_vast_id),
+            vast_cost=hourly * elapsed / 3600 if hourly else 0.0,
+        )
+
+
 # --- public API ---------------------------------------------------------
 def _transcribe_impl(
     context: _TranscribeRunContext,
@@ -647,6 +770,27 @@ def _transcribe_impl(
     context.raise_if_cancelled()
     if check_monthly_cap is not None:
         check_monthly_cap()
+    if _pinned_configured():
+        try:
+            return _transcribe_pinned(
+                wav,
+                title=title,
+                source_url=source_url,
+                model_size=model_size,
+                compute_type=compute_type,
+                language=language,
+                beam_size=beam_size,
+            )
+        except PinnedGpuBusy as exc:
+            print(
+                f"Notice: pinned GPU busy ({exc}); falling back to market Vast",
+                file=sys.stderr,
+            )
+        except PinnedGpuUnavailable as exc:
+            print(
+                f"Notice: pinned GPU unavailable ({exc}); falling back to market Vast",
+                file=sys.stderr,
+            )
     max_price = float(settings.vast_max_price_per_hour)
     min_cuda = float(settings.vast_min_cuda)
     max_job_cost = float(settings.vast_max_job_cost)
