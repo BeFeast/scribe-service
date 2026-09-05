@@ -457,7 +457,7 @@ def test_transcribe_returns_result_when_final_destroy_fails(monkeypatch, tmp_pat
     )
     monkeypatch.setattr(whisper_client, "_scp_to", lambda *_a, **_k: None)
 
-    def fake_scp_from(_host, _port, _key, src, target):
+    def fake_scp_from(_host, _port, _key, src, target, **_kwargs):
         if str(src).endswith("result.json"):
             target.write_text(
                 '{"detected_language": "en", "duration_seconds": 12.5, "backend": "fake"}',

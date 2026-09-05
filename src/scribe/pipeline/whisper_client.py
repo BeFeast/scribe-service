@@ -110,6 +110,7 @@ class _TranscribeRunContext:
         self._api_key = ""
         self._instance_id: int | None = None
         self._cancelled = False
+        self.deadline = time.monotonic() + settings.transcribe_timeout_secs
         self._on_destroy_failed = on_destroy_failed
         self._on_destroy_succeeded = on_destroy_succeeded
 
@@ -150,7 +151,7 @@ class _TranscribeRunContext:
 
 
 # --- subprocess + http helpers ------------------------------------------
-def _run(cmd: list[str], *, check: bool = True, timeout: int | None = None) -> subprocess.CompletedProcess:
+def _run(cmd: list[str], *, check: bool = True, timeout: float | None = None) -> subprocess.CompletedProcess:
     try:
         proc = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
@@ -508,14 +509,71 @@ def _ssh_endpoints(instance: dict) -> list[tuple[str, int, str]]:
     return unique
 
 
-def _scp_to(host: str, port: int, key_path: Path, src: Path, target: str) -> None:
-    _run(["scp", "-q", "-i", str(key_path), "-o", "StrictHostKeyChecking=accept-new",
-          "-P", str(port), str(src), f"root@{host}:{target}"], timeout=600)
+def _scp_base(host: str, port: int, key_path: Path) -> list[str]:
+    return [
+        "scp", "-q", "-i", str(key_path),
+        "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=30", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4",
+        "-P", str(port),
+    ]
 
 
-def _scp_from(host: str, port: int, key_path: Path, src: str, target: Path) -> None:
-    _run(["scp", "-q", "-i", str(key_path), "-o", "StrictHostKeyChecking=accept-new",
-          "-P", str(port), f"root@{host}:{src}", str(target)], timeout=120)
+def _scp_to(host: str, port: int, key_path: Path, src: Path, target: str, *, timeout: float = 600) -> None:
+    _run([*_scp_base(host, port, key_path), str(src), f"root@{host}:{target}"], timeout=timeout)
+
+
+def _scp_from(host: str, port: int, key_path: Path, src: str, target: Path, *, timeout: float = 120) -> None:
+    _run([*_scp_base(host, port, key_path), f"root@{host}:{src}", str(target)], timeout=timeout)
+
+
+def _transfer_with_retry(
+    context: _TranscribeRunContext,
+    operation: Callable[[str, int, float], None],
+    endpoints: list[tuple[str, int]],
+    *, deadline: float, max_seconds: float, label: str,
+) -> tuple[str, int]:
+    """Retry idempotent SCP on the same instance without extending its budget.
+
+    Preserve the existing per-attempt limit for healthy large uploads while
+    bounding all attempts by the job's absolute time/cost deadline. Reuse the
+    ready instance's alternate direct/proxy address, never rent another instance.
+    """
+    transfer_deadline = deadline
+    for attempt in range(3):
+        context.raise_if_cancelled()
+        remaining = transfer_deadline - time.monotonic()
+        if remaining <= 0:
+            raise VastBudgetExceededError(f"Vast transfer deadline exceeded: {label}")
+        host, port = endpoints[attempt % len(endpoints)]
+        try:
+            operation(host, port, min(max_seconds, remaining))
+        except (WhisperError, TimeoutError) as exc:
+            context.raise_if_cancelled()
+            if isinstance(exc, (TranscribeTimeoutError, VastBudgetExceededError)):
+                raise
+            message = str(exc).lower()
+            recoverable = isinstance(exc, TimeoutError) or any(marker in message for marker in (
+                "timed out", "connection", "broken pipe", "network is unreachable",
+                "no route to host", "command failed (255)",
+            ))
+            if not recoverable or attempt == 2:
+                raise
+            print(
+                f"Warning: Vast {label} transfer attempt {attempt + 1}/3 failed "
+                f"on {host}:{port}; retrying on the same instance: {exc}",
+                file=sys.stderr,
+            )
+            # Pacing is included in the same absolute transfer/job deadline.
+            _sleep(min(2.0, max(0.0, transfer_deadline - time.monotonic())))
+            continue
+        context.raise_if_cancelled()
+        if time.monotonic() >= transfer_deadline:
+            raise VastBudgetExceededError(f"Vast transfer deadline exceeded: {label}")
+        # Prefer the successful endpoint for subsequent files and execution.
+        endpoints.remove((host, port))
+        endpoints.insert(0, (host, port))
+        return host, port
+    raise AssertionError("transfer retry loop exhausted without an outcome")
 
 
 # --- budget + waits -----------------------------------------------------
@@ -588,6 +646,7 @@ def _format_failure_detail(info: dict, failure_state: str) -> str:
 def _wait_for_ssh(
     api_key, instance_id, key_path, started, deadline, price, max_cost,
     *, ready_timeout: float, ready_started: float | None = None, label: str = "",
+    endpoints: list[tuple[str, int]] | None = None,
 ) -> tuple[str, int]:
     while True:
         _ensure_budget(
@@ -605,6 +664,10 @@ def _wait_for_ssh(
             for host, port, kind in _ssh_endpoints(info):
                 if _run([*_ssh_base(host, port, key_path), "true"], check=False, timeout=45).returncode == 0:
                     print(f"Using Vast {kind} SSH endpoint {host}:{port}", file=sys.stderr)
+                    if endpoints is not None:
+                        endpoints[:] = [(host, port)] + [
+                            (h, p) for h, p, _kind in _ssh_endpoints(info) if (h, p) != (host, port)
+                        ]
                     return host, port
         time.sleep(10)
 
@@ -665,6 +728,7 @@ def _transcribe_impl(
     started = time.monotonic()
     instance_id: int | None = None
     host = port = None
+    endpoints: list[tuple[str, int]] = []
     price = 0.0
     deadline = started + MAX_INSTANCE_SECONDS
     last_err: Exception | None = None
@@ -690,7 +754,7 @@ def _transcribe_impl(
             continue
         offer_label = f"offer_id={offer.get('id')} host_id={offer_host_id}"
         price = float(offer.get("dph_total") or 0)
-        deadline = _budget_deadline(started, price, max_job_cost, MAX_INSTANCE_SECONDS)
+        deadline = min(context.deadline, _budget_deadline(started, price, max_job_cost, MAX_INSTANCE_SECONDS))
         try:
             context.raise_if_cancelled()
             instance_id = _create_instance(api_key, offer, public_key)
@@ -732,6 +796,7 @@ def _transcribe_impl(
             host, port = _wait_for_ssh(
                 api_key, instance_id, key_path, started, startup_deadline, price, max_job_cost,
                 ready_timeout=ready_timeout, ready_started=attempt_started, label=offer_label,
+                endpoints=endpoints,
             )
             _wait_remote_ready(
                 api_key, instance_id, host, port, key_path, started, startup_deadline, price, max_job_cost,
@@ -779,9 +844,24 @@ def _transcribe_impl(
             local_json = tmpdir / "result.json"
             local_md = tmpdir / "transcript.md"
 
-            _run([*_ssh_base(host, port, key_path), "mkdir -p /root/work /root/out"], timeout=45)
-            _scp_to(host, port, key_path, remote_script, "/root/remote_transcribe.py")
-            _scp_to(host, port, key_path, wav, "/root/work/input-16k.wav")
+            if not endpoints:
+                endpoints = [(host, port)]
+            _ensure_budget(started, deadline, price, max_job_cost)
+            context.raise_if_cancelled()
+            _run(
+                [*_ssh_base(host, port, key_path), "mkdir -p /root/work /root/out"],
+                timeout=min(45, max(0.001, deadline - time.monotonic())),
+            )
+            for local_file, remote_file in (
+                (remote_script, "/root/remote_transcribe.py"), (wav, "/root/work/input-16k.wav"),
+            ):
+                host, port = _transfer_with_retry(
+                    context,
+                    lambda h, p, timeout, src=local_file, dst=remote_file: _scp_to(
+                        h, p, key_path, src, dst, timeout=timeout,
+                    ),
+                    endpoints, deadline=deadline, max_seconds=600, label=remote_file,
+                )
 
             context.raise_if_cancelled()
             cmd = (
@@ -796,11 +876,19 @@ def _transcribe_impl(
                 "--output-json out/result.json --output-markdown out/transcript.md"
             )
             _ensure_budget(started, deadline, price, max_job_cost)
-            remote_timeout = max(120, int(deadline - time.monotonic()))
+            remote_timeout = max(0.001, deadline - time.monotonic())
             _run([*_ssh_base(host, port, key_path), cmd], timeout=remote_timeout)
             context.raise_if_cancelled()
-            _scp_from(host, port, key_path, "/root/out/result.json", local_json)
-            _scp_from(host, port, key_path, "/root/out/transcript.md", local_md)
+            for remote_file, local_file in (
+                ("/root/out/result.json", local_json), ("/root/out/transcript.md", local_md),
+            ):
+                host, port = _transfer_with_retry(
+                    context,
+                    lambda h, p, timeout, src=remote_file, dst=local_file: _scp_from(
+                        h, p, key_path, src, dst, timeout=timeout,
+                    ),
+                    endpoints, deadline=deadline, max_seconds=120, label=remote_file,
+                )
 
             result = json.loads(local_json.read_text(encoding="utf-8"))
             elapsed = time.monotonic() - started
