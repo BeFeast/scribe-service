@@ -183,3 +183,14 @@ def test_persistent_failure_stops_after_three_attempts(transfer_clock):
             deadline=1800, max_seconds=600, label="audio",
         )
     assert len(calls) == 3
+
+
+def test_expired_context_stops_without_outer_cancel_flag(transfer_clock):
+    context = wc._TranscribeRunContext()
+    transfer_clock[0] = context.deadline
+    assert not context._cancelled
+    with pytest.raises(wc.TranscribeTimeoutError):
+        wc._transfer_with_retry(
+            context, lambda *_a: pytest.fail("transfer after whole-job deadline"),
+            [("direct", 22)], deadline=context.deadline, max_seconds=600, label="audio",
+        )

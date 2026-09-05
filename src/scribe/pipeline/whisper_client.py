@@ -129,7 +129,7 @@ class _TranscribeRunContext:
     def raise_if_cancelled(self) -> None:
         with self._lock:
             cancelled = self._cancelled
-        if cancelled:
+        if cancelled or time.monotonic() >= self.deadline:
             raise TranscribeTimeoutError(
                 f"transcribe timed out after {settings.transcribe_timeout_secs}s"
             )
@@ -970,5 +970,9 @@ def transcribe(
             )
         raise TranscribeTimeoutError(f"transcribe timed out after {timeout_secs}s") from exc
     if isinstance(result, BaseException):
+        # A subprocess can reach the absolute deadline before Queue.get's
+        # timer fires. Preserve the whole-job hard stop in that race instead
+        # of classifying its generic command error as provider unavailability.
+        context.raise_if_cancelled()
         raise result
     return result

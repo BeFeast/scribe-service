@@ -529,3 +529,21 @@ def test_settings_defaults_match_issue_spec() -> None:
     assert s.transcribe_breaker_window_secs == 900
     assert s.transcribe_breaker_threshold == 2
     assert s.transcribe_breaker_cooldown_secs == 600
+
+
+@pytest.mark.parametrize("failure_kind", ["transfer", "remote_command"])
+def test_vast_deadline_before_outer_timer_does_not_fall_through(monkeypatch, failure_kind):
+    from scribe.pipeline import whisper_client as wc
+
+    def expire(context, *_args, **_kwargs):
+        context.deadline = wc.time.monotonic() - 1
+        assert not context._cancelled
+        if failure_kind == "transfer":
+            context.raise_if_cancelled()
+        raise WhisperError("command timed out after remaining job budget")
+
+    monkeypatch.setattr(wc, "_transcribe_impl", expire)
+    fallback = _FakeProvider("openai", script=[_result("openai")])
+    with pytest.raises(TranscribeTimeoutError):
+        transcribe_with_chain([VastProvider(), fallback], _req())
+    assert fallback.calls == 0
