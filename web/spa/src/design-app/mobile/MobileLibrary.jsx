@@ -59,6 +59,7 @@ import {
 	tagCounts,
 } from "../data.js";
 import { IconArrow, IconRSS, IconSearch } from "../icons.jsx";
+import { summaryPresentation } from "../summaryState.js";
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
 
@@ -83,7 +84,7 @@ function libRows(q, filter) {
 	// Port of libRows(): same predicate order (partial → tag → search).
 	const needle = q.trim().toLowerCase();
 	return TRANSCRIPTS.filter((t) => {
-		if (filter === "partial") return t.partial;
+		if (filter === "partial") return t.is_partial;
 		if (filter !== "all" && !(t.tags ?? []).includes(filter)) return false;
 		if (needle) {
 			const haystackTitle = (t.title ?? "").toLowerCase();
@@ -110,7 +111,7 @@ function firstSummaryLine(transcript) {
 				.find((line) => line.trim()) ?? ""
 		);
 	}
-	return transcript.transcript_excerpt ?? "";
+	return summaryPresentation(transcript).text;
 }
 
 /* ── subcomponents ───────────────────────────────────────────────────── */
@@ -191,12 +192,12 @@ function Row({ transcript, onOpen }) {
 				<span>{fmtRelative(transcript.created_at)}</span>
 				<span className="sep">·</span>
 				<span>{fmtDuration(transcript.duration_seconds)}</span>
-				{transcript.partial ? (
+				{transcript.is_partial ? (
 					<>
 						<span className="sep">·</span>
 						<span className="chip warn" style={{ padding: "2px 7px" }}>
 							<span className="dot" />
-							partial
+							{summaryPresentation(transcript).label}
 						</span>
 					</>
 				) : null}

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import AnyHttpUrl, AwareDatetime, BaseModel, Field, field_validator
@@ -200,7 +201,11 @@ class MachineBearerRotateView(BaseModel):
     grace_seconds: int
 
 
+SummaryState = Literal["ready", "generating", "failed", "not_requested", "unavailable"]
+
+
 class TranscriptBrief(BaseModel):
+    summary_state: SummaryState = "unavailable"
     id: int
     video_id: str
     title: str
@@ -325,6 +330,7 @@ class PromptDryRunView(BaseModel):
 
 
 class LibraryRow(BaseModel):
+    summary_state: SummaryState = "unavailable"
     id: int
     video_id: str
     title: str

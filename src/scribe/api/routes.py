@@ -234,9 +234,26 @@ def require_admin_actor(actor: Actor = Depends(require_actor)) -> Actor:
     return actor
 
 
+def _summary_state(t: Transcript) -> str:
+    """A saved transcript is not evidence that its summary failed."""
+    if t.summary_md is not None:
+        return "ready"
+    job = t.job
+    if job is None:
+        return "unavailable"
+    if not job.summarize:
+        return "not_requested"
+    if job.status in _ACTIVE:
+        return "generating"
+    if job.status == JobStatus.failed:
+        return "failed"
+    return "unavailable"
+
+
 def _brief(t: Transcript) -> TranscriptBrief:
     source_link = source_link_for_url(t.job.url if t.job else None)
     return TranscriptBrief(
+        summary_state=_summary_state(t),
         id=t.id, video_id=t.video_id, title=t.title, tags=t.tags,
         duration_seconds=t.duration_seconds, lang=t.lang,
         summary_shortlink=t.summary_shortlink, transcript_shortlink=t.transcript_shortlink,
@@ -261,6 +278,7 @@ def _source_fields(url: str) -> dict[str, str | None]:
 def _full(t: Transcript) -> TranscriptFull:
     source_link = source_link_for_url(t.job.url if t.job else None)
     return TranscriptFull(
+        summary_state=_summary_state(t),
         id=t.id,
         video_id=t.video_id,
         title=t.title,
@@ -385,6 +403,7 @@ def _summary_excerpt(t: Transcript, limit: int = 240) -> str:
 
 def _library_row(t: Transcript) -> LibraryRow:
     return LibraryRow(
+        summary_state=_summary_state(t),
         id=t.id,
         video_id=t.video_id,
         title=t.title,

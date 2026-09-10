@@ -24,6 +24,7 @@
 //     the prototype are dropped per AGENTS.md.
 
 import React from "react";
+import { useAuth } from "../../hooks/useAuth";
 import {
 	CURRENT_TRANSCRIPT,
 	CURRENT_TRANSCRIPT_STATE,
@@ -33,16 +34,15 @@ import {
 	fmtUsd,
 } from "../data.js";
 import { IconAlert, IconExternal, IconWave } from "../icons.jsx";
+import { summaryPresentation } from "../summaryState.js";
 import { ShareSheet } from "./ShareSheet.jsx";
 
 /* ── Public component ────────────────────────────────────────────────── */
 
-export function MobileTranscriptDetail({
-	id,
-	navigate,
-	onRefresh: _onRefresh,
-}) {
-	void _onRefresh; // reserved for future re-fetch wiring; kept for parity
+export function MobileTranscriptDetail({ id, navigate, onRefresh }) {
+	const auth = useAuth();
+	const [regenerating, setRegenerating] = React.useState(false);
+	const [actionError, setActionError] = React.useState(null);
 	const t =
 		CURRENT_TRANSCRIPT ||
 		(TRANSCRIPTS || []).find((row) => row.id === id) ||
@@ -52,6 +52,32 @@ export function MobileTranscriptDetail({
 		t?.summary_md ? "summary" : "transcript",
 	);
 	const [shareOpen, setShareOpen] = React.useState(false);
+	const prior = React.useRef({ id, state: t?.summary_state });
+	React.useEffect(() => {
+		if (
+			prior.current.id !== id ||
+			(prior.current.state === "generating" && t?.summary_state === "ready")
+		) {
+			setSegValue(t?.summary_md ? "summary" : "transcript");
+		}
+		prior.current = { id, state: t?.summary_state };
+	}, [id, t?.summary_state, t?.summary_md]);
+	async function regenerate() {
+		setRegenerating(true);
+		setActionError(null);
+		try {
+			const response = await auth.protectedFetch(
+				`/transcripts/${id}/resummarize`,
+				{ method: "POST" },
+			);
+			if (!response.ok) throw new Error(`HTTP ${response.status}`);
+			onRefresh?.();
+		} catch (error) {
+			setActionError(error instanceof Error ? error.message : String(error));
+		} finally {
+			setRegenerating(false);
+		}
+	}
 
 	if (CURRENT_TRANSCRIPT_STATE.loading) {
 		return (
@@ -80,7 +106,14 @@ export function MobileTranscriptDetail({
 			{showSeg ? (
 				<SegmentedControl value={effectiveSeg} onChange={setSegValue} />
 			) : null}
-			{t.partial ? <PartialBanner /> : null}
+			{t.summary_md == null ? (
+				<PartialBanner
+					transcript={t}
+					onRegen={regenerate}
+					regenerating={regenerating}
+				/>
+			) : null}
+			{actionError ? <div role="alert">{actionError}</div> : null}
 			<div id="t-content">
 				{effectiveSeg === "summary" ? (
 					<ProseBody src={t.summary_md} />
@@ -167,15 +200,25 @@ function SegmentedControl({ value, onChange }) {
 
 /* ── Partial banner (port of `partialBanner` ~line 987) ──────────────── */
 
-function PartialBanner() {
+export function PartialBanner({ transcript, onRegen, regenerating }) {
+	const presentation = summaryPresentation(transcript);
 	return (
 		<div className="banner partial-banner">
 			<span className="b-ic">
 				<IconAlert size={18} />
 			</span>
 			<div>
-				<b>Summary unavailable.</b> The summarizer timed out. The transcript is
-				saved — you can re-run summarization from Ops.
+				<b>{presentation.label}</b> {presentation.text}
+				{presentation.retry ? (
+					<button
+						type="button"
+						className="btn primary"
+						onClick={onRegen}
+						disabled={regenerating}
+					>
+						{regenerating ? "Summarizing…" : "Generate summary"}
+					</button>
+				) : null}
 			</div>
 		</div>
 	);
