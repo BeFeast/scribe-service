@@ -203,10 +203,10 @@ class Settings(BaseSettings):
     # market rent. The pinned instance must never be destroyed.
     pinned_vast_id: int = 0
     pinned_ssh_host: str = ""
-    pinned_ssh_port: int = 33124
+    pinned_ssh_port: int = 13632
     pinned_ssh_user: str = "root"
     pinned_ssh_key: str = ""
-    pinned_hourly_usd: float = 0.058
+    pinned_hourly_usd: float = 0.0644444444
     vast_orphan_reaper_max_age_minutes: int = 60
     vast_orphan_reaper_interval_seconds: int = 300
     # Cost-aware reaping (#355). An instance whose live $/hr exceeds

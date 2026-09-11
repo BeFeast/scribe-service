@@ -44,12 +44,12 @@ services:
       # busy/stolen/SSH failure falls through to per-job market rent. The
       # pinned id must never be destroyed. Host bind ./gpu-ssh is UID 1001
       # mode 0700, key 0600.
-      SCRIBE_PINNED_VAST_ID: "48673124"
-      SCRIBE_PINNED_SSH_HOST: ssh3.vast.ai
-      SCRIBE_PINNED_SSH_PORT: "33124"
+      SCRIBE_PINNED_VAST_ID: "49973633"
+      SCRIBE_PINNED_SSH_HOST: ssh2.vast.ai
+      SCRIBE_PINNED_SSH_PORT: "13632"
       SCRIBE_PINNED_SSH_USER: root
       SCRIBE_PINNED_SSH_KEY: /run/gpu-ssh/id_ed25519
-      SCRIBE_PINNED_HOURLY_USD: "0.058"
+      SCRIBE_PINNED_HOURLY_USD: "0.0644444444"
     ports:
       - "13120:8000"
     volumes:

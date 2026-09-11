@@ -65,7 +65,7 @@ def test_pinned_busy_falls_back_to_market(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(whisper_client, "_scp_to", lambda *_a, **_k: None)
 
-    def fake_scp_from(_host, _port, _key, src, target):
+    def fake_scp_from(_host, _port, _key, src, target, **_k):
         if str(src).endswith("result.json"):
             target.write_text(
                 '{"detected_language": "en", "duration_seconds": 1, "backend": "market"}',
