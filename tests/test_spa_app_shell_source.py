@@ -208,7 +208,7 @@ def test_adapter_contract_is_non_visual_and_owns_backend_translation() -> None:
         '"/admin/jobs/" + id + "/retry"',
         '"/api/auth/me"',
         '"/api/admin/users"',
-        '"/transcripts/" + route.params.id',
+        '"/transcripts/" + id',
         '"/jobs/" + route.params.id',
     ):
         assert endpoint in api

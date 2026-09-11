@@ -93,6 +93,7 @@ jobs:
           bash scripts/check-no-device-chrome.sh
           cd web/spa
           bun install --frozen-lockfile
+          bun test tests
           bun run build
 
       - name: Sync deps (incl. dev)

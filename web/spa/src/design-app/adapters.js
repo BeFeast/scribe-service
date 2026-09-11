@@ -26,6 +26,9 @@ export function adaptLibraryRow(row) {
 		is_partial: Boolean(row.is_partial || summary == null),
 		transcript_excerpt: row.transcript_excerpt ?? row.transcript_md ?? "",
 		job_id: row.job_id ?? null,
+		summary_state:
+			row.summary_state ??
+			(row.is_partial || summary == null ? "unavailable" : "ready"),
 	};
 }
 

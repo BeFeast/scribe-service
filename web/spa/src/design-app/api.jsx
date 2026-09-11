@@ -1,5 +1,6 @@
 import React from "react";
 import { usePoll } from "../hooks/usePoll";
+import { createPollLoop } from "../hooks/pollLoop";
 import { adaptConfig, adaptFailure, adaptJob, adaptLibraryRow, adaptOps, adaptTranscript, adaptUsers } from "./adapters.js";
 
 export function useScribeRuntime(auth, route) {
@@ -62,14 +63,21 @@ export function useScribeRuntime(auth, route) {
 			setCurrentTranscript({ loading: false, error: null, value: null });
 			return;
 		}
-		const controller = new AbortController();
 		setCurrentTranscript({ loading: true, error: null, value: null });
-		fetchJson(auth, "/transcripts/" + route.params.id, controller.signal)
-			.then((body) => setCurrentTranscript({ loading: false, error: null, value: adaptTranscript(body) }))
-			.catch((error) => {
-				if (!controller.signal.aborted) setCurrentTranscript({ loading: false, error: messageOf(error), value: null });
-			});
-		return () => controller.abort();
+		const loop = createPollLoop({
+			fn: (signal) => refreshTranscript(auth, route.params.id, signal, setCurrentTranscript),
+			interval: 5000,
+			isHidden: () => document.hidden,
+			setTimeout: (handler, ms) => window.setTimeout(handler, ms),
+			clearTimeout: (handle) => window.clearTimeout(handle),
+		});
+		const onVisibilityChange = () => loop.onVisibilityChange();
+		document.addEventListener("visibilitychange", onVisibilityChange);
+		loop.tick();
+		return () => {
+			loop.stop();
+			document.removeEventListener("visibilitychange", onVisibilityChange);
+		};
 	}, [auth, route.page, route.params.id]);
 
 	React.useEffect(() => {
@@ -301,5 +309,14 @@ function parseLogLine(raw) {
 		return JSON.parse(raw);
 	} catch {
 		return { ts: new Date().toISOString(), lvl: "INFO", msg: raw };
+	}
+}
+
+export async function refreshTranscript(auth, id, signal, setTranscript) {
+	try {
+		const body = await fetchJson(auth, "/transcripts/" + id, signal);
+		if (!signal.aborted) setTranscript({ loading: false, error: null, value: adaptTranscript(body) });
+	} catch (error) {
+		if (!signal.aborted) setTranscript((previous) => ({ ...previous, loading: false, error: messageOf(error) }));
 	}
 }

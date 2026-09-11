@@ -1,5 +1,6 @@
 // biome-ignore-all lint: Claude Design source port; integration-only edits live in api/data/main.
 import React from "react";
+import { summaryPresentation } from "./summaryState.js";
 import { useAuth } from "../hooks/useAuth";
 import { IconAlert, IconArrow, IconCheck, IconClock, IconCopy, IconDownload, IconExternal, IconGlobe, IconLink, IconRSS, IconRefresh, IconSparkle, IconUser, IconWave, IconX } from "./icons.jsx";
 import { CURRENT_TRANSCRIPT, CURRENT_TRANSCRIPT_STATE, TRANSCRIPTS, fmtDuration, fmtRelative, fmtUsd, publicBaseUrl } from "./data.js";
@@ -412,7 +413,8 @@ function splitShareUrl(shareUrl) {
   }
 }
 
-function PartialNotice({ transcript, onRegen, regenerating }) {
+export function PartialNotice({ transcript, onRegen, regenerating }) {
+  const presentation = summaryPresentation(transcript);
   return (
     <div style={{
       padding: "16px 18px",
@@ -425,17 +427,15 @@ function PartialNotice({ transcript, onRegen, regenerating }) {
     }}>
       <IconAlert size={18}/>
       <div style={{flex: 1, color: "var(--fg)"}}>
-        <div style={{fontWeight: 600, marginBottom: 4}}>Partial transcript — summary failed</div>
+        <div style={{fontWeight: 600, marginBottom: 4}}>{presentation.label}</div>
         <div style={{color: "var(--fg-soft)", fontSize: 13.5, lineHeight: 1.5}}>
-          Whisper transcribed this video successfully, but the summarizer
-          failed to produce a summary. The transcript is preserved; rerunning
-          re-summarizes only — no Vast.ai cost.
+          {presentation.text} {presentation.retry && "Generating a summary uses the saved transcript without transcribing it again."}
         </div>
       </div>
-      <button className="btn primary" onClick={onRegen} disabled={regenerating}>
+      {presentation.retry && <button className="btn primary" onClick={onRegen} disabled={regenerating}>
         {regenerating ? <span className="spinner"/> : <IconRefresh size={14}/>}
-        {regenerating ? "Summarizing…" : "Run summarizer"}
-      </button>
+        {regenerating ? "Summarizing…" : "Generate summary"}
+      </button>}
     </div>
   );
 }

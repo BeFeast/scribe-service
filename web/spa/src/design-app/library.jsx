@@ -1,5 +1,6 @@
 // biome-ignore-all lint: Claude Design source port; integration-only edits live in api/data/main.
 import React from "react";
+import { summaryPresentation } from "./summaryState.js";
 import { IconCards, IconFeed, IconPlus, IconSearch, IconTable } from "./icons.jsx";
 import { ACTIVE_JOBS, LIBRARY_TOTAL, TRANSCRIPTS, fmtDuration, fmtElapsed, fmtRelative } from "./data.js";
 // Library — list of all transcripts. Layout switchable: table / feed / cards.
@@ -215,7 +216,7 @@ function LibTable({ rows, navigate, onTag }) {
           <tr key={r.id} onClick={() => navigate("transcript", { id: r.id })}>
             <td className="col-num">{r.id}</td>
             <td className="col-title">
-              {r.summary_md == null && <span className="chip warn" style={{marginRight: 8}}>partial</span>}
+              {r.summary_md == null && <span className="chip warn" style={{marginRight: 8}}>{summaryPresentation(r).label}</span>}
               {r.title}
             </td>
             <td className="col-tags">
@@ -251,7 +252,7 @@ function LibFeed({ rows, navigate, onTag }) {
               <span>{r.lang || "—"}</span>
               {r.summary_md == null && <>
                 <span className="sep">·</span>
-                <span className="chip warn" style={{padding: "1px 6px"}}>partial</span>
+                <span className="chip warn" style={{padding: "1px 6px"}}>{summaryPresentation(r).label}</span>
               </>}
             </div>
             <h2 className="feed-title">{r.title}</h2>
@@ -286,7 +287,7 @@ function LibCards({ rows, navigate, onTag }) {
             <span>{fmtDuration(r.duration_seconds)}</span>
             {r.summary_md == null && <>
               <div className="spacer"/>
-              <span className="chip warn">partial</span>
+              <span className="chip warn">{summaryPresentation(r).label}</span>
             </>}
           </div>
           <h3 className="card-title">{r.title}</h3>
@@ -308,7 +309,7 @@ function LibCards({ rows, navigate, onTag }) {
 }
 
 function previewSummary(r) {
-  if (!r.summary_md) return "Whisper finished; summary regeneration pending. POST /transcripts/{id}/resummarize to retry.";
+  if (!r.summary_md) return summaryPresentation(r).text;
   // Pull first paragraph after "## TL;DR", strip markdown syntax for clean excerpt.
   const m = r.summary_md.match(/##\s*TL;DR\s*\n([^\n]+(?:\n[^\n#][^\n]*)*)/);
   const raw = m ? m[1] : r.summary_md;
