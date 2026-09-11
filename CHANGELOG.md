@@ -4,6 +4,15 @@ All notable changes to this project are documented here. Each `vX.Y.Z`
 section is generated per release from the merged pull-request titles in the
 tag range. See the README for how a release is cut.
 
+## [v0.23.11] - 2026-09-11
+
+_Bump: patch_
+
+- fix(vast): drop unused pytest import in pinned GPU tests
+- fix(vast): pin Scribe to live Lane 1 GPU 49973633
+- feat(vast): try always-on meeting GPU before market rent (#451)
+- fix(vast): drop verified-only offer filter
+
 ## [v0.1.0] - 2026-06-05
 
 _Bump: patch_
