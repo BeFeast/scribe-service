@@ -198,6 +198,15 @@ class Settings(BaseSettings):
     # Vast.ai — whisper only
     vast_api_key: str = ""
     transcribe_timeout_secs: int = 1800
+    # Optional always-on meeting GPU. 0 / empty host/key disables the pinned
+    # path. Busy/stolen/SSH failure falls through to the existing per-job
+    # market rent. The pinned instance must never be destroyed.
+    pinned_vast_id: int = 0
+    pinned_ssh_host: str = ""
+    pinned_ssh_port: int = 33124
+    pinned_ssh_user: str = "root"
+    pinned_ssh_key: str = ""
+    pinned_hourly_usd: float = 0.058
     vast_orphan_reaper_max_age_minutes: int = 60
     vast_orphan_reaper_interval_seconds: int = 300
     # Cost-aware reaping (#355). An instance whose live $/hr exceeds
