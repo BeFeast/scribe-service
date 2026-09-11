@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from scribe.config import settings
 from scribe.pipeline import whisper_client
 from scribe.worker import vast_reaper
