@@ -327,11 +327,14 @@ def _select_offers(
     excluded = excluded_hosts or set()
     query = {
         "limit": 400, "type": "on-demand",
-        "rentable": {"eq": True}, "rented": {"eq": False}, "verified": {"eq": True},
+        "rentable": {"eq": True}, "rented": {"eq": False},
         "gpu_ram": {"gte": 16000}, "num_gpus": {"eq": 1},
         # Fractional slices still advertise full gpu_ram; require a whole GPU
         # so large-v3-turbo does not OOM-kill the container mid-SSH (#421).
         "gpu_frac": {"eq": 1.0},
+        # Do not require Vast `verified`: that badge ∩ gpu_frac=1.0 is often a
+        # 0–1 offer market, so jobs fail in seconds with empty pool / no_such_ask.
+        # Keep gpu_frac=1.0 plus client-side reliability>=0.90.
     }
     offers = _vast(api_key, "POST", "/bundles/", query, timeout=60).get("offers", [])
     pattern = re.compile(gpu_regex, re.IGNORECASE)

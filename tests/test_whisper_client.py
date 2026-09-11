@@ -130,6 +130,30 @@ def test_select_offers_rejects_fractional_gpu_slices(monkeypatch):
 
     assert [offer["id"] for offer in candidates] == [3, 4]
     assert captured and captured[0].get("gpu_frac") == {"eq": 1.0}
+    assert "verified" not in captured[0]
+
+
+def test_select_offers_does_not_require_vast_verified_badge(monkeypatch):
+    """Verified ∩ dedicated is often a 0–1 offer market; jobs 633–635 failed
+    that way. Unverified dedicated cards still pass reliability>=0.90."""
+    captured: list[dict] = []
+
+    def fake_vast(_api_key, _method, _path, payload=None, timeout=60):
+        captured.append(payload or {})
+        return {"offers": [_offer(1, "RTX 5080", price=0.34)]}
+
+    monkeypatch.setattr(whisper_client, "_vast", fake_vast)
+
+    candidates = _select_offers(
+        "vast-test-key",
+        max_price=3.0,
+        gpu_regex=settings.vast_gpu_regex,
+        min_cuda=12.4,
+    )
+
+    assert [offer["id"] for offer in candidates] == [1]
+    assert captured and "verified" not in captured[0]
+    assert captured[0].get("gpu_frac") == {"eq": 1.0}
 
 
 def test_select_offers_respects_caller_overrides(monkeypatch):
