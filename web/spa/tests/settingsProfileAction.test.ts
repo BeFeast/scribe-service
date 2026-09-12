@@ -2,8 +2,11 @@ import { describe, expect, test } from "bun:test";
 
 import {
 	CLERK_PROFILE_UNAVAILABLE,
+	canGenerateExtensionToken,
 	canRenderAccessGroup,
 	clerkProfileAction,
+	mintExtensionToken,
+	shouldOfferTrustedClerkSignIn,
 } from "../src/design-app/settings.jsx";
 
 function setWindowClerk(clerk: Record<string, unknown>) {
@@ -83,5 +86,72 @@ describe("canRenderAccessGroup", () => {
 		expect(canRenderAccessGroup({ role: "user", canWrite: true })).toBe(false);
 		expect(canRenderAccessGroup({ role: "user", users: [{ role: "admin" }] })).toBe(false);
 		expect(canRenderAccessGroup(null)).toBe(false);
+	});
+});
+
+describe("trusted-LAN Clerk token access", () => {
+	test("offers optional Clerk sign-in only to a signed-out trusted LAN", () => {
+		expect(
+			shouldOfferTrustedClerkSignIn({
+				trustedNetwork: true,
+				clerkConfigured: true,
+				signedIn: false,
+			}),
+		).toBe(true);
+		expect(
+			shouldOfferTrustedClerkSignIn({
+				trustedNetwork: false,
+				clerkConfigured: true,
+				signedIn: false,
+			}),
+		).toBe(false);
+		expect(
+			shouldOfferTrustedClerkSignIn({
+				trustedNetwork: true,
+				clerkConfigured: true,
+				signedIn: true,
+			}),
+		).toBe(false);
+	});
+
+	test("enables generation after a Clerk session and posts to the existing endpoint", async () => {
+		const calls: Array<{ url: string; init: RequestInit }> = [];
+		const auth = {
+			signedIn: true,
+			maybeAutoSignIn: () => false,
+			protectedFetch: async (url: string, init: RequestInit) => {
+				calls.push({ url, init });
+				return new Response(JSON.stringify({ token: "stx_once" }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			},
+		};
+
+		expect(canGenerateExtensionToken(auth)).toBe(true);
+		expect(canGenerateExtensionToken(auth, true)).toBe(false);
+		await expect(mintExtensionToken(auth)).resolves.toEqual({
+			token: "stx_once",
+		});
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.url).toBe("/api/auth/extension-token");
+		expect(calls[0]?.init.method).toBe("POST");
+		expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
+			label: "Settings access token",
+		});
+	});
+
+	test("does not call the token endpoint without a Clerk session", async () => {
+		const auth = {
+			signedIn: false,
+			protectedFetch: () => {
+				throw new Error("endpoint must not be called");
+			},
+		};
+
+		expect(canGenerateExtensionToken(auth)).toBe(false);
+		await expect(mintExtensionToken(auth)).rejects.toThrow(
+			"Sign in with Clerk",
+		);
 	});
 });

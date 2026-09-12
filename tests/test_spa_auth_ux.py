@@ -82,6 +82,19 @@ def test_settings_account_and_token_controls_stay_wired_without_dead_rotate_ui()
     assert "configured server-side" not in production
 
 
+def test_settings_offers_optional_clerk_session_for_trusted_lan_token_minting() -> None:
+    settings = read("design-app/settings.jsx")
+    mobile_access = read("design-app/mobile/MobileAccess.jsx")
+
+    assert 'data-auth-action="trusted-lan-clerk-sign-in"' in settings
+    assert "shouldOfferTrustedClerkSignIn(auth)" in settings
+    assert "Sign in with Clerk" in settings
+    assert "LAN access stays passwordless" in settings
+    assert "shouldOfferTrustedClerkSignIn(auth)" in mobile_access
+    assert "Sign in with Clerk" in mobile_access
+    assert "mintExtensionToken(auth)" in mobile_access
+
+
 def test_shared_auth_helper_covers_401_and_403() -> None:
     source = read("lib/auth.ts")
 

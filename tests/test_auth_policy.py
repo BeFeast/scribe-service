@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from scribe.api import routes as routes_module
 from scribe.config import settings
 from scribe.main import app
 
@@ -79,6 +80,26 @@ def test_trusted_cidr_write_is_allowed_without_bearer(monkeypatch):
     resp = _external_client().post("/api/prompts/active", json={"version": "not-a-version"})
 
     assert resp.status_code == 422
+
+
+def test_trusted_lan_cannot_mint_user_scoped_extension_token(monkeypatch):
+    class UntouchedSession:
+        def __getattr__(self, name):
+            raise AssertionError(f"database must not be touched: {name}")
+
+    monkeypatch.setattr(settings, "trusted_cidrs", "203.0.113.0/24")
+    monkeypatch.setattr(settings, "auth_test_mode", False)
+    app.dependency_overrides[routes_module.get_session] = lambda: UntouchedSession()
+    try:
+        resp = _external_client().post(
+            "/api/auth/extension-token",
+            json={"label": "Chrome"},
+        )
+    finally:
+        app.dependency_overrides.pop(routes_module.get_session, None)
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "extension tokens require a signed-in Scribe user"
 
 
 def test_machine_bearer_write_is_allowed(monkeypatch):
