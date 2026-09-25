@@ -4,6 +4,12 @@ All notable changes to this project are documented here. Each `vX.Y.Z`
 section is generated per release from the merged pull-request titles in the
 tag range. See the README for how a release is cut.
 
+## [v0.23.13] - 2026-09-25
+
+_Bump: patch_
+
+- chore: point reference pinned-GPU config at instance 52531208 (#483)
+
 ## [v0.23.12] - 2026-09-25
 
 _Bump: patch_
