@@ -43,13 +43,14 @@ services:
       # Optional always-on meeting GPU (Lane 1 Vast instance). Empty/0 = off;
       # busy/stolen/SSH failure falls through to per-job market rent. The
       # pinned id must never be destroyed. Host bind ./gpu-ssh is UID 1001
-      # mode 0700, key 0600.
-      SCRIBE_PINNED_VAST_ID: "49973633"
-      SCRIBE_PINNED_SSH_HOST: ssh2.vast.ai
-      SCRIBE_PINNED_SSH_PORT: "13632"
+      # mode 0700, key 0600. Deployment-specific values (instance 52531208,
+      # contract ends 2026-11-07): the runtime stack carries its own compose.
+      SCRIBE_PINNED_VAST_ID: "52531208"
+      SCRIBE_PINNED_SSH_HOST: ssh4.vast.ai
+      SCRIBE_PINNED_SSH_PORT: "11208"
       SCRIBE_PINNED_SSH_USER: root
       SCRIBE_PINNED_SSH_KEY: /run/gpu-ssh/id_ed25519
-      SCRIBE_PINNED_HOURLY_USD: "0.0644444444"
+      SCRIBE_PINNED_HOURLY_USD: "0.0777777778"
     ports:
       - "13120:8000"
     volumes:
