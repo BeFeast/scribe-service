@@ -751,6 +751,25 @@ def _pinned_scp_base(host: str, port: int, key_path: Path) -> list[str]:
     ]
 
 
+def _pinned_run(cmd: list[str], *, timeout: float, step: str) -> subprocess.CompletedProcess:
+    """Run one SSH/SCP step against the pinned GPU.
+
+    A transport failure (host offline, connection refused, timeout) must reach
+    `_transcribe_impl` as PinnedGpuUnavailable so the market rent path runs;
+    `_run`'s generic WhisperError would otherwise escape as a hard Vast failure.
+    """
+    try:
+        return _run(cmd, timeout=timeout)
+    except WhisperError as exc:
+        # _run formats "command failed (<rc>): <cmd>\nstdout:\n...\nstderr:\n<err>"
+        # or "command timed out after <t>s: <cmd>"; keep the status and the stderr tail.
+        message = str(exc)
+        status = message.split(": ", 1)[0]
+        _, sep, stderr = message.rpartition("stderr:\n")
+        detail = (stderr.strip() if sep else "")[-500:] or "no stderr"
+        raise PinnedGpuUnavailable(f"pinned GPU {step} {status}: {detail}") from exc
+
+
 def _transcribe_pinned(
     wav: Path, *, title: str, source_url: str,
     model_size: str, compute_type: str, language: str, beam_size: int,
@@ -769,8 +788,8 @@ def _transcribe_pinned(
     ssh = _pinned_ssh_base(host, port, key_path)
     scp = _pinned_scp_base(host, port, key_path)
     started = time.monotonic()
-    _run([*ssh, f"mkdir -p {shlex.quote(remote_dir)}"], timeout=45)
-    _run([*scp, str(wav), f"{user}@{host}:{remote_audio}"], timeout=600)
+    _pinned_run([*ssh, f"mkdir -p {shlex.quote(remote_dir)}"], timeout=45, step="mkdir")
+    _pinned_run([*scp, str(wav), f"{user}@{host}:{remote_audio}"], timeout=600, step="audio upload")
     remote_cmd = (
         "cd /workspace && "
         "env LD_LIBRARY_PATH=/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib"
@@ -804,8 +823,8 @@ def _transcribe_pinned(
     with tempfile.TemporaryDirectory(prefix="scribe-pinned-") as tmp:
         local_json = Path(tmp) / "result.json"
         local_md = Path(tmp) / "transcript.md"
-        _run([*scp, f"{user}@{host}:{remote_json}", str(local_json)], timeout=120)
-        _run([*scp, f"{user}@{host}:{remote_md}", str(local_md)], timeout=120)
+        _pinned_run([*scp, f"{user}@{host}:{remote_json}", str(local_json)], timeout=120, step="result.json download")
+        _pinned_run([*scp, f"{user}@{host}:{remote_md}", str(local_md)], timeout=120, step="transcript.md download")
         payload = json.loads(local_json.read_text(encoding="utf-8"))
         elapsed = time.monotonic() - started
         hourly = float(getattr(settings, "pinned_hourly_usd", 0.0) or 0.0)
