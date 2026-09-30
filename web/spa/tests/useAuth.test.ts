@@ -1,12 +1,36 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+	clerkBootstrapPlan,
+	clerkFailureBootstrap,
 	clerkRedirectOptions,
 	parseFreshRedirectIntent,
 	shouldRequireSignIn,
 } from "../src/hooks/useAuth";
 
 describe("Clerk redirect auth helpers", () => {
+	test("loads Clerk opportunistically without blocking trusted-LAN readiness", () => {
+		const lanPlan = clerkBootstrapPlan({
+			clerk_publishable_key: "pk_test_lan",
+			trusted_network: true,
+		});
+		const externalPlan = clerkBootstrapPlan({
+			clerk_publishable_key: "pk_test_external",
+			trusted_network: false,
+		});
+
+		expect(lanPlan).toEqual({ loadClerk: true, blocksBootstrap: false });
+		expect(clerkFailureBootstrap(lanPlan)).toBe("ready");
+		expect(externalPlan).toEqual({ loadClerk: true, blocksBootstrap: true });
+		expect(clerkFailureBootstrap(externalPlan)).toBe("error");
+		expect(
+			clerkBootstrapPlan({
+				clerk_publishable_key: "",
+				trusted_network: true,
+			}),
+		).toEqual({ loadClerk: false, blocksBootstrap: false });
+	});
+
 	test("keeps sign-in and sign-up cross-flow redirects inside the app", () => {
 		const redirectUrl = "https://scribe.example.test/library?view=feed";
 

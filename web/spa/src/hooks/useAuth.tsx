@@ -7,6 +7,27 @@ type AuthConfig = {
 	trusted_network: boolean;
 };
 
+export type ClerkBootstrapPlan = {
+	loadClerk: boolean;
+	blocksBootstrap: boolean;
+};
+
+export function clerkBootstrapPlan(
+	config: Pick<AuthConfig, "clerk_publishable_key" | "trusted_network">,
+): ClerkBootstrapPlan {
+	const loadClerk = Boolean(config.clerk_publishable_key.trim());
+	return {
+		loadClerk,
+		blocksBootstrap: loadClerk && !config.trusted_network,
+	};
+}
+
+export function clerkFailureBootstrap(
+	plan: ClerkBootstrapPlan,
+): "ready" | "error" {
+	return plan.blocksBootstrap ? "error" : "ready";
+}
+
 type ClerkSession = {
 	getToken: () => Promise<string | null>;
 };
@@ -130,9 +151,21 @@ function appendScript(
 	src: string,
 	configure?: (script: HTMLScriptElement) => void,
 ): Promise<void> {
-	const existing = document.querySelector(`script[src="${src}"]`);
+	const existing = document.querySelector<HTMLScriptElement>(
+		`script[src="${src}"]`,
+	);
 	if (existing) {
-		return Promise.resolve();
+		if (existing.dataset.scribeLoaded === "true") {
+			return Promise.resolve();
+		}
+		return new Promise((resolve, reject) => {
+			existing.addEventListener("load", () => resolve(), { once: true });
+			existing.addEventListener(
+				"error",
+				() => reject(new Error(`${src} failed`)),
+				{ once: true },
+			);
+		});
 	}
 	return new Promise((resolve, reject) => {
 		const script = document.createElement("script");
@@ -140,8 +173,14 @@ function appendScript(
 		script.crossOrigin = "anonymous";
 		script.src = src;
 		configure?.(script);
-		script.addEventListener("load", () => resolve());
-		script.addEventListener("error", () => reject(new Error(`${src} failed`)));
+		script.addEventListener("load", () => {
+			script.dataset.scribeLoaded = "true";
+			resolve();
+		});
+		script.addEventListener("error", () => {
+			script.remove();
+			reject(new Error(`${src} failed`));
+		});
 		document.head.append(script);
 	});
 }
@@ -290,6 +329,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		hasFreshRedirectIntent(),
 	);
 	const navigationStartedRef = React.useRef(false);
+	const clerkLoadedRef = React.useRef(false);
+	const clerkInitPromiseRef = React.useRef<Promise<void> | null>(null);
+	const clerkUnsubscribeRef = React.useRef<(() => void) | undefined>();
 	const syncSignedIn = React.useCallback(() => {
 		setSignedIn(Boolean(window.Clerk?.session));
 		setUnauthorized(false);
@@ -297,6 +339,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			setAuthRequired(false);
 		}
 	}, []);
+	const initializeClerk = React.useCallback(
+		(config: AuthConfig): Promise<void> => {
+			if (clerkLoadedRef.current && window.Clerk) {
+				return Promise.resolve();
+			}
+			if (clerkInitPromiseRef.current) {
+				return clerkInitPromiseRef.current;
+			}
+
+			const task = loadClerk(config).then(() => {
+				clerkLoadedRef.current = true;
+				setAuthBlocked(null);
+				setClerkReady(true);
+				syncSignedIn();
+				clearRedirectIntent();
+				setAuthRedirectInFlight(false);
+				clerkUnsubscribeRef.current?.();
+				clerkUnsubscribeRef.current = window.Clerk?.addListener?.(
+					({ session }) => {
+						setSignedIn(Boolean(session));
+						if (session) {
+							setUnauthorized(false);
+							setAuthRequired(false);
+							clearRedirectIntent();
+							setAuthRedirectInFlight(false);
+						}
+					},
+				);
+			});
+			clerkInitPromiseRef.current = task;
+			const clearTask = () => {
+				if (clerkInitPromiseRef.current === task) {
+					clerkInitPromiseRef.current = null;
+				}
+			};
+			void task.then(clearTask, clearTask);
+			return task;
+		},
+		[syncSignedIn],
+	);
+
+	React.useEffect(
+		() => () => {
+			clerkUnsubscribeRef.current?.();
+		},
+		[],
+	);
 
 	React.useEffect(() => {
 		const markNavigationStarted = () => {
@@ -341,11 +430,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		void authReloadKey;
 		void bootstrapAttempt;
 		const abort = new AbortController();
-		let unsubscribe: (() => void) | undefined;
+		let clerkPlan: ClerkBootstrapPlan | null = null;
 
 		setBootstrap("config");
 		setBootstrapError(null);
-		setClerkReady(false);
+		setClerkReady(clerkLoadedRef.current && Boolean(window.Clerk));
 		setConfig(null);
 
 		async function loadAuth() {
@@ -358,46 +447,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			}
 			const body = (await response.json()) as AuthConfig;
 			setConfig(body);
-			if (body.trusted_network || !body.clerk_publishable_key) {
-				setAuthRequired(false);
+			setAuthRequired(false);
+			const plan = clerkBootstrapPlan(body);
+			clerkPlan = plan;
+			if (!plan.loadClerk) {
 				setBootstrap("ready");
 				return;
 			}
-			setBootstrap("clerk");
-			await loadClerk(body);
-			setAuthBlocked(null);
-			setClerkReady(true);
+			setBootstrap(plan.blocksBootstrap ? "clerk" : "ready");
+			await initializeClerk(body);
+			if (abort.signal.aborted) return;
 			setBootstrap("ready");
-			syncSignedIn();
-			clearRedirectIntent();
-			setAuthRedirectInFlight(false);
-			unsubscribe = window.Clerk?.addListener?.(({ session }) => {
-				setSignedIn(Boolean(session));
-				if (session) {
-					setUnauthorized(false);
-					setAuthRequired(false);
-					clearRedirectIntent();
-					setAuthRedirectInFlight(false);
-				}
-			});
 		}
 
 		loadAuth().catch((error) => {
 			if (!abort.signal.aborted) {
 				const message = error instanceof Error ? error.message : String(error);
+				const failureBootstrap = clerkPlan
+					? clerkFailureBootstrap(clerkPlan)
+					: "error";
 				console.warn(error);
 				setAuthBlocked(authBlockedMessage(error));
-				setBootstrap("error");
-				setBootstrapError(message);
+				setBootstrap(failureBootstrap);
+				setBootstrapError(failureBootstrap === "ready" ? null : message);
 				clearRedirectIntent();
 				setAuthRedirectInFlight(false);
 			}
 		});
 		return () => {
 			abort.abort();
-			unsubscribe?.();
 		};
-	}, [syncSignedIn, authReloadKey, bootstrapAttempt]);
+	}, [initializeClerk, authReloadKey, bootstrapAttempt]);
 
 	const retryBootstrap = React.useCallback(() => {
 		setBootstrapAttempt((value) => value + 1);
@@ -498,14 +578,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		[authRedirectInFlight],
 	);
 
-	const signIn = React.useCallback(
-		() => startRedirect("sign-in"),
-		[startRedirect],
+	const startAuth = React.useCallback(
+		async (mode: "sign-in" | "sign-up") => {
+			if (!clerkLoadedRef.current || !window.Clerk) {
+				if (!config?.clerk_publishable_key) {
+					setAuthRequired(true);
+					return;
+				}
+				setAuthBlocked(null);
+				try {
+					await initializeClerk(config);
+				} catch (error) {
+					console.warn(error);
+					setAuthBlocked(authBlockedMessage(error));
+					return;
+				}
+			}
+			await startRedirect(mode);
+		},
+		[config, initializeClerk, startRedirect],
 	);
-	const signUp = React.useCallback(
-		() => startRedirect("sign-up"),
-		[startRedirect],
-	);
+	const signIn = React.useCallback(() => startAuth("sign-in"), [startAuth]);
+	const signUp = React.useCallback(() => startAuth("sign-up"), [startAuth]);
 
 	const signOut = React.useCallback(async () => {
 		await window.Clerk?.signOut();
