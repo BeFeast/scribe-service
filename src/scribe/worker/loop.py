@@ -932,11 +932,21 @@ def process_job(session, job: Job) -> None:
         except Exception as exc:
             session.rollback()
             failed = session.get(Job, job_id)
+            summary_failed = isinstance(exc, summarizer.SummarizeError)
+            error = (
+                "SummarizeError: Summary generation failed. The transcript is saved; retry its summary later."
+                if summary_failed else f"{type(exc).__name__}: {exc}"
+            )
             if failed is not None:
-                failed.error = f"{type(exc).__name__}: {exc}"
+                failed.error = error
                 _set_job_status(session, failed, JobStatus.failed)
                 _deliver_webhook(session, failed)
-            job_log.exception("job failed", extra={"stage": "failed", "error": f"{type(exc).__name__}: {exc}"})
+            if summary_failed:
+                # Custom providers can put credentials in exception text or
+                # context. Keep both out of persistent errors and tracebacks.
+                job_log.error("job failed", extra={"stage": "failed", "error": error})
+            else:
+                job_log.exception("job failed", extra={"stage": "failed", "error": error})
             # A hard failure discards the uploaded source: the transcript (if any)
             # can still be re-summarized from stored text, but there is no
             # archival source to keep, and a re-upload supplies a fresh one.

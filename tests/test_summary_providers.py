@@ -1048,3 +1048,96 @@ def test_cliproxy_without_api_key_is_unavailable_and_chain_advances(
 
     result = summarize_with_chain(build_provider_chain(), "prompt")
     assert isinstance(result, SummaryResult)
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 429, 502])
+def test_http_failure_never_retains_unknown_upstream_credentials(monkeypatch, status, caplog):
+    _patch_freellmapi_settings(monkeypatch)
+    credential = "unknown-upstream-credential-484"
+    calls = _stub_httpx_post(monkeypatch, status_code=status, text=f"provider error: {credential}")
+    provider = FreeLLMAPIProvider()
+    with pytest.raises(ProviderError) as exc:
+        summarize_with_chain([provider], "prompt")
+    assert credential not in str(exc.value)
+    assert credential not in repr(exc.value.attempts)
+    assert credential not in repr([record.__dict__ for record in caplog.records])
+    assert len(calls) == 1  # No automatic inference retries.
+
+
+def test_nested_gateway_auth_failure_is_nontransient_and_falls_back(monkeypatch):
+    _patch_freellmapi_settings(monkeypatch)
+    calls = _stub_httpx_post(monkeypatch, status_code=502, json_body={"error": {
+        "message": "DeepSeekV3.2: SambaNova API401 Incorrect API key provided: unknown-484",
+    }})
+    provider = FreeLLMAPIProvider()
+    with pytest.raises(ProviderError) as exc:
+        provider.complete("prompt")
+    assert not isinstance(exc.value, ProviderUnavailableError)
+    assert exc.value.reason == "freellmapi_upstream_auth_error"
+    assert "unknown-484" not in str(exc.value)
+    fallback = _ScriptedProvider("fallback", [_ok_summary()])
+    result = summarize_with_chain([provider, fallback], "prompt")
+    assert isinstance(result, SummaryResult)
+    assert fallback.calls == 1
+    assert summary_providers.get_breaker(provider.breaker_key).state == "closed"
+    assert len(calls) == 2  # One explicit call, then one separate chain invocation.
+
+
+def test_exhausted_broker_retry_budget_is_safe_and_terminal(monkeypatch):
+    _patch_freellmapi_settings(monkeypatch)
+    calls = _stub_httpx_post(monkeypatch, status_code=502, text=(
+        'server_is_overloaded unknown-credential-484 NO_MORE_RETRY '
+        'retry_scope=same_request stream_committed=false attempted=4'
+    ))
+    with pytest.raises(ProviderUnavailableError) as exc:
+        FreeLLMAPIProvider().complete("prompt")
+    assert exc.value.reason == "freellmapi_retry_exhausted"
+    assert "unknown-credential" not in str(exc.value)
+    assert len(calls) == 1
+
+
+def test_transport_exception_text_is_not_retained(monkeypatch):
+    _patch_freellmapi_settings(monkeypatch)
+    _stub_httpx_post(monkeypatch, raise_exc=httpx.ConnectError("Bearer unknown-credential-484"))
+    with pytest.raises(ProviderUnavailableError) as exc:
+        FreeLLMAPIProvider().complete("prompt")
+    assert "unknown-credential" not in str(exc.value)
+    assert exc.value.__suppress_context__
+
+
+def test_structured_nested_auth_status_is_nontransient(monkeypatch):
+    _patch_freellmapi_settings(monkeypatch)
+    _stub_httpx_post(monkeypatch, status_code=502, json_body={"error": {
+        "provider_error": {"status_code": 401, "message": "unknown-credential-484"},
+    }})
+    with pytest.raises(ProviderError) as exc:
+        FreeLLMAPIProvider().complete("prompt")
+    assert not isinstance(exc.value, ProviderUnavailableError)
+    assert exc.value.reason == "freellmapi_upstream_auth_error"
+    assert "unknown-credential" not in str(exc.value)
+
+
+def test_cliproxy_loaded_secret_is_scrubbed_from_logs(monkeypatch):
+    import logging
+
+    from scribe.obs import logging as logging_config
+    from scribe.obs.live_logs import configure_redaction, payload_from_record
+
+    credential = "test-cliproxy-secret-484"
+    monkeypatch.setattr(summarizer.settings, "cliproxy_api_key", credential)
+    configure_redaction(logging_config._collect_secret_settings())
+    try:
+        record = logging.LogRecord("scribe", logging.ERROR, "", 0, "upstream %s", (credential,), None)
+        assert credential not in str(payload_from_record(record))
+    finally:
+        configure_redaction([])
+
+
+def test_unknown_custom_error_reason_and_details_do_not_leave_chain(caplog):
+    credential = "unknowncredential484"
+    custom = _ScriptedProvider("custom", [ProviderError(reason=credential, details=credential)])
+    with pytest.raises(ProviderError) as exc:
+        summarize_with_chain([custom], "prompt")
+    assert credential not in str(exc.value)
+    assert credential not in repr(exc.value.attempts)
+    assert credential not in repr([record.__dict__ for record in caplog.records])
