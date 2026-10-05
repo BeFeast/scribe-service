@@ -4,6 +4,12 @@ All notable changes to this project are documented here. Each `vX.Y.Z`
 section is generated per release from the merged pull-request titles in the
 tag range. See the README for how a release is cut.
 
+## [v0.23.14] - 2026-10-05
+
+_Bump: patch_
+
+- fix(summary): safe provider failures and transcript recovery (#485)
+
 ## [v0.23.13] - 2026-09-25
 
 _Bump: patch_
