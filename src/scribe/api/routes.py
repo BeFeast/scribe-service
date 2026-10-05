@@ -1872,7 +1872,9 @@ def get_transcript_media(
     return RedirectResponse(url=url, status_code=302)
 
 
-_RESUMMARIZE_LOCK_TIMEOUT_S = 120.0
+# Transaction-scoped per-transcript locks reject overlapping API retries across
+# processes without creating a new job or holding a row lock during inference.
+_RESUMMARIZE_LOCK_NAMESPACE = 484
 
 # One-shot flash cookie consumed by the web detail view. Value layout:
 #   "<level>|<percent-encoded message>"
@@ -1931,13 +1933,25 @@ async def resummarize(
     the detail page with a one-shot flash cookie; JSON clients get the usual
     TranscriptBrief payload.
 
-    Async to avoid pinning a FastAPI sync-handler thread for the full codex
-    window (up to 600s) plus any lock-wait — the actual blocking work runs in
-    `asyncio.to_thread`, and the codex lock acquisition is bounded by
-    `_RESUMMARIZE_LOCK_TIMEOUT_S` (worker keeps the unbounded wait)."""
+    The blocking provider call runs in `asyncio.to_thread`. A PostgreSQL
+    transaction advisory lock rejects overlapping retries of this transcript;
+    active jobs are left to their worker, and a completed partial is preserved.
+    No new Job, transcription, or automatic inference retry is created."""
     if _accepts_html(request) or csrf_token is not None:
         _validate_csrf(request, csrf_token)
     t = _require_transcript(transcript_id, session)
+    locked = session.scalar(text("SELECT pg_try_advisory_xact_lock(:namespace, :transcript_id)"), {
+        "namespace": _RESUMMARIZE_LOCK_NAMESPACE, "transcript_id": transcript_id,
+    })
+    if not locked:
+        raise HTTPException(status_code=409, detail="Summary generation is already in progress for this transcript.")
+    active = session.scalar(select(Job).where(
+        Job.video_id == t.video_id, Job.owner_subject == t.owner_subject,
+        Job.owner_id == t.owner_id, Job.status.in_(_ACTIVE),
+    ).limit(1))
+    if active is not None:
+        raise HTTPException(status_code=409, detail="An active job is already processing this transcript.")
+    original_summary = t.summary_md
     title = t.title
     transcript_md = t.transcript_md
     html_client = _accepts_html(request)
@@ -1947,15 +1961,25 @@ async def resummarize(
             transcript_md,
             title=title,
         )
-    except summarizer.SummarizeError as exc:
+    except summarizer.SummarizeError:
+        # Exception text can come from a custom provider; the API owns this
+        # safe message rather than reflecting it back into a flash or webhook.
+        session.rollback()
+        message = "Summary generation failed. The transcript is saved; retry its summary later."
         if html_client:
-            return _flash_redirect(transcript_id, f"Summarizer failed: {exc}", level="error")
-        raise HTTPException(status_code=502, detail=f"summarizer failed: {exc}") from exc
+            return _flash_redirect(transcript_id, message, level="error")
+        raise HTTPException(status_code=502, detail=message) from None
 
-    # Re-read after the lock wait: the worker may have promoted this transcript
-    # from partial to done while we were queued, in which case `was_partial`
-    # would otherwise be stale-True and we'd double-count + overwrite.
-    session.refresh(t)
+    # A worker may have completed this originally-partial transcript during the
+    # provider call. Take the row lock only for write-back and adopt that result.
+    session.refresh(t, with_for_update=True)
+    if original_summary is None and t.summary_md is not None:
+        session.commit()
+        if html_client:
+            return _flash_redirect(t.id, "Summary is already ready.", level="success")
+        return _brief(t)
+    if original_summary is not None and t.summary_md != original_summary:
+        raise HTTPException(status_code=409, detail="The summary changed during regeneration; its current result is preserved.")
     was_partial = t.summary_md is None
 
     t.summary_md = inject_author_frontmatter(

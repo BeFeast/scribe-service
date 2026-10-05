@@ -369,3 +369,35 @@ def test_jittered_backoff_stays_within_documented_band():
     random.seed(1234)
     b = loop_module._jittered_backoff(base)
     assert a == b
+
+
+def test_summary_exception_credentials_do_not_reach_job_webhook_or_logs(monkeypatch, caplog):
+    from scribe.pipeline import summarizer
+
+    credential = "unknown-upstream-credential-484"
+    job = SimpleNamespace(
+        id=42, video_id="safe484", correlation_id=None, url="https://youtu.be/safe484",
+        callback_url="http://example.test/hook", owner_subject=None, owner_email=None,
+        owner_display_name=None, owner_id=None, status="downloading", error=None,
+    )
+    partial = SimpleNamespace(id=627, title="Saved transcript", transcript_md="saved text")
+    session = SimpleNamespace(rollback=lambda: None, get=lambda *args: job)
+    monkeypatch.setattr(loop_module, "_find_partial_transcript", lambda *args: partial)
+    def fail(*args, **kwargs):
+        raise summarizer.SummarizeError(credential)
+    monkeypatch.setattr(loop_module, "_summarize_and_finalize", fail)
+    monkeypatch.setattr(loop_module, "_set_job_status", lambda session, job, status: setattr(job, "status", status))
+    monkeypatch.setattr(loop_module, "render_job_view", lambda session, job: JobView(
+        job_id=job.id, url=job.url, video_id=job.video_id, status=job.status.value, error=job.error,
+    ))
+    delivered = []
+    def capture(request, **kwargs):
+        delivered.append(request.data.decode())
+        return _FakeResponse()
+    monkeypatch.setattr(loop_module.urllib.request, "urlopen", capture)
+    loop_module.process_job(session, job)
+    assert credential not in job.error
+    assert "transcript is saved" in job.error
+    assert len(delivered) == 1
+    assert credential not in delivered[0]
+    assert credential not in repr([record.__dict__ for record in caplog.records])

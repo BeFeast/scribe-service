@@ -234,7 +234,10 @@ def summarize(
         attempts_summary = "; ".join(
             f"{name}={outcome}" for name, outcome in (attempts or [])
         ) or exc.details
-        message = f"all summary providers failed: {attempts_summary}"
+        message = (
+            f"all summary providers failed: {attempts_summary}. "
+            "A saved transcript can be retried without resubmitting the video."
+        )
         if token_revoked_tail is not None:
             _alert_token_revoked(token_revoked_tail)
             raise CodexTokenRevokedError(message) from exc

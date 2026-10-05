@@ -96,6 +96,22 @@ def _now() -> float:
     return time.monotonic()
 
 
+def _safe_error_reason(exc: ProviderError) -> str:
+    """Only internal reason identifiers may leave the provider boundary."""
+    common = {"timeout", "empty_response", "shape_invalid", "summary_too_large"}
+    suffixes = {
+        "no_base_url", "no_api_key", "transport_error", "usage_limit", "5xx",
+        "http_error", "bad_response", "upstream_auth_error", "auth_error", "retry_exhausted",
+    }
+    known = common | {
+        f"{name}_{suffix}" for name in ("cliproxy", "freellmapi", "ollama-cloud") for suffix in suffixes
+    } | {
+        "codex_lock_timeout", "codex_token_revoked", "codex_usage_limit", "codex_error",
+        "claude_missing", "claude_exec_failed", "claude_usage_limit", "claude_unavailable", "claude_error",
+    }
+    return exc.reason if exc.reason in known else "provider_error"
+
+
 def _classify_error(exc: ProviderError) -> tuple[str, bool]:
     """Map a ProviderError to (outcome_label, trip_relevant)."""
     if isinstance(exc, ProviderUsageLimitError):
@@ -349,11 +365,10 @@ def summarize_with_chain(
                 extra={
                     "provider": name,
                     "outcome": outcome,
-                    "reason": exc.reason,
-                    "details": exc.details,
+                    "reason": _safe_error_reason(exc),
                 },
             )
-            local_attempts.append((name, f"{outcome}: {exc.details or exc.reason}"))
+            local_attempts.append((name, f"{outcome}: {_safe_error_reason(exc)}"))
             last_error = exc
             had_fallback = True
             continue
@@ -382,7 +397,7 @@ def summarize_with_chain(
     else:
         err = ProviderError(
             reason="chain_exhausted",
-            details=f"all providers failed; last={last_error.reason}: {last_error.details}",
+            details=f"all providers failed; last={_safe_error_reason(last_error)}",
         )
     err.attempts = list(local_attempts)  # type: ignore[attr-defined]
     raise err
@@ -417,6 +432,32 @@ _CLAUDE_UNAVAILABLE_PATTERNS = (
 def _matches_any(text: str, needles: tuple[str, ...]) -> bool:
     lowered = text.lower()
     return any(n.lower() in lowered for n in needles)
+
+
+def _http_auth_failed(response: httpx.Response) -> bool:
+    """Recognize nested gateway auth failures without retaining their text."""
+    signatures = (
+        "incorrect api key", "invalid api key", "invalid_api_key",
+        "authentication_error", "api401", "api:401", "api: 401",
+    )
+
+    def nested(value: Any, depth: int = 0) -> bool:
+        if depth > 6:
+            return False
+        if isinstance(value, dict):
+            return any(
+                (key in ("status", "status_code", "code") and str(item) in ("401", "403"))
+                or nested(item, depth + 1)
+                for key, item in value.items()
+            )
+        if isinstance(value, list):
+            return any(nested(item, depth + 1) for item in value)
+        return isinstance(value, str) and _matches_any(value, signatures)
+
+    try:
+        return nested(response.json())
+    except ValueError:
+        return _matches_any(response.text, signatures)
 
 
 def _acquire_flock_bounded(
@@ -739,42 +780,58 @@ class OpenAICompatibleProvider:
                 headers=headers,
                 timeout=self._timeout,
             )
-        except httpx.TimeoutException as exc:
+        except httpx.TimeoutException:
             raise ProviderTimeoutError(
                 reason="timeout",
                 details=f"{self.name} timed out after {self._timeout}s",
-            ) from exc
-        except httpx.HTTPError as exc:
+            ) from None
+        except httpx.HTTPError:
+            # Transport errors can embed URLs, headers or upstream credentials.
             raise ProviderUnavailableError(
                 reason=f"{self.name}_transport_error",
-                details=str(exc),
-            ) from exc
+                details="summary provider transport failed",
+            ) from None
 
-        if resp.status_code == 429:
-            raise ProviderUsageLimitError(
-                reason=f"{self.name}_usage_limit",
-                details=resp.text[:400],
-            )
-        if 500 <= resp.status_code < 600:
-            raise ProviderUnavailableError(
-                reason=f"{self.name}_5xx",
-                details=f"{resp.status_code}: {resp.text[:400]}",
-            )
         if resp.status_code >= 400:
+            # Gateways may wrap an upstream authentication failure in HTTP 502.
+            # Inspect signatures for classification only; never retain an
+            # arbitrary upstream body in exceptions, logs, jobs or webhooks.
+            auth_failed = _http_auth_failed(resp)
+            if resp.status_code in (401, 403) or (resp.status_code >= 500 and auth_failed):
+                scope = "upstream_auth_error" if resp.status_code >= 500 else "auth_error"
+                raise ProviderError(
+                    reason=f"{self.name}_{scope}",
+                    details=f"HTTP {resp.status_code}: provider authentication failed",
+                )
+            if resp.status_code == 429:
+                raise ProviderUsageLimitError(
+                    reason=f"{self.name}_usage_limit",
+                    details="HTTP 429: provider usage limit",
+                )
+            if 500 <= resp.status_code < 600:
+                exhausted = "NO_MORE_RETRY" in resp.text or "NO_MORE_RETRY" in resp.headers.get(
+                    "x-retry-metadata", ""
+                )
+                reason = "retry_exhausted" if exhausted else "5xx"
+                detail = "provider retry budget exhausted" if exhausted else "provider unavailable"
+                raise ProviderUnavailableError(
+                    reason=f"{self.name}_{reason}",
+                    details=f"HTTP {resp.status_code}: {detail}",
+                )
             raise ProviderError(
                 reason=f"{self.name}_http_error",
-                details=f"{resp.status_code}: {resp.text[:400]}",
+                details=f"HTTP {resp.status_code}: provider rejected the request",
             )
 
         try:
             data: dict[str, Any] = resp.json()
             choices = data["choices"]
             content = choices[0]["message"]["content"]
-        except (ValueError, KeyError, IndexError, TypeError) as exc:
+        except (ValueError, KeyError, IndexError, TypeError):
             raise ProviderError(
                 reason=f"{self.name}_bad_response",
-                details=f"could not parse choices[0].message.content: {exc}",
-            ) from exc
+                details="could not parse provider completion content",
+            ) from None
 
         summary_md = (content or "").strip()
         if not summary_md:

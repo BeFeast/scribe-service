@@ -711,3 +711,139 @@ def test_transcript_detail_json_keeps_youtube_source_link(client, db_session):
     body = resp.json()
     assert body["source_label"] == "YouTube"
     assert body["source_url"] == "https://www.youtube.com/watch?v=ytlinked12x"
+
+
+def test_resummarize_recovers_same_job_and_transcript(client, db_session, monkeypatch):
+    old_job, transcript = _seed_partial_transcript(db_session, video_id="samejob484")
+    job_count = db_session.scalar(select(func.count()).select_from(Job))
+    transcript_count = db_session.scalar(select(func.count()).select_from(Transcript))
+    _stub_summarizer(monkeypatch, summary_md="recovered summary")
+    response = client.post(f"/transcripts/{transcript.id}/resummarize")
+    assert response.status_code == 200, response.text
+    db_session.refresh(old_job)
+    db_session.refresh(transcript)
+    assert transcript.job_id == old_job.id
+    assert old_job.status == JobStatus.done
+    assert old_job.error is None
+    assert db_session.scalar(select(func.count()).select_from(Job)) == job_count
+    assert db_session.scalar(select(func.count()).select_from(Transcript)) == transcript_count
+
+
+def test_resummarize_rejects_active_worker_without_inference(client, db_session, monkeypatch):
+    job, transcript = _seed_partial_transcript(db_session, video_id="activeworker484")
+    job.status = JobStatus.summarizing
+    db_session.commit()
+    def unexpected(*args, **kwargs):
+        pytest.fail("active worker must not trigger overlapping inference")
+    monkeypatch.setattr(summarizer_module, "summarize", unexpected)
+    assert client.post(f"/transcripts/{transcript.id}/resummarize").status_code == 409
+
+
+def test_resummarize_error_does_not_reflect_custom_provider_text(client, db_session, monkeypatch):
+    _, transcript = _seed_partial_transcript(db_session, video_id="safeerror484")
+    def fail(*args, **kwargs):
+        raise summarizer_module.SummarizeError("unknown-upstream-credential-484")
+    monkeypatch.setattr(summarizer_module, "summarize", fail)
+    response = client.post(f"/transcripts/{transcript.id}/resummarize")
+    assert response.status_code == 502
+    assert "unknown-upstream-credential" not in response.text
+    assert "transcript is saved" in response.json()["detail"]
+
+
+def test_resummarize_preserves_worker_promotion(client, db_session, engine, monkeypatch):
+    from sqlalchemy.orm import Session
+    job, transcript = _seed_partial_transcript(db_session, video_id="promotion484")
+    job_id, transcript_id = job.id, transcript.id
+    def concurrently_promote(*args, **kwargs):
+        with Session(engine) as other:
+            saved = other.get(Transcript, transcript_id)
+            saved.summary_md = "completed by worker"
+            owning = other.get(Job, job_id)
+            owning.status = JobStatus.done
+            owning.error = None
+            other.commit()
+        return summarizer_module.SummaryResult(summary_md="late API result", tags=[])
+    monkeypatch.setattr(summarizer_module, "summarize", concurrently_promote)
+    response = client.post(f"/transcripts/{transcript.id}/resummarize")
+    assert response.status_code == 200, response.text
+    db_session.refresh(transcript)
+    assert transcript.summary_md == "completed by worker"
+
+
+def test_resummarize_done_transcript_still_regenerates(client, db_session, monkeypatch):
+    _, transcript = _seed_done_transcript(db_session, video_id="regenerate484")
+    _stub_summarizer(monkeypatch, summary_md="intentional replacement")
+    assert client.post(f"/transcripts/{transcript.id}/resummarize").status_code == 200
+    db_session.refresh(transcript)
+    assert transcript.summary_md == "intentional replacement"
+
+
+def test_concurrent_resummarize_rejects_second_call(client, db_session, engine, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sqlalchemy.orm import Session
+    _, transcript = _seed_partial_transcript(db_session, video_id="concurrent484")
+    transcript_id = transcript.id
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    def independent_session():
+        with Session(engine) as session:
+            yield session
+    app.dependency_overrides[routes_module.get_session] = independent_session
+    def blocking(*args, **kwargs):
+        calls.append(1)
+        entered.set()
+        assert release.wait(10)
+        return summarizer_module.SummaryResult(summary_md="one summary", tags=[])
+    monkeypatch.setattr(summarizer_module, "summarize", blocking)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        first = executor.submit(client.post, f"/transcripts/{transcript_id}/resummarize")
+        try:
+            assert entered.wait(5)
+            second = client.post(f"/transcripts/{transcript_id}/resummarize")
+            assert second.status_code == 409, second.text
+        finally:
+            release.set()
+        assert first.result(timeout=10).status_code == 200
+    assert calls == [1]
+
+
+def test_failed_summary_body_is_safe_in_job_api_and_webhook(client, db_session, monkeypatch):
+    import httpx
+
+    from scribe.pipeline import summary_providers
+    from scribe.worker import loop
+    job, transcript = _seed_partial_transcript(db_session, video_id="webhooksafe484")
+    job.callback_url = "http://example.test/hook"
+    db_session.commit()
+    credential = "unknown-upstream-credential-484"
+    provider = summary_providers.OpenAICompatibleProvider(
+        name="gateway", base_url="http://example.test/v1", api_key="test", model="test", timeout=1,
+    )
+    monkeypatch.setattr(summarizer_module, "build_provider_chain", lambda: [provider])
+    monkeypatch.setattr(summary_providers.httpx, "post", lambda *args, **kwargs: httpx.Response(
+        502, text=f"upstream error {credential}", request=httpx.Request("POST", "http://example.test/v1"),
+    ))
+    delivered = []
+    class Response:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def read(self):
+            return b""
+    def capture(request, **kwargs):
+        delivered.append(json.loads(request.data))
+        return Response()
+    monkeypatch.setattr(loop.urllib.request, "urlopen", capture)
+    loop.process_job(db_session, job)
+    db_session.refresh(job)
+    assert job.status == JobStatus.failed
+    assert credential not in job.error
+    assert "transcript is saved" in job.error
+    assert len(delivered) == 1
+    assert credential not in json.dumps(delivered)
+    assert credential not in client.get(f"/jobs/{job.id}").text
+    db_session.refresh(transcript)
+    assert transcript.summary_md is None
