@@ -34,7 +34,7 @@ jobs:
       SCRIBE_SHORTLINK_API_KEY: ""
       SCRIBE_TEMP_DIR: /tmp/scribe-ci
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Configure database service endpoint
         shell: bash
