@@ -271,11 +271,16 @@ class ShareLinkView(BaseModel):
     recipient_note: str | None = None
     token_hint: str
     share_url: str | None = None
+    # Successful public fetches of the link (#489).
+    access_count: int = 0
+    last_accessed_at: dt.datetime | None = None
 
 
 class ShareLinkCreated(ShareLinkView):
     token: str
     share_url: str
+    # `.md` variant of share_url; set only for ai_transcript links (#489).
+    share_url_md: str | None = None
 
 
 class JobView(BaseModel):

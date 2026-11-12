@@ -105,6 +105,40 @@ async def correlation_id_middleware(request: Request, call_next):  # noqa: D401,
     return response
 
 
+# Headers for every public share response (#489), errors included. Set here
+# rather than per route because an HTTPException 404/410 never reaches the
+# handler's own response object. `/share/` stays allowed in robots.txt on
+# purpose: user-initiated AI fetchers honour it, and that is the use case.
+SHARE_RESPONSE_HEADERS = {
+    "X-Robots-Tag": "noindex, nofollow, noarchive",
+    "Cache-Control": "no-store",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+}
+
+
+@app.middleware("http")
+async def share_headers_middleware(request: Request, call_next):  # noqa: ANN001
+    """Stamp `/share/*` responses with no-index, no-store and open-CORS headers.
+
+    Never sets `Access-Control-Allow-Credentials`: share tokens are bearer
+    URLs, so no cookie should ride along. An OPTIONS preflight is answered
+    directly instead of falling through to a 405."""
+    if not request.url.path.startswith("/share/"):
+        return await call_next(request)
+    if request.method == "OPTIONS":
+        response = Response(status_code=204)
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Max-Age"] = "600"
+    else:
+        response = await call_next(request)
+    for key, value in SHARE_RESPONSE_HEADERS.items():
+        response.headers[key] = value
+    return response
+
+
 @app.get("/healthz", tags=["ops"])
 def healthz() -> dict:
     """Fast liveness probe — the process is up and serving. Unconditional `ok`

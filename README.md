@@ -112,10 +112,57 @@ That is more than seven days of local journal capacity for scribe output.
 | `POST` | `/api/prompts/{version}` | Atomically replace a prompt version body |
 | `POST` | `/api/prompts/active` | Switch the active prompt version |
 | `POST` | `/api/prompts/dry-run` | Re-summarize an existing transcript with a chosen prompt without persisting |
+| `POST` | `/api/transcripts/{id}/share-links` | Create a revocable share link. Body: `{target_kind, expires_at?, label?, recipient_note?}`; `target_kind` is `page`, `summary_markdown`, `transcript_markdown` or `ai_transcript`. Owner or admin only. |
+| `GET` | `/api/transcripts/{id}/share-links` | List the transcript's share links, with `access_count` and `last_accessed_at` |
+| `POST` | `/api/share-links/{id}/revoke` | Revoke a share link; its URL answers `410` from then on |
+| `GET`, `HEAD` | `/share/{token}[.md\|.txt][?part=N]` | Public, no login. Suffixes and `?part` apply to `ai_transcript` links only |
 | `GET` | `/healthz` | Liveness |
 
 Web UI: `GET /` lists transcripts, `GET /transcripts/{id}` renders summary +
 transcript as HTML.
+
+### Copy for AI / agent access
+
+An `ai_transcript` share link serves the raw transcript to a web AI (ChatGPT,
+Claude, Gemini) or an agent, without a login and without a summary: it also
+works for partial transcripts (`summary_md IS NULL`). The Share sheet's
+"Copy for AI" action creates one with a 7-day, 30-day (default) or no expiry
+and lists the active links with a Revoke button.
+
+- **Format:** `Key: value` header lines (`Title`, `Source`, `Author`,
+  `Platform`, `Duration`, `Language`, `Transcribed`, `Length`, `Timestamps`,
+  `Note`; empty fields are left out), an empty line, `---`, an empty line, then
+  the transcript text. The stored `## Metadata` block is not served. The raw
+  source URL of an upload is never printed (`Source: uploaded file`), and
+  neither is a Telegram private-chat URL.
+- **Content type:** `/share/{token}` and `/share/{token}.txt` return
+  `text/plain; charset=utf-8`; `/share/{token}.md` returns
+  `text/markdown; charset=utf-8`. The body is the same. `HEAD` is answered too.
+- **Headers on every `/share/*` response, errors included:**
+  `X-Robots-Tag: noindex, nofollow, noarchive`, `Cache-Control: no-store`,
+  `Access-Control-Allow-Origin: *` (no credentials),
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
+  `robots.txt` does not block `/share/`, because user-initiated AI fetchers
+  honour it.
+- **Long transcripts:** the full text is always served without `?part`. Above
+  100,000 characters the header adds `Parts available: M` and one URL per part;
+  `?part=N` (1-based) serves a chunk of at most 100,000 characters, cut at a
+  sentence end or whitespace, with `Part: N of M` and the next part's URL.
+  An out-of-range part returns `404`.
+- **Status codes:** unknown token `404`, revoked or expired `410`, suffix on a
+  non-AI link `404`. Each successful `GET` increments `access_count` and sets
+  `last_accessed_at`.
+
+An agent with the machine bearer token creates a link and fetches it like this
+(`share_url_md` is `share_url` plus `.md`):
+
+```bash
+curl -s -X POST https://scribe.example/api/transcripts/123/share-links \
+  -H "Authorization: Bearer $SCRIBE_MACHINE_TOKEN" -H "Content-Type: application/json" \
+  -d '{"target_kind":"ai_transcript","expires_at":"2026-12-31T00:00:00Z","label":"agent:my-bot"}' | jq -r .share_url_md
+curl -s "https://scribe.example/share/<token>.md"          # full text
+curl -s "https://scribe.example/share/<token>.md?part=2"   # chunk N for long transcripts
+```
 
 ## Auth v2
 

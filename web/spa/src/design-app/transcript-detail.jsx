@@ -4,6 +4,7 @@ import { summaryPresentation } from "./summaryState.js";
 import { useAuth } from "../hooks/useAuth";
 import { IconAlert, IconArrow, IconCheck, IconClock, IconCopy, IconDownload, IconExternal, IconGlobe, IconLink, IconRSS, IconRefresh, IconSparkle, IconUser, IconWave, IconX } from "./icons.jsx";
 import { CURRENT_TRANSCRIPT, CURRENT_TRANSCRIPT_STATE, TRANSCRIPTS, fmtDuration, fmtRelative, fmtUsd, publicBaseUrl } from "./data.js";
+import { AI_EXPIRY_OPTIONS, activeAiLinks, aiLinkRequestBody, copyTextFromPromise, formatAiLinkMeta, readAiExpiry, writeAiExpiry } from "./ai-links.js";
 // Transcript detail — title, meta, summary (rendered from MD), transcript body.
 
 const LANG_LABELS = {
@@ -249,6 +250,26 @@ function ShareSheet({ t, onClose, copy, copyFromEndpoint, download, auth, copied
   const fullUrl = `${baseUrl}/transcripts/${t.id}`;
   const fallbackShareUrl = `${baseUrl}/share/...`;
   const displayShareUrl = splitShareUrl(shareUrl || fallbackShareUrl);
+  // Copy for AI (#489): revocable ai_transcript links.
+  const hasTranscript = t?.id != null;
+  const [aiExpiry, setAiExpiry] = React.useState(() => readAiExpiry(browserStorage()));
+  const [aiUrl, setAiUrl] = React.useState(null);
+  const [aiBusy, setAiBusy] = React.useState(false);
+  const [aiLinks, setAiLinks] = React.useState([]);
+
+  async function loadAiLinks() {
+    if (!hasTranscript) return;
+    try {
+      const response = await auth.protectedFetch("/api/transcripts/" + t.id + "/share-links", { cache: "no-store" });
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      setAiLinks(activeAiLinks(await response.json()));
+    } catch {
+      // The list is secondary; the section just stays hidden.
+      setAiLinks([]);
+    }
+  }
+
+  React.useEffect(() => { void loadAiLinks(); }, [t?.id]);
 
   React.useEffect(() => {
     function onDoc(e) {
@@ -269,6 +290,53 @@ function ShareSheet({ t, onClose, copy, copyFromEndpoint, download, auth, copied
     if (isErr(key))    return <span className="sh-status err"><IconX size={11}/> failed — clipboard blocked</span>;
     if (isCopied(key)) return <span className="sh-status ok"><IconCheck size={11}/> {label || "copied"}</span>;
     return null;
+  }
+
+  function chooseAiExpiry(key) {
+    setAiExpiry(key);
+    writeAiExpiry(browserStorage(), key);
+  }
+
+  async function copyForAi() {
+    if (aiBusy) return;
+    setAiBusy(true);
+    setActionError(null);
+    const urlPromise = (async () => {
+      const response = await auth.protectedFetch("/api/transcripts/" + t.id + "/share-links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(aiLinkRequestBody(aiExpiry)),
+      });
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      const body = await response.json();
+      if (!body.share_url) throw new Error("share link response has no share_url");
+      return body.share_url;
+    })();
+    try {
+      const url = await copyTextFromPromise(urlPromise);
+      setAiUrl(url);
+      setCopied("ai"); setTimeout(() => setCopied(null), 1600);
+    } catch (error) {
+      // A created link stays visible so it can be copied by hand.
+      const url = await urlPromise.catch(() => null);
+      if (url) setAiUrl(url);
+      setActionError(error instanceof Error ? error.message : String(error));
+      setCopied("err:ai"); setTimeout(() => setCopied(null), 2400);
+    } finally {
+      setAiBusy(false);
+      void loadAiLinks();
+    }
+  }
+
+  async function revokeAiLink(link) {
+    setActionError(null);
+    try {
+      const response = await auth.protectedFetch("/api/share-links/" + link.id + "/revoke", { method: "POST" });
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      await loadAiLinks();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function copyShareLink() {
@@ -312,6 +380,41 @@ function ShareSheet({ t, onClose, copy, copyFromEndpoint, download, auth, copied
           {isCopied("sl") ? <><IconCheck size={12}/> Copied</> : <><IconCopy size={12}/> Copy link</>}
         </button>
       </div>
+
+      {/* Copy for AI: revocable plain-text transcript link (#489) */}
+      {hasTranscript && (
+        <div className="sh-section">
+          <div className="sh-section-label">Copy for AI</div>
+          <CopyForAiItem onCopy={() => void copyForAi()} busy={aiBusy}
+                         status={statusFor("ai", "link copied")}/>
+          {aiUrl && <div className="sh-ai-url" title="Copy for AI link">{aiUrl}</div>}
+          <div className="sh-ai-expiry">
+            <span className="sh-ai-expiry-label">expires</span>
+            <div className="seg" role="group" aria-label="Copy for AI link expiry">
+              {AI_EXPIRY_OPTIONS.map((option) => (
+                <button key={option.key} type="button"
+                        className={aiExpiry === option.key ? "active" : ""}
+                        aria-pressed={aiExpiry === option.key}
+                        onClick={() => chooseAiExpiry(option.key)}>
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {hasTranscript && aiLinks.length > 0 && (
+        <div className="sh-section">
+          <div className="sh-section-label">AI links</div>
+          {aiLinks.map((link) => (
+            <div className="sh-ai-link" key={link.id}>
+              <span className="sh-ai-link-meta">{formatAiLinkMeta(link)}</span>
+              <button className="btn ghost" type="button" onClick={() => void revokeAiLink(link)}>Revoke</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Copy as Markdown */}
       <div className="sh-section">
@@ -392,6 +495,14 @@ function ShareSheet({ t, onClose, copy, copyFromEndpoint, download, auth, copied
   );
 }
 
+function browserStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
 function normalizedPublicBaseUrl() {
   return publicBaseUrl().replace(/\/+$/, "");
 }
@@ -411,6 +522,24 @@ function splitShareUrl(shareUrl) {
       path: parts.at(-1) || shareUrl,
     };
   }
+}
+
+// The sole entry point for creating an AI link, so it must be a real <button>:
+// keyboard users reach it with Tab and activate it with Enter/Space, and screen
+// readers announce it as actionable. Children are spans because a <button> only
+// allows phrasing content.
+export function CopyForAiItem({ onCopy, busy, status }) {
+  return (
+    <button type="button" className="sh-item sh-item-button"
+            onClick={onCopy} aria-busy={busy ? "true" : undefined}>
+      <span className="sh-glyph" aria-hidden="true"><IconLink size={13}/></span>
+      <span className="sh-text">
+        <span className="sh-title">Copy for AI</span>
+        <span className="sh-sub">Revocable link for ChatGPT · Claude · Gemini · agents</span>
+      </span>
+      {status ?? <span className="sh-keys" aria-hidden="true"><IconCopy size={11}/></span>}
+    </button>
+  );
 }
 
 export function PartialNotice({ transcript, onRegen, regenerating }) {

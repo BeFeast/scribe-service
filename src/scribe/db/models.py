@@ -31,6 +31,9 @@ class ShareTargetKind(StrEnum):
     page = "page"
     summary_markdown = "summary_markdown"
     transcript_markdown = "transcript_markdown"
+    # Agent/AI-friendly plain-text transcript with a short metadata header
+    # (#489). Served as text/plain, or text/markdown via the `.md` suffix.
+    ai_transcript = "ai_transcript"
 
 
 class AppConfig(Base):
@@ -274,6 +277,12 @@ class TranscriptShareLink(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     label: Mapped[str | None] = mapped_column(Text, nullable=True)
     recipient_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Successful public fetches of this link (#489). NOT NULL with a server
+    # default so the atomic `access_count + 1` UPDATE never sees NULL.
+    access_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    last_accessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     transcript: Mapped[Transcript] = relationship(back_populates="share_links")
 

@@ -22,12 +22,12 @@ from urllib.parse import quote, urlparse
 
 import markdown as md
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.orm import Session
 
-from scribe.api import cookie_jar
+from scribe.api import ai_share, cookie_jar
 from scribe.api.auth import (
     Actor,
     AuthState,
@@ -332,11 +332,37 @@ def _share_token_hash(token: str) -> str:
     return token_hash(token)
 
 
-def _share_url(token: str) -> str:
-    return f"{settings.public_base_url.rstrip('/')}/share/{token}"
+_LOCALHOST_PUBLIC_BASE_URL = "http://localhost:8000"
+_SHARE_SUFFIX_MEDIA_TYPES = {
+    "": "text/plain; charset=utf-8",
+    ".md": "text/markdown; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+}
 
 
-def _share_link_view(link: TranscriptShareLink, *, token: str | None = None) -> ShareLinkView:
+def _share_base(request: Request | None = None) -> str:
+    """Public origin for share URLs, without a trailing slash.
+
+    `settings.public_base_url`, unless it is still the localhost default and a
+    request is at hand, in which case the request's own base URL is used so
+    dev and test links point at the server that minted them.
+    """
+    base = settings.public_base_url.rstrip("/")
+    if request is not None and base == _LOCALHOST_PUBLIC_BASE_URL:
+        base = str(request.base_url).rstrip("/")
+    return base
+
+
+def _share_url(token: str, request: Request | None = None) -> str:
+    return f"{_share_base(request)}/share/{token}"
+
+
+def _share_link_view(
+    link: TranscriptShareLink,
+    *,
+    token: str | None = None,
+    request: Request | None = None,
+) -> ShareLinkView:
     base = dict(
         id=link.id,
         transcript_id=link.transcript_id,
@@ -348,10 +374,14 @@ def _share_link_view(link: TranscriptShareLink, *, token: str | None = None) -> 
         label=link.label,
         recipient_note=link.recipient_note,
         token_hint=link.token_hint,
+        access_count=link.access_count or 0,
+        last_accessed_at=link.last_accessed_at,
     )
     if token is None:
         return ShareLinkView(**base)
-    return ShareLinkCreated(**base, token=token, share_url=_share_url(token))
+    share_url = _share_url(token, request)
+    share_url_md = f"{share_url}.md" if link.target_kind == ShareTargetKind.ai_transcript else None
+    return ShareLinkCreated(**base, token=token, share_url=share_url, share_url_md=share_url_md)
 
 
 def _share_created_by(actor: Actor) -> str:
@@ -1645,12 +1675,7 @@ def create_share_link(
     session.add(link)
     session.commit()
     session.refresh(link)
-    if settings.public_base_url.rstrip("/") == "http://localhost:8000":
-        return ShareLinkCreated(
-            **_share_link_view(link, token=token).model_dump(exclude={"share_url"}),
-            share_url=str(request.url_for("resolve_share_token", token=token)),
-        )
-    return _share_link_view(link, token=token)
+    return _share_link_view(link, token=token, request=request)
 
 
 @router.post("/api/share-links/{share_link_id}/revoke", response_model=ShareLinkView)
@@ -1684,36 +1709,148 @@ def _valid_share_link(token: str, session: Session) -> TranscriptShareLink:
     return link
 
 
+def _split_share_suffix(token: str) -> tuple[str, str]:
+    """Split an optional `.md`/`.txt` suffix off a share token.
+
+    `secrets.token_urlsafe` never emits `.`, so the suffix is unambiguous.
+    """
+    for suffix in (".md", ".txt"):
+        if token.endswith(suffix):
+            return token[: -len(suffix)], suffix
+    return token, ""
+
+
+def _ai_transcript_response(
+    link: TranscriptShareLink,
+    *,
+    raw_token: str,
+    suffix: str,
+    part: int | None,
+    request: Request,
+) -> Response:
+    transcript = link.transcript
+    body = ai_share.ai_transcript_body(transcript.transcript_md)
+    chunks = ai_share.chunk_ai_body(body)
+    parts = len(chunks)
+    part_url = f"{_share_base(request)}/share/{raw_token}{suffix}?part="
+    if part is None:
+        served = body
+        fields = ai_share.ai_header_fields(
+            transcript,
+            transcript.job,
+            length=len(served),
+            parts=parts,
+            part_urls=[f"{part_url}{i}" for i in range(1, parts + 1)] if parts > 1 else (),
+        )
+    else:
+        if part < 1 or part > parts:
+            raise HTTPException(status_code=404, detail="share part not found")
+        served = chunks[part - 1]
+        fields = ai_share.ai_header_fields(
+            transcript,
+            transcript.job,
+            length=len(served),
+            part=part,
+            parts=parts,
+            next_url=f"{part_url}{part + 1}" if part < parts else None,
+        )
+    return Response(
+        content=ai_share.render_ai_document(fields, served),
+        media_type=_SHARE_SUFFIX_MEDIA_TYPES[suffix],
+    )
+
+
+def _bodyless(response: Response) -> Response:
+    """HEAD twin of ``response``: same status and headers, empty body.
+
+    Starlette would otherwise ship the body on HEAD (uvicorn drops it, the
+    TestClient does not); the explicit content-length keeps the GET size.
+    """
+    headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
+    headers["content-length"] = str(len(response.body))
+    return Response(content=b"", status_code=response.status_code, headers=headers)
+
+
+def _serve_share(token: str, part: int | None, request: Request, session: Session, *, head: bool) -> Response:
+    raw_token, suffix = _split_share_suffix(token)
+    link = _valid_share_link(raw_token, session)
+    if suffix and link.target_kind != ShareTargetKind.ai_transcript:
+        raise HTTPException(status_code=404, detail="share link not found")
+
+    transcript = link.transcript
+    response: Response
+    if link.target_kind == ShareTargetKind.ai_transcript:
+        response = _ai_transcript_response(link, raw_token=raw_token, suffix=suffix, part=part, request=request)
+    elif link.target_kind == ShareTargetKind.transcript_markdown:
+        response = Response(content=transcript.transcript_md, media_type="text/markdown; charset=utf-8")
+    elif link.target_kind == ShareTargetKind.summary_markdown:
+        if transcript.summary_md is None:
+            raise HTTPException(status_code=409, detail=f"transcript {transcript.id} is partial (no summary yet)")
+        response = Response(content=transcript.summary_md, media_type="text/markdown; charset=utf-8")
+    elif link.target_kind == ShareTargetKind.page:
+        summary = _sanitize_share_html(
+            md.markdown(transcript.summary_md or "", extensions=["extra", "sane_lists", "nl2br"])
+        )
+        page = (
+            "<!doctype html><html><head><meta charset=\"utf-8\">"
+            f"<title>{html.escape(transcript.title)} - scribe share</title>"
+            "</head><body>"
+            f"<main><h1>{html.escape(transcript.title)}</h1>"
+            f"<p><a href=\"https://youtu.be/{html.escape(transcript.video_id)}\">YouTube</a></p>"
+            f"<section>{summary}</section>"
+            "</main></body></html>"
+        )
+        response = HTMLResponse(
+            content=page,
+            headers={
+                "Content-Security-Policy": (
+                    "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+                )
+            },
+        )
+    else:
+        raise HTTPException(status_code=500, detail=f"unhandled share target kind: {link.target_kind}")
+
+    if head:
+        return _bodyless(response)
+
+    # Count only successful fetches; 404 parts and 409 partial summaries have
+    # already raised above. Atomic increment so concurrent fetches never race.
+    session.execute(
+        update(TranscriptShareLink)
+        .where(TranscriptShareLink.id == link.id)
+        .values(
+            access_count=TranscriptShareLink.access_count + 1,
+            last_accessed_at=func.now(),
+        )
+    )
+    session.commit()
+    return response
+
+
 @router.get("/share/{token}", name="resolve_share_token")
 def resolve_share_token(
     token: str,
+    request: Request,
+    part: int | None = Query(None, description="1-based chunk index (ai_transcript only)"),
     session: Session = Depends(get_session),
 ) -> Response:
-    link = _valid_share_link(token, session)
-    transcript = link.transcript
-    if link.target_kind == ShareTargetKind.transcript_markdown:
-        return Response(content=transcript.transcript_md, media_type="text/markdown; charset=utf-8")
-    if link.target_kind == ShareTargetKind.summary_markdown:
-        if transcript.summary_md is None:
-            raise HTTPException(status_code=409, detail=f"transcript {transcript.id} is partial (no summary yet)")
-        return Response(content=transcript.summary_md, media_type="text/markdown; charset=utf-8")
-    if link.target_kind != ShareTargetKind.page:
-        raise HTTPException(status_code=500, detail=f"unhandled share target kind: {link.target_kind}")
+    return _serve_share(token, part, request, session, head=False)
 
-    summary = _sanitize_share_html(md.markdown(transcript.summary_md or "", extensions=["extra", "sane_lists", "nl2br"]))
-    body = (
-        "<!doctype html><html><head><meta charset=\"utf-8\">"
-        f"<title>{html.escape(transcript.title)} - scribe share</title>"
-        "</head><body>"
-        f"<main><h1>{html.escape(transcript.title)}</h1>"
-        f"<p><a href=\"https://youtu.be/{html.escape(transcript.video_id)}\">YouTube</a></p>"
-        f"<section>{summary}</section>"
-        "</main></body></html>"
-    )
-    return HTMLResponse(
-        content=body,
-        headers={"Content-Security-Policy": "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"},
-    )
+
+@router.head("/share/{token}", include_in_schema=False)
+def head_share_token(
+    token: str,
+    request: Request,
+    part: int | None = Query(None),
+    session: Session = Depends(get_session),
+) -> Response:
+    try:
+        return _serve_share(token, part, request, session, head=True)
+    except HTTPException as exc:
+        # Mirror the GET error (status, JSON content type and length) without
+        # the body.
+        return _bodyless(JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers))
 
 
 def _prompt_error(exc: prompts.PromptError) -> HTTPException:

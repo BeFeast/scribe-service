@@ -233,6 +233,22 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
             "transcript_share_links missing expected columns — "
             "revision f2a3b4c5d602 likely silent-noop'd"
         )
+        assert {"access_count", "last_accessed_at"} <= share_cols, (
+            "transcript_share_links missing access tracking columns — "
+            "revision k5l6m7n8o908 likely silent-noop'd"
+        )
+        access_count_col = next(
+            c for c in inspect(eng).get_columns("transcript_share_links") if c["name"] == "access_count"
+        )
+        assert not access_count_col["nullable"], "access_count must be NOT NULL (k5l6m7n8o908)"
+        assert access_count_col["default"] is not None, "access_count needs a server default (k5l6m7n8o908)"
+        with eng.connect() as conn:
+            share_kinds = set(
+                conn.execute(text("SELECT unnest(enum_range(NULL::share_target_kind))::text")).scalars()
+            )
+        assert "ai_transcript" in share_kinds, (
+            "share_target_kind missing ai_transcript — revision k5l6m7n8o908 likely silent-noop'd"
+        )
 
         command.downgrade(cfg, "base")
 
@@ -309,5 +325,65 @@ def test_original_title_migration_preserves_legacy_rows(fresh_db_url):
             assert "original_title" not in _column_names(eng, table)
         with eng.connect() as conn:
             assert conn.execute(text("SELECT title FROM transcripts")).scalar_one() == "Caption"
+    finally:
+        eng.dispose()
+
+
+def test_ai_transcript_share_kind_migration_round_trip(fresh_db_url):
+    """k5l6m7n8o908: existing links get access_count 0 on upgrade; downgrade
+    drops ai_transcript links and rebuilds the enum without the label while
+    keeping the other links."""
+    from alembic import command
+
+    cfg = _alembic_config(fresh_db_url)
+    eng = create_engine(fresh_db_url, future=True)
+    try:
+        command.upgrade(cfg, "j4k5l6m7n807")
+        with eng.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO jobs (id, url, video_id, status) "
+                    "VALUES (1, 'https://youtu.be/aimig111111', 'aimig111111', 'done')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO transcripts (id, job_id, video_id, title, transcript_md) "
+                    "VALUES (1, 1, 'aimig111111', 'AI migration', 'body')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO transcript_share_links "
+                    "(id, token_hash, token_hint, transcript_id, target_kind, created_by) "
+                    "VALUES (1, 'hash-page', 'hintpage', 1, 'page', 'test')"
+                )
+            )
+
+        command.upgrade(cfg, "k5l6m7n8o908")
+        with eng.begin() as conn:
+            assert conn.execute(text("SELECT access_count FROM transcript_share_links WHERE id = 1")).scalar() == 0
+            conn.execute(
+                text(
+                    "INSERT INTO transcript_share_links "
+                    "(id, token_hash, token_hint, transcript_id, target_kind, created_by) "
+                    "VALUES (2, 'hash-ai', 'hintai', 1, 'ai_transcript', 'test')"
+                )
+            )
+            conn.execute(
+                text(
+                    "UPDATE transcript_share_links SET access_count = access_count + 1, "
+                    "last_accessed_at = now() WHERE id = 2"
+                )
+            )
+            assert conn.execute(text("SELECT access_count FROM transcript_share_links WHERE id = 2")).scalar() == 1
+
+        command.downgrade(cfg, "j4k5l6m7n807")
+        with eng.connect() as conn:
+            kinds = set(conn.execute(text("SELECT unnest(enum_range(NULL::share_target_kind))::text")).scalars())
+            ids = set(conn.execute(text("SELECT id FROM transcript_share_links")).scalars())
+        assert kinds == {"page", "summary_markdown", "transcript_markdown"}
+        assert ids == {1}
+        assert {"access_count", "last_accessed_at"}.isdisjoint(_column_names(eng, "transcript_share_links"))
     finally:
         eng.dispose()

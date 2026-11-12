@@ -275,6 +275,20 @@ def test_core_route_wiring_uses_real_backend_actions_where_present() -> None:
     assert 'auth.protectedFetch("/transcripts/" + t.id + "/resummarize"' in transcript
     assert 'auth.protectedFetch("/admin/transcripts/" + t.id' in transcript
     assert 'auth.protectedFetch("/api/transcripts/" + t.id + "/share-links"' in transcript
+    # Copy for AI (#489): ai_transcript links with expiry, list and revoke.
+    ai_links = read("design-app/ai-links.js")
+    assert 'target_kind: "ai_transcript"' in ai_links
+    assert 'AI_LINK_LABEL = "copy-for-ai"' in ai_links
+    assert 'AI_EXPIRY_STORAGE_KEY = "scribe.copyForAi.expiry"' in ai_links
+    assert "body: JSON.stringify(aiLinkRequestBody(aiExpiry))" in transcript
+    assert 'auth.protectedFetch("/api/share-links/" + link.id + "/revoke"' in transcript
+    assert "activeAiLinks(await response.json())" in transcript
+    assert "copyTextFromPromise(urlPromise)" in transcript
+    assert 'setCopied("err:ai")' in transcript
+    # The only Copy for AI entry point must be a native, keyboard-reachable button.
+    assert "<CopyForAiItem onCopy={() => void copyForAi()}" in transcript
+    assert '<button type="button" className="sh-item sh-item-button"' in transcript
+    assert 'onClick={() => void copyForAi()}>' not in transcript
     assert 'copyFromEndpoint("/transcripts/" + t.id + "/summary.md"' in transcript
     assert 'copyFromEndpoint("/transcripts/" + t.id + "/transcript.md"' in transcript
     assert 'const path = "/transcripts/" + t.id + "/" + kind + ".md"' in transcript
