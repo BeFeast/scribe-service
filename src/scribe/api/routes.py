@@ -1729,7 +1729,7 @@ def _ai_transcript_response(
     request: Request,
 ) -> Response:
     transcript = link.transcript
-    body = ai_share.ai_transcript_body(transcript.transcript_md)
+    body = ai_share.ai_document_body(transcript)
     chunks = ai_share.chunk_ai_body(body)
     parts = len(chunks)
     part_url = f"{_share_base(request)}/share/{raw_token}{suffix}?part="

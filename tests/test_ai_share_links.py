@@ -793,3 +793,63 @@ def test_robots_txt_does_not_disallow_share(client):
     assert response.status_code == 200
     assert "Disallow: /share" not in response.text
     assert "Disallow: /\n" not in response.text
+
+
+# --- post caption + empty transcript (2026-11-12, transcript 722) -----------
+
+CAPTION = (
+    "9.9K views · 61 reactions | 4 ноября Notion дала агентам общий мозг. "
+    "ChatGPT, Claude и Bot сохраняют то, что узнали, в одну память в Notion. | Jane Doe"
+)
+EMPTY_MD = "# Reel\n\n## Metadata\n- Source audio: Vast remote yt-dlp/ffmpeg pipeline\n\n## Transcript\n\n\n"
+
+
+def _reel(session, **kw):
+    transcript = _seed_transcript(
+        session, video_id="facebook:1", title="Notion как общая память",
+        transcript_md=kw.pop("transcript_md", EMPTY_MD), source_platform="facebook", **kw,
+    )
+    transcript.original_title = CAPTION
+    session.commit()
+    return transcript
+
+
+def test_reel_serves_post_caption_and_marks_empty_transcript(client, db_session):
+    _seed_user(db_session, "user_a")
+    created = _create(client, _reel(db_session).id).json()
+
+    text = client.get(_path(created) + ".md").text
+    _, body = text.split("\n\n---\n\n", 1)
+
+    assert body.startswith("## Post text\n\n4 ноября Notion дала агентам общий мозг.")
+    assert "views" not in body and "| Jane Doe" not in body
+    assert "## Transcript\n\n" + ai_share.EMPTY_TRANSCRIPT in body
+
+
+def test_reel_with_speech_keeps_both_sections(client, db_session):
+    _seed_user(db_session, "user_a")
+    created = _create(client, _reel(db_session, transcript_md=TRANSCRIPT_MD).id).json()
+
+    body = client.get(_path(created)).text.split("\n\n---\n\n", 1)[1]
+
+    assert body.index("## Post text") < body.index("## Transcript")
+    assert ai_share.EMPTY_TRANSCRIPT not in body
+
+
+def test_empty_transcript_without_caption_is_explicit(client, db_session):
+    _seed_user(db_session, "user_a")
+    transcript = _seed_transcript(db_session, transcript_md=EMPTY_MD)
+    created = _create(client, transcript.id).json()
+
+    body = client.get(_path(created)).text.split("\n\n---\n\n", 1)[1]
+
+    assert body.strip() == ai_share.EMPTY_TRANSCRIPT
+    assert "## Post text" not in body
+
+
+def test_caption_that_only_restates_title_is_not_served():
+    class T:
+        title = "The full-length interview with Elon Musk"
+        original_title = "The full-length interview with Elon Musk | The Economist"
+        author_name = "The Economist"
+    assert ai_share.ai_post_text(T()) is None

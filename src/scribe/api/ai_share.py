@@ -20,6 +20,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from scribe.pipeline.titles import _ENGAGEMENT_PREFIX
 from scribe.source_links import source_link_for_url
 
 if TYPE_CHECKING:
@@ -65,6 +66,40 @@ def ai_transcript_body(transcript_md: str | None) -> str:
         while i < len(lines) and lines[i].lstrip().startswith("- "):
             i += 1
     return "\n".join(lines[i:]).strip()
+
+
+EMPTY_TRANSCRIPT = "[No speech was detected in the audio, so the transcript is empty.]"
+# A caption must add this much beyond the display title to be worth serving.
+_POST_TEXT_MIN_EXTRA = 20
+
+
+def ai_post_text(transcript: Transcript) -> str | None:
+    """The author's post caption kept in ``original_title`` (social reels).
+
+    For reels the caption often carries the content while the audio is music
+    or silence. Engagement counters and a trailing ``| <author>`` are dropped;
+    a caption that only restates the display title is not served.
+    """
+    raw = " ".join((transcript.original_title or "").split())
+    if not raw:
+        return None
+    text = _ENGAGEMENT_PREFIX.sub("", raw).strip()
+    author = (transcript.author_name or "").strip()
+    if author and text.casefold().endswith(("| " + author).casefold()):
+        text = text[: -len(author)].rstrip().rstrip("|").rstrip()
+    title = (transcript.title or "").strip()
+    if not text or text == title or len(text) < len(title) + _POST_TEXT_MIN_EXTRA:
+        return None
+    return text
+
+
+def ai_document_body(transcript: Transcript) -> str:
+    """Body served to agents: post caption (when useful) plus the transcript."""
+    spoken = ai_transcript_body(transcript.transcript_md) or EMPTY_TRANSCRIPT
+    post = ai_post_text(transcript)
+    if post is None:
+        return spoken
+    return f"## Post text\n\n{post}\n\n## Transcript\n\n{spoken}"
 
 
 def _one_line(value: object) -> str:
