@@ -134,6 +134,7 @@ class Job(Base):
     )
     source: Mapped[str | None] = mapped_column(Text, nullable=True)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    original_title: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Per-job pipeline toggles (#296, mobile Capture sheet). Defaults match the
     # pre-#296 behavior — always summarize, always deliver the webhook — so
@@ -196,6 +197,7 @@ class Transcript(Base):
     )
     video_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
+    original_title: Mapped[str | None] = mapped_column(Text, nullable=True)
     transcript_md: Mapped[str] = mapped_column(Text, nullable=False)
     # NULL = partial (whisper done, summary pending or failed).
     summary_md: Mapped[str | None] = mapped_column(Text, nullable=True)

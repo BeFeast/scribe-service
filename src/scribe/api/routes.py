@@ -106,6 +106,7 @@ from scribe.db.models import (
 )
 from scribe.db.query import escape_like
 from scribe.db.session import SessionLocal
+from scribe.db.titles import normalize_transcript_title
 from scribe.obs import metrics
 from scribe.obs import ops as ops_helpers
 from scribe.obs.correlation import request_correlation_id
@@ -296,6 +297,7 @@ def _full(t: Transcript) -> TranscriptFull:
         created_at=t.created_at,
         job_id=t.job_id,
         transcript_excerpt=_transcript_excerpt(t),
+        original_title=t.original_title,
         summary_md=t.summary_md,
         vast_cost=t.vast_cost,
         media_available=t.media_object_key is not None,
@@ -414,6 +416,7 @@ def _library_row(t: Transcript) -> LibraryRow:
         created_at=t.created_at,
         summary_shortlink=t.summary_shortlink,
         transcript_shortlink=t.transcript_shortlink,
+        original_title=t.original_title,
         **_source_fields(t.job.url if t.job else ""),
         summary_excerpt=_summary_excerpt(t),
         is_partial=t.summary_md is None,
@@ -1332,7 +1335,11 @@ def api_library(
     stmt = _actor_filter(stmt, Transcript, actor)
     if q and q.strip():
         like = f"%{escape_like(q.strip())}%"
-        stmt = stmt.where(or_(Transcript.title.ilike(like), Transcript.summary_md.ilike(like)))
+        stmt = stmt.where(or_(
+            Transcript.title.ilike(like),
+            Transcript.original_title.ilike(like),
+            Transcript.summary_md.ilike(like),
+        ))
     if tag and tag.strip():
         stmt = stmt.where(Transcript.tags.any(tag.strip()))
 
@@ -1991,6 +1998,7 @@ async def resummarize(
     )
     t.short_description = result.short_description
     t.tags = result.tags or None
+    normalize_transcript_title(t, t.job)
 
     if was_partial:
         # Promote the owning job from failed to done so dedup (POST /jobs) and

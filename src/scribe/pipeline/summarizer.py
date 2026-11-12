@@ -43,6 +43,7 @@ from scribe.pipeline.summary_providers import (
     summarize_with_chain,
 )
 from scribe.pipeline.summary_validator import validate_and_canonicalize
+from scribe.pipeline.titles import normalize_title, title_slug
 
 log = logging.getLogger("scribe.summarizer")
 
@@ -155,7 +156,8 @@ def _build_prompt(
     reduce pass while chunking only the transcript.
     """
     summary_date = summary_date or dt.date.today()
-    transcript_slug = transcript_slug or _slugify(title)
+    title, _ = normalize_title(title)
+    transcript_slug = title_slug(transcript_slug or title)
     try:
         if prompt_body is not None:
             template = prompt_body

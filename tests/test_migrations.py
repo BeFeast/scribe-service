@@ -148,6 +148,10 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
         )
 
         jobs_cols = _column_names(eng, "jobs")
+        for table in ("jobs", "transcripts"):
+            original_title = next(c for c in inspect(eng).get_columns(table) if c["name"] == "original_title")
+            assert original_title["nullable"]
+            assert str(original_title["type"]) == "TEXT"
         assert "callback_url" in jobs_cols, (
             "jobs.callback_url missing after upgrade head — "
             "revision d1e3f4a5b603 (PR #6) likely silent-noop'd"
@@ -278,5 +282,32 @@ def test_owner_migration_backfills_existing_rows_from_app_config(fresh_db_url):
             ).one()
         assert tuple(job_owner) == ("default-owner", "default@example.test")
         assert tuple(transcript_owner) == ("default-owner", "default@example.test")
+    finally:
+        eng.dispose()
+
+
+def test_original_title_migration_preserves_legacy_rows(fresh_db_url):
+    from alembic import command
+
+    cfg = _alembic_config(fresh_db_url)
+    eng = create_engine(fresh_db_url, future=True)
+    try:
+        command.upgrade(cfg, "i3j4k5l6m706")
+        with eng.begin() as conn:
+            conn.execute(text("INSERT INTO jobs (id, url, video_id, status, title) "
+                              "VALUES (1, 'https://facebook.com/reel/722', 'facebook:722', 'done', 'Caption')"))
+            conn.execute(text("INSERT INTO transcripts (job_id, video_id, title, transcript_md) "
+                              "VALUES (1, 'facebook:722', 'Caption', 'body')"))
+        command.upgrade(cfg, "head")
+        with eng.connect() as conn:
+            for table in ("jobs", "transcripts"):
+                assert tuple(conn.execute(text(f"SELECT title, original_title FROM {table}")).one()) == ("Caption", None)
+                conn.execute(text(f"UPDATE {table} SET original_title = 'Raw caption'"))
+            conn.commit()
+        command.downgrade(cfg, "i3j4k5l6m706")
+        for table in ("jobs", "transcripts"):
+            assert "original_title" not in _column_names(eng, table)
+        with eng.connect() as conn:
+            assert conn.execute(text("SELECT title FROM transcripts")).scalar_one() == "Caption"
     finally:
         eng.dispose()

@@ -225,6 +225,7 @@ class TranscriptBrief(BaseModel):
 
 class TranscriptFull(TranscriptBrief):
     job_id: int
+    original_title: str | None = None
     # Short, download-only preview of the transcript body (#384). The full text
     # is fetched on demand via GET /transcripts/:id/transcript.md so the detail
     # payload stays light regardless of transcript length.
@@ -345,6 +346,9 @@ class LibraryRow(BaseModel):
     source_label: str | None = None
     summary_excerpt: str
     is_partial: bool
+    # Raw social caption kept when the display title was shortened (#487);
+    # lets the client-side Library filter still match caption words.
+    original_title: str | None = None
 
 
 class LibraryResponse(BaseModel):

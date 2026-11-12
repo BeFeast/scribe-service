@@ -606,6 +606,30 @@ def _stub_summarizer(monkeypatch, *, summary_md: str = "regenerated summary",
     monkeypatch.setattr(summarizer_module, "summarize", _fake)
 
 
+@pytest.mark.parametrize("partial", [True, False])
+def test_resummarize_replaces_long_caption_and_preserves_raw(client, db_session, monkeypatch, partial):
+    raw = "Social caption " * 100
+    job, transcript = _seed_done_transcript(db_session, video_id=f"title-resummary-{partial}", title=raw)
+    if partial:
+        transcript.summary_md = None
+        job.status = JobStatus.failed
+    db_session.commit()
+    _stub_summarizer(monkeypatch, summary_md='---\nsource: "[[old]]"\n---\n## TL;DR\n## Память агентов')
+    response = client.post(f"/transcripts/{transcript.id}/resummarize")
+    assert response.status_code == 200, response.text
+    db_session.expire_all()
+    assert transcript.title == job.title == "Память агентов"
+    assert transcript.original_title == job.original_title == raw
+    assert 'source: "[[память-агентов]]"' in transcript.summary_md
+    assert routes_module._full(transcript).original_title == raw
+    # The stored original keeps the long-title decision available on future retries.
+    _stub_summarizer(monkeypatch, summary_md="## Новый заголовок")
+    assert client.post(f"/transcripts/{transcript.id}/resummarize").status_code == 200
+    db_session.expire_all()
+    assert transcript.title == job.title == "Новый заголовок"
+    assert transcript.original_title == raw
+
+
 def test_resummarize_html_redirects_with_flash_cookie(client, db_session, monkeypatch):
     """Web UI button path: a browser POST (Accept: text/html) gets a 303 to the
     detail page with a one-shot flash cookie. Backs PRD §4.9 acceptance:

@@ -99,6 +99,25 @@ def test_download_audio_populates_author_fields(tmp_path, monkeypatch):
     assert result.source_platform == "youtube"
 
 
+def test_download_audio_normalizes_facebook_caption(tmp_path, monkeypatch):
+    media = tmp_path / "audio.m4a"
+    media.write_bytes(b"audio")
+    raw = "9.9K views · 61 reactions | " + "Shared memory for AI agents. " * 50 + "| Sergey Pimenov"
+
+    def fake_run(args, **kwargs):
+        if "--dump-single-json" in args:
+            return subprocess.CompletedProcess(args, 0, stdout=json.dumps({
+                "extractor_key": "Facebook", "id": "722", "title": raw, "uploader": "Sergey Pimenov",
+            }), stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout=f"{media}\n", stderr="")
+
+    monkeypatch.setattr(downloader, "_run_ytdlp", fake_run)
+    result = downloader.download_audio("https://facebook.com/reel/722", tmp_path)
+    assert result.title.startswith("Shared memory")
+    assert len(result.title) <= 100
+    assert result.original_title == raw
+
+
 # ---------------- inject_author_frontmatter ---------------------------------
 
 

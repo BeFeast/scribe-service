@@ -169,7 +169,7 @@ function SegmentFilter({ filters, value, onChange }) {
 	);
 }
 
-function Row({ transcript, onOpen }) {
+export function Row({ transcript, onOpen }) {
 	const excerpt = firstSummaryLine(transcript);
 	const tags = (transcript.tags ?? []).slice(0, 3);
 	return (
@@ -202,7 +202,7 @@ function Row({ transcript, onOpen }) {
 					</>
 				) : null}
 			</div>
-			<h3 className="t-title">{transcript.title}</h3>
+			<h3 className="t-title library-title" title={transcript.title}>{transcript.title}</h3>
 			<p className="t-ex">{excerpt}</p>
 			<div className="t-foot">
 				{tags.map((tag) => (

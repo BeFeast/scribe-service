@@ -94,7 +94,11 @@ def _build_filter(stmt, *, q: str | None, tag: str | None):
     Postgres array column."""
     if q:
         like = f"%{escape_like(q.strip())}%"
-        stmt = stmt.where(or_(Transcript.title.ilike(like), Transcript.transcript_md.ilike(like)))
+        stmt = stmt.where(or_(
+            Transcript.title.ilike(like),
+            Transcript.original_title.ilike(like),
+            Transcript.transcript_md.ilike(like),
+        ))
     if tag:
         # Postgres-specific: `value = ANY(array_col)`. tags column is TEXT[].
         stmt = stmt.where(Transcript.tags.any(tag.strip()))

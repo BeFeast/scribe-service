@@ -258,6 +258,22 @@ def test_api_library_filters_q_and_tag(client, db_session):
     assert by_tag["rows"][0]["video_id"] == "filter11111"
 
 
+def test_api_library_q_matches_original_social_caption(client, db_session):
+    # #487 review: a shortened display title must not hide caption words from search.
+    _, t = _seed_transcript(
+        db_session,
+        video_id="caption1111",
+        title="Notion как общая память",
+        summary_md="русский текст",
+    )
+    t.original_title = "9.9K views · 61 reactions | Bitcoin halving explained | Author"
+    db_session.commit()
+
+    found = client.get("/api/library", params={"q": "halving"}).json()
+    assert found["total"] == 1
+    assert found["rows"][0]["original_title"].startswith("9.9K views")
+
+
 def test_transcript_detail_json_excludes_full_body_returns_excerpt(client, db_session):
     # Issue #384: the detail payload must not carry the full transcript_md. It
     # ships only a short transcript_excerpt; the full text is download-only.

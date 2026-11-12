@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from scribe.config import settings
+from scribe.pipeline.titles import normalize_title
 
 # Player-client selection is deliberately left to yt-dlp's defaults. The
 # June-2026 pinned list (mweb,web_safari,android_vr,web_embedded) combined
@@ -237,6 +238,7 @@ class DownloadResult:
     author_handle: str | None = None
     author_url: str | None = None
     source_platform: str | None = None
+    original_title: str | None = None
 
 
 def parse_youtube_video_id(url: str) -> str | None:
@@ -502,7 +504,9 @@ def download_audio(
         except (IndexError, json.JSONDecodeError) as exc:
             raise DownloadError("video extraction failed: yt-dlp returned invalid metadata") from exc
         video_id = normalized_video_key(info.get("extractor_key"), info.get("id")) or initial_video_key(url)
-        title = info.get("title") or url
+        raw_title = info.get("title") or url
+        author_name, author_handle, author_url, source_platform = _author_from_info(info)
+        title, _ = normalize_title(raw_title, author=author_name)
         duration = info.get("duration")
         try:
             duration_seconds: int | None = int(float(duration))
@@ -552,10 +556,10 @@ def download_audio(
         if not audio_path.is_file():
             raise DownloadError(f"yt-dlp reported {audio_path} but the file is missing")
 
-        author_name, author_handle, author_url, source_platform = _author_from_info(info)
         return DownloadResult(
             audio_path=audio_path,
             title=title,
+            original_title=raw_title if raw_title != title else None,
             video_id=video_id,
             duration_seconds=duration_seconds,
             author_name=author_name,

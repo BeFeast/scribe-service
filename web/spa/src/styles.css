@@ -3483,3 +3483,19 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* Bound legacy social captions while retaining design-export typography. */
+.library-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.feed-item { grid-template-columns: 80px minmax(0, 1fr); }
+.card { min-width: 0; }
+.detail-h1,
+.detail-title {
+  overflow-wrap: anywhere;
+}

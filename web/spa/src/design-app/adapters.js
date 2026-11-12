@@ -48,6 +48,7 @@ export function adaptTranscript(row) {
 		// the mobile Share sheet hides the row.
 		summary_shortlink: row.summary_shortlink ?? null,
 		transcript_shortlink: row.transcript_shortlink ?? null,
+		original_title: row.original_title ?? null,
 	};
 }
 

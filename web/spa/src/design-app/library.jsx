@@ -106,7 +106,11 @@ export function LibraryPage({ navigate, t, setTweak, routeTag, loading, error, a
 
   const filtered = React.useMemo(() => {
     let rows = TRANSCRIPTS;
-    if (q) rows = rows.filter(r => r.title.toLowerCase().includes(q.toLowerCase()));
+    if (q) {
+      const needle = q.toLowerCase();
+      rows = rows.filter(r => r.title.toLowerCase().includes(needle)
+        || (r.original_title || "").toLowerCase().includes(needle));
+    }
     if (tag) rows = rows.filter(r => (r.tags||[]).includes(tag));
     return rows;
   }, [q, tag, TRANSCRIPTS]);
@@ -199,7 +203,7 @@ function AuthRequiredState({ auth, onRefresh }) {
   );
 }
 
-function LibTable({ rows, navigate, onTag }) {
+export function LibTable({ rows, navigate, onTag }) {
   return (
     <table className="lib-table">
       <thead>
@@ -216,8 +220,10 @@ function LibTable({ rows, navigate, onTag }) {
           <tr key={r.id} onClick={() => navigate("transcript", { id: r.id })}>
             <td className="col-num">{r.id}</td>
             <td className="col-title">
-              {r.summary_md == null && <span className="chip warn" style={{marginRight: 8}}>{summaryPresentation(r).label}</span>}
-              {r.title}
+              <span className="library-title" title={r.title}>
+                {r.summary_md == null && <span className="chip warn" style={{marginRight: 8}}>{summaryPresentation(r).label}</span>}
+                {r.title}
+              </span>
             </td>
             <td className="col-tags">
               <div className="row-tags">
@@ -237,7 +243,7 @@ function LibTable({ rows, navigate, onTag }) {
   );
 }
 
-function LibFeed({ rows, navigate, onTag }) {
+export function LibFeed({ rows, navigate, onTag }) {
   return (
     <div className="lib-feed">
       {rows.map(r => (
@@ -255,7 +261,7 @@ function LibFeed({ rows, navigate, onTag }) {
                 <span className="chip warn" style={{padding: "1px 6px"}}>{summaryPresentation(r).label}</span>
               </>}
             </div>
-            <h2 className="feed-title">{r.title}</h2>
+            <h2 className="feed-title library-title" title={r.title}>{r.title}</h2>
             <p className="feed-excerpt">{previewSummary(r)}</p>
             <div className="feed-tags">
               {(r.tags||[]).map(tg => (
@@ -274,7 +280,7 @@ function LibFeed({ rows, navigate, onTag }) {
   );
 }
 
-function LibCards({ rows, navigate, onTag }) {
+export function LibCards({ rows, navigate, onTag }) {
   return (
     <div className="lib-cards">
       {rows.map(r => (
@@ -290,7 +296,7 @@ function LibCards({ rows, navigate, onTag }) {
               <span className="chip warn">{summaryPresentation(r).label}</span>
             </>}
           </div>
-          <h3 className="card-title">{r.title}</h3>
+          <h3 className="card-title library-title" title={r.title}>{r.title}</h3>
           <p className="card-excerpt">{previewSummary(r)}</p>
           <div className="card-foot">
             {(r.tags||[]).slice(0,3).map(tg => (

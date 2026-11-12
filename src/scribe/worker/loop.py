@@ -38,6 +38,7 @@ from scribe.api.routes import render_job_view, transition_job_status
 from scribe.config import settings
 from scribe.db.models import Job, JobStageEvent, JobStatus, Transcript
 from scribe.db.session import SessionLocal
+from scribe.db.titles import normalize_transcript_title
 from scribe.obs import metrics
 from scribe.pipeline import (
     downloader,
@@ -50,6 +51,7 @@ from scribe.pipeline import (
     whisper_client,
 )
 from scribe.pipeline.frontmatter_inject import inject_author_frontmatter
+from scribe.pipeline.titles import normalize_title
 from scribe.worker import vast_budget
 
 log = logging.getLogger("scribe.worker")
@@ -677,7 +679,9 @@ def _summarize_and_finalize(
         transcript.short_description = summary.short_description
         transcript.tags = summary.tags or None
     session.refresh(job)
+    normalize_transcript_title(transcript, job)
     _maybe_archive(session, job, transcript, archive_source, job_log)
+    session.commit()
     session.refresh(job)
     _set_job_status(session, job, JobStatus.done)
     metrics.transcripts_total.labels(kind="promoted" if promoted else "full").inc()
@@ -794,7 +798,11 @@ def process_job(session, job: Job) -> None:
                             max_bytes=settings.download_max_bytes,
                         )
                 was_pending_key = job.video_id.startswith("pending:")
+                raw_title = dl.original_title or dl.title
+                dl.title, _ = normalize_title(raw_title, author=dl.author_name)
+                dl.original_title = raw_title if raw_title != dl.title else None
                 job.title = dl.title
+                job.original_title = dl.original_title
                 if job.video_id != dl.video_id:
                     job.video_id = dl.video_id
                     job_log = logging.LoggerAdapter(
@@ -900,6 +908,7 @@ def process_job(session, job: Job) -> None:
                     video_id=dl.video_id,
                     title=dl.title,
                     transcript_md=tr.transcript_md,
+                    original_title=dl.original_title,
                     summary_md=None,
                     tags=None,
                     duration_seconds=int(duration) if duration else None,
