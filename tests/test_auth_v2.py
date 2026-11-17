@@ -292,6 +292,7 @@ def test_extension_token_can_submit_outside_lan(db_session, monkeypatch):
                 }
             ),
         )
+        assert token_resp.status_code == 200, token_resp.text
         token = token_resp.json()["token"]
         resp = client.post(
             "/jobs",
@@ -303,6 +304,18 @@ def test_extension_token_can_submit_outside_lan(db_session, monkeypatch):
     job = db_session.get(Job, resp.json()["job_id"])
     assert job is not None
     assert job.owner_id == user.owner_id
+
+
+def test_trusted_lan_without_clerk_session_cannot_mint_extension_token(db_session):
+    _clear_auth(db_session)
+
+    with _client(db_session) as client:
+        resp = client.post("/api/auth/extension-token", json={"label": "Chrome"})
+
+    app.dependency_overrides.pop(routes_module.get_session, None)
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "extension tokens require a signed-in Scribe user"
+    assert db_session.scalar(select(ExtensionToken)) is None
 
 
 def test_machine_bearer_token_can_submit_outside_lan(db_session, monkeypatch):
