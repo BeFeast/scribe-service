@@ -675,7 +675,8 @@ def test_default_summary_providers_is_lightweight_http_chain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """#388: the default chain is the lightweight direct-HTTP chain
-    glm-5.2 → gemma4:31b → gemini-2.5-flash. The heavy CLI harnesses (codex,
+    glm-5.2 → gemma4:31b → cliproxy scribe/gpt-5.5 (the retired freellmapi
+    aggregator left the chain 2026-11-20). The heavy CLI harnesses (codex,
     claude) are demoted to opt-in via SCRIBE_SUMMARY_PROVIDERS, so neither is
     in the default. Regression-keeps the #250 invariant that `claude` (CLI not
     installed in the runtime image) never sits in the default chain."""
@@ -686,10 +687,11 @@ def test_default_summary_providers_is_lightweight_http_chain(
     assert defaults == [
         "ollama-cloud:glm-5.2",
         "ollama-cloud:gemma4:31b",
-        "freellmapi:gemini-2.5-flash",
+        "cliproxy:scribe/gpt-5.5",
     ]
     assert "claude" not in defaults
     assert "codex" not in defaults
+    assert not any(entry.startswith("freellmapi") for entry in defaults)
 
 
 def test_default_chain_builds_in_order_with_per_provider_models(
@@ -704,12 +706,12 @@ def test_default_chain_builds_in_order_with_per_provider_models(
     assert [p.name for p in chain] == [
         "ollama-cloud",
         "ollama-cloud",
-        "freellmapi",
+        "cliproxy",
     ]
     assert [getattr(p, "_model", None) for p in chain] == [
         "glm-5.2",
         "gemma4:31b",
-        "gemini-2.5-flash",
+        "scribe/gpt-5.5",
     ]
 
 

@@ -1,4 +1,4 @@
-"""Summarizer — provider-chain entrypoint (default: codex → freellmapi).
+"""Summarizer — provider-chain entrypoint (default: ollama-cloud → cliproxy).
 
 `summarize()` builds the configured provider chain (see
 `scribe.pipeline.summary_providers`) and translates `ProviderError` outcomes
