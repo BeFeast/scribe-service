@@ -29,10 +29,14 @@ from scribe.runtime_config import (
 # is used several times with different models. Direct HTTP keeps summaries off
 # the heavy codex/claude CLI harnesses (single-codex-lock, ChatGPT model caps).
 # codex/claude stay available — append e.g. `codex` to SCRIBE_SUMMARY_PROVIDERS.
+# The last link is the CLIProxyAPI broker (`cliproxy`); it replaced
+# `freellmapi:gemini-2.5-flash` after the freellmapi aggregator was retired
+# (2026-11-20). Empty `cliproxy_base_url` = Unavailable, so the chain still
+# ends cleanly where the broker is not configured.
 _DEFAULT_SUMMARY_PROVIDERS: tuple[str, ...] = (
     "ollama-cloud:glm-5.2",
     "ollama-cloud:gemma4:31b",
-    "freellmapi:gemini-2.5-flash",
+    "cliproxy:scribe/gpt-5.5",
 )
 # Transcription provider chain. Default is Vast-only so behaviour is unchanged
 # until an operator opts a fallback in via SCRIBE_TRANSCRIBE_PROVIDERS (see
@@ -360,7 +364,7 @@ class Settings(BaseSettings):
 
     # Summary fallback chain tried in order. Each entry is a `provider:model`
     # pair (#388), e.g. `ollama-cloud:glm-5.2,ollama-cloud:gemma4:31b,
-    # freellmapi:gemini-2.5-flash,codex`. Each entry is split on the FIRST ':'
+    # cliproxy:scribe/gpt-5.5,codex`. Each entry is split on the FIRST ':'
     # — provider name (case-insensitive) and model (verbatim, so tags like
     # `gemma4:31b` survive). A bare provider name with no ':' uses that
     # provider's default model (backward compatible with the old name-only
@@ -388,7 +392,11 @@ class Settings(BaseSettings):
     claude_effort: str = "xhigh"
     claude_timeout_secs: int = 600
 
-    # FreeLLMAPI proxy fallback. The API key is sourced at runtime by the
+    # FreeLLMAPI proxy — RETIRED 2026-11-20: the aggregator is gone and the
+    # entry left the default chain. The provider stays registered only so an
+    # old explicit `freellmapi:*` chain entry still parses; with no key it is
+    # Unavailable and the chain advances. Do not add it to new chains.
+    # The API key is sourced at runtime by the
     # Infisical loader (`scribe.runtime_config`): it reads project `services`,
     # env `prod`, path `/scribe-service`, and maps secret `FREELLMAPI_API_KEY`
     # onto this field via the field-name normalisation in `_settings_key`.
