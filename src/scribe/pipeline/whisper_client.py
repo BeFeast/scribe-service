@@ -25,8 +25,11 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol
+from uuid import uuid4
 
 from scribe.config import settings
 
@@ -35,6 +38,7 @@ VAST_IMAGE = "ghcr.io/befeast/scribe-service-vast:cuda12.4-whisper"
 # Hard upper bound on a single instance's wall-clock budget; the per-job cost
 # guard (settings.vast_max_job_cost) usually trips well before this.
 MAX_INSTANCE_SECONDS = 1800
+_MIN_RERUN_SECONDS = 600
 # Vast instance status fields (actual_status / cur_state / intended_status)
 # that mean the container will not become ready — fail fast instead of
 # polling for the full ready_timeout window.
@@ -57,6 +61,10 @@ class VastInstanceFailedError(WhisperError):
 
 class VastReadyTimeoutError(WhisperError):
     """Vast container did not become ready within the per-attempt ready budget."""
+
+
+class SSHTransportError(WhisperError):
+    """SSH or SCP lost its connection or exceeded its command timeout."""
 
 
 class VastRateLimitedError(WhisperError):
@@ -104,6 +112,48 @@ class TranscribeResult:
     provider: str = "vast"
 
 
+@dataclass(frozen=True)
+class VastAttempt:
+    number: int
+    instance_id: int
+    offer_id: int
+    host_id: int | None
+    started_at: datetime
+    hourly_usd: float
+    finished_at: datetime | None = None
+    outcome: str = "running"
+    estimated_cost_usd: float = 0.0
+    destroyed: bool = False
+    exclude_host: bool = False
+
+
+@dataclass
+class VastLedger:
+    attempts: list[VastAttempt] = field(default_factory=list)
+    retry_reserved: bool = False
+
+    @property
+    def spent_usd(self) -> float:
+        return sum(attempt.estimated_cost_usd for attempt in self.attempts)
+
+    @property
+    def excluded_hosts(self) -> set[int]:
+        return {
+            attempt.host_id for attempt in self.attempts
+            if attempt.exclude_host and attempt.host_id is not None
+        }
+
+
+class VastAttemptStore(Protocol):
+    def load(self) -> VastLedger: ...
+
+    def reserve_retry(self, label: str, offer_id: int, host_id: int | None, hourly_usd: float) -> bool: ...
+
+    def reconcile_retry(self) -> None: ...
+
+    def record(self, attempt: VastAttempt) -> None: ...
+
+
 def _noop_instance_created(_instance_id: int) -> None:
     return None
 
@@ -118,6 +168,7 @@ class _TranscribeRunContext:
         self._lock = threading.Lock()
         self._api_key = ""
         self._instance_id: int | None = None
+        self._destroyed_instance_id: int | None = None
         self._cancelled = False
         self.deadline = time.monotonic() + settings.transcribe_timeout_secs
         self._on_destroy_failed = on_destroy_failed
@@ -143,7 +194,7 @@ class _TranscribeRunContext:
                 f"transcribe timed out after {settings.transcribe_timeout_secs}s"
             )
 
-    def destroy_instance(self) -> None:
+    def destroy_instance(self) -> bool:
         with self._lock:
             api_key = self._api_key
             instance_id = self._instance_id
@@ -155,20 +206,44 @@ class _TranscribeRunContext:
                 if self._on_destroy_failed is not None:
                     self._on_destroy_failed(instance_id)
                 raise
+            with self._lock:
+                self._destroyed_instance_id = instance_id
             if self._on_destroy_succeeded is not None:
                 self._on_destroy_succeeded(instance_id)
+            return True
+        return False
+
+    def was_destroyed(self, instance_id: int) -> bool:
+        with self._lock:
+            return self._destroyed_instance_id == instance_id
 
 
 # --- subprocess + http helpers ------------------------------------------
 def _run(cmd: list[str], *, check: bool = True, timeout: float | None = None) -> subprocess.CompletedProcess:
+    is_ssh = cmd[0] in {"ssh", "scp"}
     try:
         proc = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         if check:
-            raise WhisperError(f"command timed out after {timeout}s: {' '.join(cmd)}") from exc
+            error = SSHTransportError if is_ssh else WhisperError
+            raise error(f"command timed out after {timeout}s: {' '.join(cmd)}") from exc
         return subprocess.CompletedProcess(cmd, 124, stdout=exc.stdout or "", stderr=f"timeout after {timeout}s")
     if check and proc.returncode != 0:
-        raise WhisperError(
+        error = WhisperError
+        if is_ssh:
+            stderr = (proc.stderr or "").lower()
+            permanent = ("permission denied", "host key verification failed", "host identification has changed")
+            transport = (
+                "connection closed", "connection reset", "connection timed out", "operation timed out",
+                "lost connection", "broken pipe", "connection refused", "no route to host",
+                "network is unreachable", "timeout, server",
+            )
+            if not any(marker in stderr for marker in permanent) and (
+                (cmd[0] == "ssh" and proc.returncode == 255)
+                or (cmd[0] == "scp" and any(marker in stderr for marker in transport))
+            ):
+                error = SSHTransportError
+        raise error(
             f"command failed ({proc.returncode}): {' '.join(cmd)}\n"
             f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
         )
@@ -399,8 +474,8 @@ def _is_no_such_ask(exc: BaseException) -> bool:
 
 
 # --- instance lifecycle -------------------------------------------------
-def _create_instance(api_key: str, offer: dict, public_key: str) -> int:
-    label = f"{socket.gethostname()}-scribe-whisper-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+def _create_instance(api_key: str, offer: dict, public_key: str, *, label: str | None = None) -> int:
+    label = label or f"{socket.gethostname()}-scribe-whisper-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     onstart = (
         "set -eu; "
         'export PATH="/usr/local/bin:/root/.local/bin:/opt/conda/bin:$PATH"; '
@@ -513,7 +588,7 @@ def _get_instance(api_key: str, instance_id: int) -> dict:
 # --- ssh/scp ------------------------------------------------------------
 def _ssh_base(host: str, port: int, key_path: Path) -> list[str]:
     return [
-        "ssh", "-q", "-i", str(key_path),
+        "ssh", "-i", str(key_path),
         "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=30", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4",
         "-p", str(port), f"root@{host}",
@@ -578,16 +653,9 @@ def _transfer_with_retry(
         host, port = endpoints[attempt % len(endpoints)]
         try:
             operation(host, port, min(max_seconds, remaining))
-        except (WhisperError, TimeoutError) as exc:
+        except SSHTransportError as exc:
             context.raise_if_cancelled()
-            if isinstance(exc, (TranscribeTimeoutError, VastBudgetExceededError)):
-                raise
-            message = str(exc).lower()
-            recoverable = isinstance(exc, TimeoutError) or any(marker in message for marker in (
-                "timed out", "connection", "broken pipe", "network is unreachable",
-                "no route to host", "command failed (255)",
-            ))
-            if not recoverable or attempt == 2:
+            if attempt == 2:
                 raise
             print(
                 f"Warning: Vast {label} transfer attempt {attempt + 1}/3 failed "
@@ -838,6 +906,246 @@ def _transcribe_pinned(
         )
 
 
+# --- market rentals -----------------------------------------------------
+@dataclass(frozen=True)
+class _ReadyInstance:
+    attempt: VastAttempt
+    rental_started: float
+    deadline: float
+    max_cost: float
+    endpoints: list[tuple[str, int]]
+
+
+def _finish_market_rental(
+    context: _TranscribeRunContext, ledger: VastLedger, attempt_store: VastAttemptStore | None,
+    attempt: VastAttempt, rental_started: float, *, outcome: str, exclude_host: bool,
+    require_destroy: bool = False,
+) -> bool:
+    destroyed = False
+    attempt = replace(attempt, outcome=outcome, exclude_host=exclude_host)
+    try:
+        # Recovery must know a replacement is owed even if we exit just
+        # after the destroy callback and before finalizing the event.
+        if outcome == "ssh_transport_error" and attempt_store is not None:
+            attempt_store.record(attempt)
+    finally:
+        try:
+            destroyed = context.destroy_instance() or context.was_destroyed(attempt.instance_id)
+        except Exception as exc:
+            if require_destroy:
+                raise
+            # The sweep retries teardown. A finished transcription is still usable.
+            print(f"Warning: Vast destroy after transcription failed (sweep will retry): {exc}", file=sys.stderr)
+        finally:
+            finished = replace(
+                attempt, finished_at=datetime.now(UTC), destroyed=destroyed,
+                estimated_cost_usd=attempt.hourly_usd * (time.monotonic() - rental_started) / 3600,
+            )
+            if attempt_store is not None:
+                attempt_store.record(finished)
+            ledger.attempts.append(finished)
+    return destroyed
+
+
+def _rent_ready_instance(
+    context: _TranscribeRunContext, api_key: str, key_path: Path, public_key: str,
+    *, max_job_cost: float, market_deadline: float, ledger: VastLedger,
+    attempt_store: VastAttemptStore | None, on_instance_created: Callable[[int], None],
+    before_retry_rent: Callable[[], None] | None,
+) -> _ReadyInstance:
+    ready_timeout = int(settings.vast_instance_ready_timeout)
+    offer_attempts = max(1, int(settings.vast_offer_attempts))
+    offers = _select_offers(
+        api_key,
+        max_price=float(settings.vast_max_price_per_hour),
+        gpu_regex=settings.vast_gpu_regex,
+        min_cuda=float(settings.vast_min_cuda),
+    )
+    last_err: Exception | None = None
+    attempts = 0
+    vanished = 0
+    for offer in offers:
+        if attempts >= offer_attempts:
+            break
+        offer_id = int(offer["id"])
+        if any(attempt.offer_id == offer_id for attempt in ledger.attempts):
+            continue
+        raw_host_id = offer.get("host_id")
+        try:
+            offer_host_id = int(raw_host_id) if raw_host_id is not None else None
+        except (TypeError, ValueError):
+            offer_host_id = None
+        if offer_host_id is not None and offer_host_id in ledger.excluded_hosts:
+            continue
+
+        context.raise_if_cancelled()
+        offer_label = f"offer_id={offer_id} host_id={offer_host_id}"
+        price = float(offer.get("dph_total") or 0)
+        remaining_cost = max_job_cost - ledger.spent_usd
+        rental_started = time.monotonic()
+        deadline = min(market_deadline, _budget_deadline(rental_started, price, remaining_cost, MAX_INSTANCE_SECONDS))
+        if deadline <= rental_started or (before_retry_rent is not None and deadline - rental_started < _MIN_RERUN_SECONDS):
+            last_err = VastBudgetExceededError("remaining time or spend budget is too small for this Vast offer")
+            continue
+        rented_at = datetime.now(UTC)
+        retry_label = None
+        if before_retry_rent is not None:
+            before_retry_rent()
+            retry_label = f"rerun-scribe-whisper-{rented_at:%Y%m%dT%H%M%SZ}-{uuid4().hex}"
+            if attempt_store is not None and not attempt_store.reserve_retry(retry_label, offer_id, offer_host_id, price):
+                raise WhisperError("Vast SSH rerun has already been reserved for this job")
+            # The durable reservation happens before the non-idempotent PUT.
+            # If it consumed the remaining retry window, leave the slot spent.
+            before_retry_rent()
+            if deadline - time.monotonic() < _MIN_RERUN_SECONDS:
+                raise VastBudgetExceededError("remaining time or spend budget is too small for this Vast offer")
+
+        try:
+            if retry_label is not None:
+                instance_id = _create_instance(api_key, offer, public_key, label=retry_label)
+            else:
+                instance_id = _create_instance(api_key, offer, public_key)
+        except Exception as exc:
+            if retry_label is not None:
+                if attempt_store is not None:
+                    try:
+                        attempt_store.reconcile_retry()
+                    except Exception:
+                        print("Warning: could not reconcile Vast rerun; reaper will retry", file=sys.stderr)
+                raise
+            if not isinstance(exc, (WhisperError, TimeoutError)):
+                raise
+            last_err = exc
+            if _is_no_such_ask(exc):
+                # A vanished offer created no rental. Bound churn and pace PUTs.
+                print(f"Notice: Vast offer {offer_id} vanished (no_such_ask); trying next", file=sys.stderr)
+                vanished += 1
+                if vanished >= offer_attempts * 3:
+                    print("Notice: too many vanished Vast offers; stopping this round", file=sys.stderr)
+                    break
+                _sleep(1.0)
+                continue
+            attempts += 1
+            print(f"Warning: Vast offer {offer_id} unusable: {exc}", file=sys.stderr)
+            continue
+
+        attempts += 1
+        attempt = VastAttempt(
+            number=2 if before_retry_rent is not None else 1,
+            instance_id=instance_id, offer_id=offer_id, host_id=offer_host_id,
+            started_at=rented_at, hourly_usd=price,
+        )
+        endpoints: list[tuple[str, int]] = []
+        try:
+            context.set_instance(instance_id)
+            if attempt_store is not None:
+                attempt_store.record(attempt)
+            else:
+                on_instance_created(instance_id)
+            context.raise_if_cancelled()
+            ready_started = time.monotonic()
+            startup_deadline = min(deadline, ready_started + ready_timeout)
+            host, port = _wait_for_ssh(
+                api_key, instance_id, key_path, rental_started, startup_deadline, price, remaining_cost,
+                ready_timeout=ready_timeout, ready_started=ready_started, label=offer_label,
+                endpoints=endpoints,
+            )
+            _wait_remote_ready(
+                api_key, instance_id, host, port, key_path, rental_started, startup_deadline, price, remaining_cost,
+                ready_timeout=ready_timeout, ready_started=ready_started, label=offer_label,
+            )
+            return _ReadyInstance(attempt, rental_started, deadline, remaining_cost, endpoints or [(host, port)])
+        except Exception as exc:
+            last_err = exc
+            print(f"Warning: Vast offer {offer_id} unusable: {exc} ({offer_label})", file=sys.stderr)
+            # An expired job budget says nothing about another offer from this host.
+            _finish_market_rental(
+                context, ledger, attempt_store, attempt, rental_started,
+                outcome="startup_failed", require_destroy=True,
+                exclude_host=isinstance(exc, (WhisperError, TimeoutError))
+                and not isinstance(exc, (VastBudgetExceededError, TranscribeTimeoutError)),
+            )
+            if retry_label is not None or isinstance(exc, TranscribeTimeoutError) or not isinstance(exc, (WhisperError, TimeoutError)):
+                raise
+
+    context.raise_if_cancelled()
+    raise WhisperError(
+        f"no Vast instance became ready; last error: {last_err}; "
+        f"blacklisted host_ids={sorted(ledger.excluded_hosts)}"
+    )
+
+
+def _transcribe_on_instance(
+    context: _TranscribeRunContext, rental: _ReadyInstance, key_path: Path,
+    wav: Path, *, title: str, source_url: str, model_size: str, compute_type: str,
+    language: str, beam_size: int,
+) -> TranscribeResult:
+    endpoints = rental.endpoints
+    host, port = endpoints[0]
+    started, deadline, price = rental.rental_started, rental.deadline, rental.attempt.hourly_usd
+    max_job_cost = rental.max_cost
+    with tempfile.TemporaryDirectory(prefix="scribe-whisper-") as tmp:
+        tmpdir = Path(tmp)
+        remote_script = tmpdir / "remote_transcribe.py"
+        remote_script.write_text(REMOTE_TRANSCRIBE_SCRIPT, encoding="utf-8")
+        local_json = tmpdir / "result.json"
+        local_md = tmpdir / "transcript.md"
+
+        _ensure_budget(started, deadline, price, max_job_cost)
+        context.raise_if_cancelled()
+        _run(
+            [*_ssh_base(host, port, key_path), "mkdir -p /root/work /root/out"],
+            timeout=min(45, max(0.001, deadline - time.monotonic())),
+        )
+        for local_file, remote_file in (
+            (remote_script, "/root/remote_transcribe.py"), (wav, "/root/work/input-16k.wav"),
+        ):
+            host, port = _transfer_with_retry(
+                context,
+                lambda h, p, timeout, src=local_file, dst=remote_file: _scp_to(
+                    h, p, key_path, src, dst, timeout=timeout,
+                ),
+                endpoints, deadline=deadline, max_seconds=600, label=remote_file,
+            )
+
+        context.raise_if_cancelled()
+        cmd = (
+            "cd /root && /opt/video-summary-venv/bin/python remote_transcribe.py "
+            f"--audio-file work/input-16k.wav "
+            f"--title {shlex.quote(title)} "
+            f"--source-url {shlex.quote(source_url)} "
+            f"--model-size {shlex.quote(model_size)} "
+            f"--compute-type {shlex.quote(compute_type)} "
+            f"--language {shlex.quote(language)} "
+            f"--beam-size {int(beam_size)} "
+            "--output-json out/result.json --output-markdown out/transcript.md"
+        )
+        _ensure_budget(started, deadline, price, max_job_cost)
+        remote_timeout = max(0.001, deadline - time.monotonic())
+        _run([*_ssh_base(host, port, key_path), cmd], timeout=remote_timeout)
+        context.raise_if_cancelled()
+        for remote_file, local_file in (
+            ("/root/out/result.json", local_json), ("/root/out/transcript.md", local_md),
+        ):
+            host, port = _transfer_with_retry(
+                context,
+                lambda h, p, timeout, src=remote_file, dst=local_file: _scp_from(
+                    h, p, key_path, src, dst, timeout=timeout,
+                ),
+                endpoints, deadline=deadline, max_seconds=120, label=remote_file,
+            )
+
+        result = json.loads(local_json.read_text(encoding="utf-8"))
+        return TranscribeResult(
+            transcript_md=local_md.read_text(encoding="utf-8"),
+            detected_language=str(result.get("detected_language") or "unknown"),
+            duration_seconds=result.get("duration_seconds"),
+            backend=str(result.get("backend") or ""),
+            vast_instance_id=rental.attempt.instance_id,
+            vast_cost=0.0,
+        )
+
+
 # --- public API ---------------------------------------------------------
 def _transcribe_impl(
     context: _TranscribeRunContext,
@@ -846,6 +1154,8 @@ def _transcribe_impl(
     language: str = "auto", beam_size: int = 5,
     on_instance_created: Callable[[int], None] = _noop_instance_created,
     check_monthly_cap: Callable[[], None] | None = None,
+    attempt_store: VastAttemptStore | None = None,
+    can_retry: Callable[[], bool] | None = None,
 ) -> TranscribeResult:
     """Transcribe a 16 kHz mono wav on a fresh Vast.ai GPU instance."""
     api_key = settings.vast_api_key.strip()
@@ -876,206 +1186,74 @@ def _transcribe_impl(
                 f"Notice: pinned GPU unavailable ({exc}); falling back to market Vast",
                 file=sys.stderr,
             )
-    max_price = float(settings.vast_max_price_per_hour)
-    min_cuda = float(settings.vast_min_cuda)
-    max_job_cost = float(settings.vast_max_job_cost)
-    ready_timeout = int(settings.vast_instance_ready_timeout)
-    offer_attempts = max(1, int(settings.vast_offer_attempts))
+    ledger = attempt_store.load() if attempt_store is not None else VastLedger()
+    if ledger.retry_reserved:
+        raise WhisperError("Vast SSH rerun has already been reserved for this job")
+    if any(not attempt.destroyed for attempt in ledger.attempts):
+        raise WhisperError("Vast cleanup is still pending for this job")
     key_path, public_key = _ensure_local_ssh_key()
     _ensure_vast_ssh_key(api_key, public_key)
-    offers = _select_offers(
-        api_key,
-        max_price=max_price,
-        gpu_regex=settings.vast_gpu_regex,
-        min_cuda=min_cuda,
-    )
-    context.raise_if_cancelled()
+    market_seconds = min(settings.transcribe_timeout_secs, MAX_INSTANCE_SECONDS)
+    if ledger.attempts:
+        original_start = min(attempt.started_at for attempt in ledger.attempts)
+        market_seconds -= max(0.0, (datetime.now(UTC) - original_start).total_seconds())
+    market_deadline = min(context.deadline, time.monotonic() + market_seconds)
+    max_job_cost = float(settings.vast_max_job_cost)
+    first_failure: SSHTransportError | None = None
+    if any(attempt.outcome == "ssh_transport_error" for attempt in ledger.attempts):
+        # The first drop was committed before shutdown, but there is no
+        # reservation yet. The next rental is still the single replacement.
+        first_failure = SSHTransportError("Vast SSH transport failed in the previous worker run")
 
-    started = time.monotonic()
-    instance_id: int | None = None
-    host = port = None
-    endpoints: list[tuple[str, int]] = []
-    price = 0.0
-    deadline = started + MAX_INSTANCE_SECONDS
-    last_err: Exception | None = None
-    attempts = 0
-    vanished = 0
-    # Per-job host blacklist: hosts whose offers failed to start in this run
-    # are skipped on subsequent attempts so we don't pick a sibling offer
-    # from the same broken physical box (e.g. NVIDIA driver mismatch).
-    excluded_hosts: set[int] = set()
-    for offer in offers:
-        if attempts >= offer_attempts:
-            break
-        host_id_raw = offer.get("host_id")
-        try:
-            offer_host_id: int | None = int(host_id_raw) if host_id_raw is not None else None
-        except (TypeError, ValueError):
-            offer_host_id = None
-        if offer_host_id is not None and offer_host_id in excluded_hosts:
-            print(
-                f"Notice: Vast offer {offer.get('id')} skipped (host_id {offer_host_id} blacklisted in this job)",
-                file=sys.stderr,
-            )
-            continue
-        offer_label = f"offer_id={offer.get('id')} host_id={offer_host_id}"
-        price = float(offer.get("dph_total") or 0)
-        deadline = min(context.deadline, _budget_deadline(started, price, max_job_cost, MAX_INSTANCE_SECONDS))
-        try:
-            context.raise_if_cancelled()
-            instance_id = _create_instance(api_key, offer, public_key)
-        except (WhisperError, TimeoutError) as exc:
-            last_err = exc
-            if _is_no_such_ask(exc):
-                # Offer→ask race: another tenant rented this offer between
-                # _select_offers and PUT /asks/{id}/. Don't burn an attempt
-                # slot or the ready-timeout budget — try the next candidate.
-                print(
-                    f"Notice: Vast offer {offer.get('id')} vanished (no_such_ask); trying next",
-                    file=sys.stderr,
-                )
-                instance_id = None
-                vanished += 1
-                if vanished >= offer_attempts * 3:
-                    print(
-                        "Notice: too many vanished Vast offers; stopping this round",
-                        file=sys.stderr,
-                    )
-                    break
-                # Pace the create endpoint: back-to-back PUT /asks/ across a
-                # contended market is a self-inflicted rate-limit burst.
-                _sleep(1.0)
-                continue
-            attempts += 1
-            print(f"Warning: Vast offer {offer.get('id')} unusable: {exc}", file=sys.stderr)
-            instance_id = None
-            continue
-        attempts += 1
-        try:
-            on_instance_created(instance_id)
-            context.set_instance(instance_id)
-            context.raise_if_cancelled()
-            # ready_timeout bounds a *single* offer's startup window, so
-            # measure it from this attempt, not the cumulative job start.
-            attempt_started = time.monotonic()
-            startup_deadline = min(deadline, attempt_started + ready_timeout)
-            host, port = _wait_for_ssh(
-                api_key, instance_id, key_path, started, startup_deadline, price, max_job_cost,
-                ready_timeout=ready_timeout, ready_started=attempt_started, label=offer_label,
-                endpoints=endpoints,
-            )
-            _wait_remote_ready(
-                api_key, instance_id, host, port, key_path, started, startup_deadline, price, max_job_cost,
-                ready_timeout=ready_timeout, ready_started=attempt_started, label=offer_label,
-            )
-            break
-        except (WhisperError, TimeoutError, TranscribeTimeoutError) as exc:
-            last_err = exc
-            print(f"Warning: Vast offer {offer.get('id')} unusable: {exc} ({offer_label})", file=sys.stderr)
-            # Blacklist the host only for host-side failures: a container
-            # that failed to start, a ready_timeout, or a create-time API
-            # error. A cost-cap (VastBudgetExceededError) is a job-budget
-            # condition, not a bad host — don't skip a healthy host's
-            # sibling offers. Vanished offers (no_such_ask) already
-            # `continue`d above. TranscribeTimeoutError is the wall-clock
-            # guard and aborts the whole job.
-            if offer_host_id is not None and not isinstance(
-                exc, (TranscribeTimeoutError, VastBudgetExceededError)
-            ):
-                excluded_hosts.add(offer_host_id)
-            if instance_id is not None:
-                # Deliberately NOT wrapped: the job has a single bookkeeping
-                # slot (vast_instance_id/destroy_failed_at), so if this
-                # destroy fails and we moved on to another offer, the next
-                # on_instance_created would overwrite this instance's record
-                # and orphan it silently. Failing the job keeps the sweep +
-                # reaper pointed at the right instance; with retries in the
-                # client a failure here already signals a persistent outage.
-                context.destroy_instance()
-                instance_id = None
-            host = port = None
-            if isinstance(exc, TranscribeTimeoutError):
-                raise
-    if instance_id is None or host is None:
-        raise WhisperError(
-            f"no Vast instance became ready; last error: {last_err}; "
-            f"blacklisted host_ids={sorted(excluded_hosts) if excluded_hosts else '[]'}"
+    def before_retry_rent() -> None:
+        context.raise_if_cancelled()
+        if first_failure is not None and (
+            market_deadline - time.monotonic() < _MIN_RERUN_SECONDS
+            or (can_retry is not None and not can_retry())
+        ):
+            raise first_failure
+
+    attempt_numbers = (2,) if first_failure is not None else (1, 2)
+    for number in attempt_numbers:
+        if number == 2:
+            before_retry_rent()
+            if check_monthly_cap is not None:
+                check_monthly_cap()
+        rental = _rent_ready_instance(
+            context, api_key, key_path, public_key,
+            max_job_cost=max_job_cost, market_deadline=market_deadline, ledger=ledger,
+            attempt_store=attempt_store, on_instance_created=on_instance_created,
+            before_retry_rent=before_retry_rent if number == 2 else None,
         )
 
-    try:
-        with tempfile.TemporaryDirectory(prefix="scribe-whisper-") as tmp:
-            tmpdir = Path(tmp)
-            remote_script = tmpdir / "remote_transcribe.py"
-            remote_script.write_text(REMOTE_TRANSCRIBE_SCRIPT, encoding="utf-8")
-            local_json = tmpdir / "result.json"
-            local_md = tmpdir / "transcript.md"
-
-            if not endpoints:
-                endpoints = [(host, port)]
-            _ensure_budget(started, deadline, price, max_job_cost)
-            context.raise_if_cancelled()
-            _run(
-                [*_ssh_base(host, port, key_path), "mkdir -p /root/work /root/out"],
-                timeout=min(45, max(0.001, deadline - time.monotonic())),
-            )
-            for local_file, remote_file in (
-                (remote_script, "/root/remote_transcribe.py"), (wav, "/root/work/input-16k.wav"),
-            ):
-                host, port = _transfer_with_retry(
-                    context,
-                    lambda h, p, timeout, src=local_file, dst=remote_file: _scp_to(
-                        h, p, key_path, src, dst, timeout=timeout,
-                    ),
-                    endpoints, deadline=deadline, max_seconds=600, label=remote_file,
-                )
-
-            context.raise_if_cancelled()
-            cmd = (
-                "cd /root && /opt/video-summary-venv/bin/python remote_transcribe.py "
-                f"--audio-file work/input-16k.wav "
-                f"--title {shlex.quote(title)} "
-                f"--source-url {shlex.quote(source_url)} "
-                f"--model-size {shlex.quote(model_size)} "
-                f"--compute-type {shlex.quote(compute_type)} "
-                f"--language {shlex.quote(language)} "
-                f"--beam-size {int(beam_size)} "
-                "--output-json out/result.json --output-markdown out/transcript.md"
-            )
-            _ensure_budget(started, deadline, price, max_job_cost)
-            remote_timeout = max(0.001, deadline - time.monotonic())
-            _run([*_ssh_base(host, port, key_path), cmd], timeout=remote_timeout)
-            context.raise_if_cancelled()
-            for remote_file, local_file in (
-                ("/root/out/result.json", local_json), ("/root/out/transcript.md", local_md),
-            ):
-                host, port = _transfer_with_retry(
-                    context,
-                    lambda h, p, timeout, src=remote_file, dst=local_file: _scp_from(
-                        h, p, key_path, src, dst, timeout=timeout,
-                    ),
-                    endpoints, deadline=deadline, max_seconds=120, label=remote_file,
-                )
-
-            result = json.loads(local_json.read_text(encoding="utf-8"))
-            elapsed = time.monotonic() - started
-            return TranscribeResult(
-                transcript_md=local_md.read_text(encoding="utf-8"),
-                detected_language=str(result.get("detected_language") or "unknown"),
-                duration_seconds=result.get("duration_seconds"),
-                backend=str(result.get("backend") or ""),
-                vast_instance_id=instance_id,
-                vast_cost=price * elapsed / 3600 if price else 0.0,
-            )
-    finally:
+        outcome = "failed"
         try:
-            context.destroy_instance()
-        except Exception as destroy_exc:
-            # A rate-limited teardown must not discard a finished (paid)
-            # transcription; the destroy sweep + reaper own the retry.
-            print(
-                f"Warning: Vast destroy after transcription failed (sweep will retry): {destroy_exc}",
-                file=sys.stderr,
+            result = _transcribe_on_instance(
+                context, rental, key_path, wav, title=title, source_url=source_url,
+                model_size=model_size, compute_type=compute_type, language=language,
+                beam_size=beam_size,
             )
+            outcome = "success"
+        except SSHTransportError as exc:
+            outcome = "ssh_transport_error"
+            if number == 2:
+                raise
+            first_failure = exc
+        finally:
+            destroyed = _finish_market_rental(
+                context, ledger, attempt_store, rental.attempt, rental.rental_started,
+                outcome=outcome, exclude_host=outcome == "ssh_transport_error",
+            )
+        if outcome == "success":
+            result.vast_cost = ledger.spent_usd
+            return result
+
+        # The job's sole instance ID still belongs to any unconfirmed rental.
+        if not destroyed or ledger.spent_usd >= max_job_cost:
+            assert first_failure is not None
+            raise first_failure
+
+    raise AssertionError("Vast transcription attempts exhausted without an outcome")
 
 
 def transcribe(
@@ -1086,6 +1264,8 @@ def transcribe(
     on_destroy_failed: Callable[[int], None] | None = None,
     on_destroy_succeeded: Callable[[int], None] | None = None,
     check_monthly_cap: Callable[[], None] | None = None,
+    attempt_store: VastAttemptStore | None = None,
+    can_retry: Callable[[], bool] | None = None,
 ) -> TranscribeResult:
     """Transcribe a 16 kHz mono wav on a fresh Vast.ai GPU instance."""
     timeout_secs = settings.transcribe_timeout_secs
@@ -1112,6 +1292,8 @@ def transcribe(
                 beam_size=beam_size,
                 on_instance_created=notify_instance_created,
                 check_monthly_cap=check_monthly_cap,
+                attempt_store=attempt_store,
+                can_retry=can_retry,
             )
         except BaseException as exc:
             result = exc

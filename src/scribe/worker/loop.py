@@ -52,7 +52,7 @@ from scribe.pipeline import (
 )
 from scribe.pipeline.frontmatter_inject import inject_author_frontmatter
 from scribe.pipeline.titles import normalize_title
-from scribe.worker import vast_budget
+from scribe.worker import vast_attempts, vast_budget
 
 log = logging.getLogger("scribe.worker")
 
@@ -206,7 +206,7 @@ def _set_job_status(session, job: Job, status: JobStatus) -> None:
         # is exactly what the floor exists to prevent.
         age = datetime.now(UTC) - job.destroy_failed_at
         if age >= timedelta(seconds=_VAST_DESTROY_RETRY_FLOOR_SECONDS):
-            _retry_job_vast_destroy(job)
+            _retry_job_vast_destroy(session, job)
         if job.destroy_failed_at is not None:
             log.warning(
                 "job marked done with unconfirmed Vast destroy; sweep/reaper continue cleanup",
@@ -237,11 +237,12 @@ def _record_vast_destroy_failed(job_id: int, instance_id: int, session_factory=S
 
 def _record_vast_destroy_succeeded(job_id: int, instance_id: int, session_factory=SessionLocal) -> None:
     with session_factory() as session:
-        job = session.get(Job, job_id)
+        job = session.get(Job, job_id, with_for_update=True)
         if job is None:
             return
         job.vast_instance_id = instance_id
         job.destroy_failed_at = None
+        vast_attempts.confirm_destroy(session, job_id, instance_id)
         session.commit()
 
 
@@ -253,7 +254,7 @@ def _enforce_monthly_cap(session_factory=SessionLocal) -> None:
         vast_budget.enforce_monthly_cap(session)
 
 
-def _retry_job_vast_destroy(job: Job) -> bool:
+def _retry_job_vast_destroy(session, job: Job) -> bool:
     if job.vast_instance_id is None:
         return True
     api_key = settings.vast_api_key.strip()
@@ -275,6 +276,7 @@ def _retry_job_vast_destroy(job: Job) -> bool:
         )
         return False
     job.destroy_failed_at = None
+    vast_attempts.confirm_destroy(session, job.id, job.vast_instance_id)
     return True
 
 
@@ -292,10 +294,32 @@ def retry_failed_vast_destroys(session) -> int:
     ).all()
     recovered = 0
     for job in jobs:
-        if _retry_job_vast_destroy(job):
+        if _retry_job_vast_destroy(session, job):
             recovered += 1
     session.commit()
     return recovered
+
+
+def reconcile_vast_reruns(session, instances=None, *, recovering: bool = False, job_id: int | None = None) -> set[int]:
+    pending = vast_attempts.pending_reruns(session, recovering=recovering, job_id=job_id)
+    if not pending:
+        return set()
+    if instances is None:
+        api_key = settings.vast_api_key.strip()
+        if not api_key:
+            return set()
+        try:
+            instances = vast_budget.fetch_instances(api_key, timeout=5)
+        except Exception:
+            log.exception("Vast rerun inventory unavailable; reaper will retry")
+            return set()
+    adopted = vast_attempts.adopt_untracked_reruns(session, pending, instances)
+    ids = {job.vast_instance_id for job in adopted}
+    if not recovering:
+        for job in adopted:
+            _retry_job_vast_destroy(session, job)
+        session.commit()
+    return ids
 
 
 def retry_pending_archives(session, *, limit: int = 3) -> int:
@@ -382,6 +406,7 @@ def recover_interrupted_jobs(session) -> int:
     that row. Requeueing on startup lets the normal pipeline resume; partial
     transcripts skip download+whisper and only re-run summary.
     """
+    reconcile_vast_reruns(session, recovering=True)
     jobs = session.scalars(
         select(Job)
         .where(Job.status.in_(_INTERRUPTED_ON_STARTUP))
@@ -390,7 +415,7 @@ def recover_interrupted_jobs(session) -> int:
     ).all()
     for job in jobs:
         old_status = job.status
-        if job.vast_instance_id is not None and not _retry_job_vast_destroy(job):
+        if job.vast_instance_id is not None and not _retry_job_vast_destroy(session, job):
             log.warning(
                 "interrupted job Vast destroy still unconfirmed",
                 extra={
@@ -889,6 +914,7 @@ def process_job(session, job: Job) -> None:
                             job_id, instance_id, vast_session_factory
                         ),
                         check_monthly_cap=lambda: _enforce_monthly_cap(vast_session_factory),
+                        attempt_store=vast_attempts.JobVastAttempts(job_id, vast_session_factory),
                     )
                     tr = transcribe_providers.transcribe_with_chain(
                         chain,

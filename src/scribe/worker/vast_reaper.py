@@ -8,8 +8,10 @@ import re
 from typing import Any
 
 from scribe.config import settings
+from scribe.db.session import SessionLocal
 from scribe.obs import metrics
 from scribe.pipeline.whisper_client import vast_api_request
+from scribe.worker.loop import reconcile_vast_reruns
 from scribe.worker.vast_budget import instance_burn
 
 log = logging.getLogger("scribe.worker.vast_reaper")
@@ -182,6 +184,7 @@ def reap_vast_orphans(
     api_key: str | None = None,
     max_age_minutes: int | None = None,
     now: dt.datetime | None = None,
+    reconcile_retries: bool = False,
 ) -> int:
     """Destroy stale/cost-runaway/stuck scribe-labelled Vast instances and
     return attempts made."""
@@ -197,6 +200,15 @@ def reap_vast_orphans(
     cost_multiplier = float(settings.vast_orphan_reaper_cost_multiplier)
     current = (now or dt.datetime.now(dt.UTC)).astimezone(dt.UTC)
     instances = _vast(api_key, "GET", "/instances/", timeout=45).get("instances", [])
+    if isinstance(instances, dict):
+        instances = [instances]
+    tracked = set()
+    if reconcile_retries:
+        try:
+            with SessionLocal() as session:
+                tracked = reconcile_vast_reruns(session, [item for item in instances if isinstance(item, dict)])
+        except Exception:
+            log.exception("Vast rerun reconciliation failed")
 
     reaped = 0
     for instance in instances:
@@ -213,7 +225,7 @@ def reap_vast_orphans(
         if reason is None:
             continue
         instance_id = _instance_id(instance)
-        if instance_id is None:
+        if instance_id is None or instance_id in tracked:
             continue
         label = _instance_label(instance)
         started_at = _instance_started_at(instance)
@@ -256,7 +268,7 @@ async def run_vast_reaper_loop() -> None:
     interval = max(1, settings.vast_orphan_reaper_interval_seconds)
     while True:
         try:
-            await asyncio.to_thread(reap_vast_orphans)
+            await asyncio.to_thread(reap_vast_orphans, reconcile_retries=True)
         except asyncio.CancelledError:
             raise
         except Exception:

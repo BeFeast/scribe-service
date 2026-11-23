@@ -346,12 +346,14 @@ class VastProvider:
         on_destroy_failed=None,
         on_destroy_succeeded=None,
         check_monthly_cap=None,
+        attempt_store: whisper_client.VastAttemptStore | None = None,
     ) -> None:
         self._settings = settings_obj or default_settings
         self._on_instance_created = on_instance_created
         self._on_destroy_failed = on_destroy_failed
         self._on_destroy_succeeded = on_destroy_succeeded
         self._check_monthly_cap = check_monthly_cap
+        self._attempt_store = attempt_store
 
     def transcribe(self, request: TranscribeRequest) -> TranscribeResult:
         try:
@@ -367,6 +369,11 @@ class VastProvider:
                 on_destroy_failed=self._on_destroy_failed,
                 on_destroy_succeeded=self._on_destroy_succeeded,
                 check_monthly_cap=self._check_monthly_cap,
+                attempt_store=self._attempt_store,
+                # The chain has already acquired this provider for the job.
+                # A half-open probe gets one rental and another job can trip
+                # the breaker while the first rental is running.
+                can_retry=lambda: get_breaker(self.name).state == "closed",
             )
         except TranscribeTimeoutError:
             # Whole-job wall-clock budget elapsed — do not chain to a slower
@@ -603,6 +610,7 @@ def build_provider_chain(
     on_destroy_failed=None,
     on_destroy_succeeded=None,
     check_monthly_cap=None,
+    attempt_store: whisper_client.VastAttemptStore | None = None,
 ) -> list[TranscribeProvider]:
     """Instantiate the configured provider chain.
 
@@ -631,6 +639,7 @@ def build_provider_chain(
                     on_destroy_failed=on_destroy_failed,
                     on_destroy_succeeded=on_destroy_succeeded,
                     check_monthly_cap=check_monthly_cap,
+                    attempt_store=attempt_store,
                 )
             )
         else:

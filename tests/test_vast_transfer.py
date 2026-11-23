@@ -28,7 +28,7 @@ def test_timeout_recovers_on_same_instance(monkeypatch, transfer_clock, alternat
         calls.append((host, port, timeout))
         if len(calls) == 1:
             transfer_clock[0] += timeout
-            raise wc.WhisperError("command timed out")
+            raise wc.SSHTransportError("command timed out")
 
     selected = wc._transfer_with_retry(
         wc._TranscribeRunContext(), transfer, endpoints,
@@ -47,7 +47,7 @@ def test_retries_share_deadline(transfer_clock):
     def transfer(_host, _port, timeout):
         calls.append(timeout)
         transfer_clock[0] += timeout
-        raise wc.WhisperError("command timed out")
+        raise wc.SSHTransportError("command timed out")
 
     with pytest.raises(wc.VastBudgetExceededError):
         wc._transfer_with_retry(
@@ -73,7 +73,7 @@ def test_cancelled_transfer_does_not_retry(transfer_clock):
     def transfer(*_args):
         calls.append(1)
         context.cancel()
-        raise wc.WhisperError("connection reset")
+        raise wc.SSHTransportError("connection reset")
 
     with pytest.raises(wc.TranscribeTimeoutError):
         wc._transfer_with_retry(
@@ -134,7 +134,7 @@ def test_transcribe_recovers_upload_and_paid_result(monkeypatch, tmp_path, faile
             assert "BatchMode=yes" in cmd
             assert "ConnectTimeout=30" in cmd
             if file_name == failed_file and counts[file_name] == 1:
-                raise wc.WhisperError("command timed out")
+                raise wc.SSHTransportError("command timed out")
             if source.startswith("root@"):
                 from pathlib import Path
                 Path(target).write_text(
@@ -175,7 +175,7 @@ def test_persistent_failure_stops_after_three_attempts(transfer_clock):
 
     def transfer(*_args):
         calls.append(1)
-        raise wc.WhisperError("connection reset")
+        raise wc.SSHTransportError("connection reset")
 
     with pytest.raises(wc.WhisperError, match="connection reset"):
         wc._transfer_with_retry(
