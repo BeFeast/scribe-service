@@ -4,6 +4,14 @@ All notable changes to this project are documented here. Each `vX.Y.Z`
 section is generated per release from the merged pull-request titles in the
 tag range. See the README for how a release is cut.
 
+## [v0.25.2] - 2026-11-24
+
+_Bump: patch_
+
+- fix(summary): replace retired freellmapi link in the default chain with cliproxy
+- ci: pin uv 0.13.9 so setup-uv skips the GitHub API
+- docs: rewrite AGENTS.md per the shared agent template
+
 ## [v0.25.1] - 2026-11-12
 
 _Bump: patch_
