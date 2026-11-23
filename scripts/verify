@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+exec bun run --no-env-file --cwd "$(dirname "$0")" verify:scribe "$@"

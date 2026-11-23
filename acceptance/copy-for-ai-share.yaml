@@ -1,0 +1,21 @@
+name: copy-for-ai-share
+status: automated
+requires: youtube-link-summary
+steps:
+  - state: The fixture transcript detail is open.
+    action: Open Share and click Copy for AI.
+    visible_result: Scribe shows the new link and copies it to the clipboard.
+    assertions:
+      - The created link is an ai_transcript for the fixture transcript.
+      - The visible and copied URLs match the created URL.
+  - state: A new browser context has no session or operator credentials.
+    action: Open the copied link and request the .md variant.
+    visible_result: The anonymous page shows the speech and the Markdown variant contains the transcript.
+    assertions:
+      - Both requests return 200 and carry no Cookie or Authorization header.
+      - The plain page and .md variant contain the downloaded transcript speech.
+  - state: The share is still active and its Revoke button is visible.
+    action: Revoke the link from the Share panel and request it again anonymously.
+    visible_result: The active link disappears from the list and the share is gone.
+    assertions:
+      - Both the plain URL and the .md variant return 410.

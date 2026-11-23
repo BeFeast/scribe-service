@@ -121,6 +121,9 @@ class ExtensionToken(Base):
     user: Mapped[User] = relationship(back_populates="extension_tokens")
 
 
+ACCEPTANCE_JOB_SOURCE = "acceptance"
+
+
 class Job(Base):
     """One video-summary request. Dedup is by video_id against completed transcripts."""
 
@@ -161,6 +164,7 @@ class Job(Base):
     # generated) so every pipeline stage log line + webhook delivery can be
     # traced back to the originating request (#357).
     correlation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    acceptance_run_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner_subject: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     owner_email: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner_display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -198,6 +202,9 @@ class Transcript(Base):
     job_id: Mapped[int] = mapped_column(
         ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, unique=True
     )
+    # Set only when the worker produces a fresh transcript for an acceptance
+    # run. Unlike job_id, this is never reassigned when a later job resumes work.
+    acceptance_run_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     video_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     original_title: Mapped[str | None] = mapped_column(Text, nullable=True)

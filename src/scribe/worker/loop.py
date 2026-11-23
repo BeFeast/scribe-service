@@ -465,7 +465,11 @@ def _find_partial_transcript(
 ) -> Transcript | None:
     """Return the most recent partial transcript (whisper done, summary missing)
     for this video_id, or None."""
-    stmt = select(Transcript).where(Transcript.video_id == video_id, Transcript.summary_md.is_(None))
+    stmt = select(Transcript).where(
+        Transcript.video_id == video_id,
+        Transcript.summary_md.is_(None),
+        Transcript.acceptance_run_id.is_(None),
+    )
     if owner_id is not None:
         stmt = stmt.where(Transcript.owner_id == owner_id)
     if owner_subject:
@@ -480,7 +484,11 @@ def _find_done_transcript(
     owner_id: int | None = None,
 ) -> Transcript | None:
     """Return the most recent completed transcript for this resolved video key."""
-    stmt = select(Transcript).where(Transcript.video_id == video_id, Transcript.summary_md.is_not(None))
+    stmt = select(Transcript).where(
+        Transcript.video_id == video_id,
+        Transcript.summary_md.is_not(None),
+        Transcript.acceptance_run_id.is_(None),
+    )
     if owner_id is not None:
         stmt = stmt.where(Transcript.owner_id == owner_id)
     if owner_subject:
@@ -738,12 +746,22 @@ def process_job(session, job: Job) -> None:
     # download) and presents a DownloadResult so the rest of the pipeline is
     # unchanged. Mutually exclusive with is_upload (distinct video_id prefixes).
     is_telegram = _is_telegram_job(job)
+    acceptance_run_id = getattr(job, "acceptance_run_id", None)
+    is_acceptance = acceptance_run_id is not None
     upload_source = uploads.find_source(job_id) if is_upload else None
     try:
         try:
             # Resume path: a prior job already produced the transcript but its
             # summary step failed. Skip download+ffmpeg+whisper and just re-summarize.
-            partial = _find_partial_transcript(session, job.video_id, job.owner_subject, job.owner_id)
+            if is_acceptance:
+                # After a worker restart, only this job's own transcript can be resumed.
+                partial = session.scalar(select(Transcript).where(
+                    Transcript.job_id == job.id,
+                    Transcript.acceptance_run_id == acceptance_run_id,
+                    Transcript.summary_md.is_(None),
+                ))
+            else:
+                partial = _find_partial_transcript(session, job.video_id, job.owner_subject, job.owner_id)
             if partial is not None:
                 job_log.info("resuming partial transcript", extra={"transcript_id": partial.id, "stage": "resume"})
                 partial.job_id = job.id
@@ -812,7 +830,7 @@ def process_job(session, job: Job) -> None:
                 session.commit()
                 job_log.info("download done", extra={"title": dl.title, "stage": "download"})
 
-                if was_pending_key:
+                if was_pending_key and not is_acceptance:
                     done = _find_done_transcript(session, dl.video_id, job.owner_subject, job.owner_id)
                     if done is not None:
                         job_log.info(
@@ -823,7 +841,9 @@ def process_job(session, job: Job) -> None:
                         _deliver_webhook(session, job)
                         return
 
-                partial = _find_partial_transcript(session, dl.video_id, job.owner_subject, job.owner_id)
+                partial = None if is_acceptance else _find_partial_transcript(
+                    session, dl.video_id, job.owner_subject, job.owner_id,
+                )
                 if partial is not None:
                     job_log.info("resuming partial transcript", extra={"transcript_id": partial.id, "stage": "resume"})
                     partial.job_id = job.id
@@ -905,6 +925,7 @@ def process_job(session, job: Job) -> None:
                 )
                 transcript = Transcript(
                     job_id=job.id,
+                    acceptance_run_id=acceptance_run_id,
                     video_id=dl.video_id,
                     title=dl.title,
                     transcript_md=tr.transcript_md,

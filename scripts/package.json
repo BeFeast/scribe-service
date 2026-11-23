@@ -1,0 +1,11 @@
+{
+  "name": "scribe-acceptance",
+  "private": true,
+  "scripts": {
+    "verify:scribe": "node verify.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.65.1",
+    "yaml": "2.9.1"
+  }
+}

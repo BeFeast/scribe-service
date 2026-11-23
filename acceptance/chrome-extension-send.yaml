@@ -1,0 +1,16 @@
+name: chrome-extension-send
+status: manual
+reason: The configured CDP Chrome is a shared resident profile. Loading the unpacked extension requires staging files on the Chrome host and installing into that profile. Use a dedicated profile with the extension and Scribe authentication configured.
+fixture: youtube-link-summary
+steps:
+  - state: The extension is loaded, pointed at production, and authorized to submit. The fixture video has no existing transcript or active job.
+    action: Open the fixture YouTube watch page and submit the active tab from the Scribe extension.
+    visible_result: The extension shows the queued job. Scribe shows the same job in the queue and the transcript in the Library after completion.
+    assertions:
+      - The job is new, uses the fixture video ID, and shows the extension as its source.
+      - The job reaches done and its Library detail renders a summary and offers the transcript download.
+  - state: The extension-created job is terminal.
+    action: Delete the new job from Scribe's operator UI.
+    visible_result: The job and its derived transcript disappear.
+    assertions:
+      - The new job and transcript can no longer be opened.

@@ -1,0 +1,25 @@
+name: youtube-link-summary
+status: automated
+fixture:
+  url: https://youtu.be/jNQXAC9IVRw
+  title: Me at the zoo
+  duration_seconds: 19
+  min_transcript_words: 10
+steps:
+  - state: The operator has opened the Library and the fixture has no transcript or active job.
+    action: Open Submit URL, paste the YouTube link and submit it.
+    visible_result: Scribe shows the new job number and a Watch pipeline button.
+    assertions:
+      - The POST creates a fresh job for the fixture video ID.
+      - The confirmation shows the ID from the POST response.
+  - state: The new job is in the queue.
+    action: Watch the pipeline, then open the result from the Library.
+    visible_result: The pipeline reaches done and the new transcript appears in the Library.
+    assertions:
+      - The job finishes with a transcript ID and the pipeline status chip says done.
+      - The Library entry opens that transcript ID and the detail renders a nonempty summary.
+  - state: The transcript detail is open.
+    action: Use Download .md in the Transcript section.
+    visible_result: The browser downloads the transcript Markdown.
+    assertions:
+      - The download includes spoken text and matches the saved transcript excerpt.

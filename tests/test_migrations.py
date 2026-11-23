@@ -149,9 +149,10 @@ def test_alembic_full_chain_on_fresh_db(fresh_db_url):
 
         jobs_cols = _column_names(eng, "jobs")
         for table in ("jobs", "transcripts"):
-            original_title = next(c for c in inspect(eng).get_columns(table) if c["name"] == "original_title")
-            assert original_title["nullable"]
-            assert str(original_title["type"]) == "TEXT"
+            columns = {c["name"]: c for c in inspect(eng).get_columns(table)}
+            for name in ("original_title", "acceptance_run_id"):
+                assert columns[name]["nullable"]
+                assert str(columns[name]["type"]) == "TEXT"
         assert "callback_url" in jobs_cols, (
             "jobs.callback_url missing after upgrade head — "
             "revision d1e3f4a5b603 (PR #6) likely silent-noop'd"

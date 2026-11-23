@@ -93,6 +93,7 @@ from scribe.config import (
     settings,
 )
 from scribe.db.models import (
+    ACCEPTANCE_JOB_SOURCE,
     AppConfig,
     ExtensionToken,
     Job,
@@ -112,7 +113,7 @@ from scribe.obs import ops as ops_helpers
 from scribe.obs.correlation import request_correlation_id
 from scribe.obs.live_logs import job_log_buffer
 from scribe.pipeline import ffmpeg, media_store, prompts, summarizer, uploads
-from scribe.pipeline.downloader import initial_video_key
+from scribe.pipeline.downloader import initial_video_key, parse_youtube_video_id
 from scribe.pipeline.frontmatter_inject import inject_author_frontmatter
 from scribe.source_links import source_link_for_url
 
@@ -501,7 +502,12 @@ def _latest_done_transcript(session: Session, video_id: str, owner: OwnerIdentit
 def render_job_view(session: Session, job: Job) -> JobView:
     """Build the same JSON GET /jobs/<id> returns. Shared with the worker
     so webhook payloads stay in lockstep with what consumers see."""
-    transcript = _latest_transcript_for_video(session, job.video_id, job.owner_subject)
+    if job.acceptance_run_id is not None:
+        transcript = session.scalar(select(Transcript).where(
+            Transcript.job_id == job.id, Transcript.acceptance_run_id == job.acceptance_run_id,
+        ))
+    else:
+        transcript = _latest_transcript_for_video(session, job.video_id, job.owner_subject)
     events = _job_stage_events(session, [job.id]).get(job.id, {})
     now = dt.datetime.now(dt.UTC)
     return JobView(
@@ -520,7 +526,7 @@ def render_job_view(session: Session, job: Job) -> JobView:
 
 
 def _latest_transcript_for_video(session: Session, video_id: str, owner_subject: str | None = None) -> Transcript | None:
-    stmt = select(Transcript).where(Transcript.video_id == video_id)
+    stmt = select(Transcript).where(Transcript.video_id == video_id, Transcript.acceptance_run_id.is_(None))
     if owner_subject:
         stmt = stmt.where(Transcript.owner_subject == owner_subject)
     return session.scalar(
@@ -902,6 +908,34 @@ def create_job(
     failed). Partial-dedup links the existing transcript and enqueues a
     summary-only retry — the worker resume path reuses the existing whisper
     output, so no new Vast spend and no duplicate Transcript row."""
+    return _create_url_job(body, request, session, actor)
+
+
+def _acceptance_run_id(request: Request) -> str:
+    trace = request_correlation_id(request)
+    if not re.fullmatch(r"scribe-verify-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", trace):
+        raise HTTPException(status_code=422, detail="an acceptance run X-Request-ID is required")
+    return trace
+
+
+@router.post("/admin/acceptance/jobs", response_model=JobView, status_code=201)
+def create_acceptance_job(
+    body: JobCreate,
+    request: Request,
+    session: Session = Depends(get_session),
+    actor: Actor = Depends(require_admin_actor),
+) -> JobView:
+    """Submit an isolated public YouTube fixture without resuming existing work."""
+    _acceptance_run_id(request)
+    if parse_youtube_video_id(body.url) is None:
+        raise HTTPException(status_code=422, detail="acceptance jobs require a YouTube video URL")
+    body = JobCreate(url=body.url, source=ACCEPTANCE_JOB_SOURCE, notify=False)
+    return _create_url_job(body, request, session, actor, create_only=True)
+
+
+def _create_url_job(
+    body: JobCreate, request: Request, session: Session, actor: Actor, *, create_only: bool = False,
+) -> JobView:
     if body.youtube_cookies is not None:
         # Per-job cookies are an owner-attached credential (#308 layer B);
         # machine-bearer and trusted-LAN actors are not tied to a human owner,
@@ -955,14 +989,21 @@ def create_job(
 
     owner = current_owner(request, session)
     correlation_id = request_correlation_id(request)
+    transcripts = select(Transcript).where(Transcript.video_id == video_id)
+    active_jobs = select(Job).where(Job.video_id == video_id, Job.status.in_(_ACTIVE))
+    if not create_only:
+        transcripts = transcripts.where(Transcript.acceptance_run_id.is_(None))
+        active_jobs = active_jobs.where(Job.acceptance_run_id.is_(None))
     done = session.scalar(
         _actor_filter(
-            select(Transcript).where(Transcript.video_id == video_id, Transcript.summary_md.is_not(None)),
+            transcripts.where(Transcript.summary_md.is_not(None)),
             Transcript,
             actor,
         ).order_by(Transcript.id.desc())
     )
     if done is not None:
+        if create_only:
+            raise HTTPException(status_code=409, detail="a completed transcript already exists for the fixture")
         # dedup-done bypasses the cost cap: no new GPU work happens
         return JobView(job_id=done.job_id, url=body.url, video_id=video_id,
                        **_source_fields(body.url),
@@ -970,12 +1011,14 @@ def create_job(
 
     active = session.scalar(
         _actor_filter(
-            select(Job).where(Job.video_id == video_id, Job.status.in_(_ACTIVE)),
+            active_jobs,
             Job,
             actor,
         ).order_by(Job.id.desc())
     )
     if active is not None:
+        if create_only:
+            raise HTTPException(status_code=409, detail="an active job already exists for the fixture")
         # dedup-active also bypasses: the in-flight job is already spending its budget
         return JobView(job_id=active.id, url=active.url, video_id=video_id,
                        **_source_fields(active.url),
@@ -990,12 +1033,14 @@ def create_job(
     # to the caller so they can navigate to it immediately.
     partial = session.scalar(
         _actor_filter(
-            select(Transcript).where(Transcript.video_id == video_id, Transcript.summary_md.is_(None)),
+            transcripts.where(Transcript.summary_md.is_(None)),
             Transcript,
             actor,
         ).order_by(Transcript.id.desc())
     )
     if partial is not None:
+        if create_only:
+            raise HTTPException(status_code=409, detail="a partial transcript already exists for the fixture")
         retry = Job(
             url=body.url, video_id=video_id, status=JobStatus.queued,
             source=body.source,
@@ -1051,6 +1096,7 @@ def create_job(
         source=body.source,
         callback_url=str(body.callback_url) if body.callback_url else None,
         correlation_id=correlation_id,
+        acceptance_run_id=correlation_id if create_only else None,
         summarize=body.summarize,
         notify=body.notify,
         summary_prompt=summary_prompt,
@@ -2198,6 +2244,8 @@ def admin_retry_job(
     job = session.scalar(select(Job).where(Job.id == job_id).with_for_update())
     if job is None:
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    if job.acceptance_run_id is not None:
+        raise HTTPException(status_code=409, detail="run a new acceptance scenario to retry this fixture")
     if job.status not in _TERMINAL:
         raise HTTPException(
             status_code=409,
@@ -2282,6 +2330,42 @@ def admin_delete_job(
                 "POST /admin/jobs/{id}/cancel before deletion."
             ),
         )
+
+    session.delete(job)
+    session.commit()
+    job_log_buffer.discard(job_id)
+    return Response(status_code=204)
+
+
+@router.delete("/admin/acceptance/jobs/{job_id}", status_code=204)
+def delete_acceptance_job(
+    job_id: int,
+    request: Request,
+    share_id: int | None = None,
+    session: Session = Depends(get_session),
+    _actor: Actor = Depends(require_admin_actor),
+) -> Response:
+    """Remove the run's fixture and only the records proven to belong to it."""
+    trace = _acceptance_run_id(request)
+    job = session.scalar(select(Job).where(Job.id == job_id).with_for_update())
+    if job is None:
+        raise HTTPException(status_code=404, detail="acceptance job not found")
+    if job.acceptance_run_id != trace or job.correlation_id != trace:
+        raise HTTPException(status_code=412, detail="job does not belong to this acceptance run")
+    if job.status not in _TERMINAL:
+        raise HTTPException(status_code=409, detail="acceptance job is still active")
+
+    transcript = session.scalar(select(Transcript).where(Transcript.job_id == job.id).with_for_update())
+    if transcript is not None:
+        if transcript.acceptance_run_id != trace:
+            raise HTTPException(status_code=412, detail="transcript does not belong to this acceptance run")
+        # Holding the transcript row lock also prevents a concurrent insert of
+        # a share via its foreign key while we validate and delete this job.
+        links = session.scalars(select(TranscriptShareLink).where(
+            TranscriptShareLink.transcript_id == transcript.id,
+        ).with_for_update()).all()
+        if any(link.id != share_id or link.label != trace or link.revoked_at is None for link in links):
+            raise HTTPException(status_code=412, detail="transcript has an unexpected or active share link")
 
     session.delete(job)
     session.commit()

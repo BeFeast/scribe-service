@@ -164,6 +164,26 @@ curl -s "https://scribe.example/share/<token>.md"          # full text
 curl -s "https://scribe.example/share/<token>.md?part=2"   # chunk N for long transcripts
 ```
 
+## Production acceptance
+
+Run from Scribe's trusted LAN with Bun, Node.js and an existing Chrome DevTools
+Protocol (CDP) endpoint. Set `SCRIBE_VERIFY_CDP_URL` to the endpoint's HTTP
+origin. Production must have the acceptance job API and its schema migration
+deployed. Then run:
+
+```bash
+bun install --cwd scripts --frozen-lockfile
+scripts/verify all
+```
+
+Run `scripts/verify <scenario>` for one scenario from `acceptance/`.
+`copy-for-ai-share` creates its own fixture when run on its own and reuses the
+same transcription during `all`. The extension scenario reports `MANUAL` with
+the setup it needs. Automated runs submit an isolated production job. Cleanup
+verifies ownership of its transcript and share before deleting them. The runner
+prints the directory containing screenshots and `result.json`.
+Set `TMPDIR` to choose where `mktemp` creates that directory.
+
 ## Auth v2
 
 Scribe keeps product authorization in Postgres. Clerk signs humans in; Scribe
