@@ -18,6 +18,7 @@ steps:
     assertions:
       - The job finishes with a transcript ID and the pipeline status chip says done.
       - The Library entry opens that transcript ID and the detail renders a nonempty summary.
+      - The transcript footer shows the ID of the job created by this run.
   - state: The transcript detail is open.
     action: Use Download .md in the Transcript section.
     visible_result: The browser downloads the transcript Markdown.

@@ -207,6 +207,7 @@ async function verifyYoutube() {
   await entry.click();
   await page.waitForURL(`${prod}/#/transcript/${transcriptId}`);
   await page.getByRole("heading", { name: transcript.title, exact: true }).waitFor();
+  assert.equal(await page.getByText(/^job_id:/).innerText(), `job_id: ${jobId}`, "Transcript footer job ID");
   const summary = page.locator(".prose");
   await summary.waitFor();
   assert((await summary.innerText()).trim(), "The visible summary is empty");

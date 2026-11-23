@@ -203,7 +203,7 @@ export function TranscriptDetail({ id, navigate, onRefresh }) {
 
       <div className="hr"/>
       <div className="mono muted" style={{fontSize: 11, display: "flex", gap: 16, flexWrap: "wrap"}}>
-        <span>job_id: <span className="tnum">{t.id + 76}</span></span>
+        <span>job_id: <span className="tnum">{t.job_id ?? "—"}</span></span>
         <span>video_id: {t.video_id}</span>
         <span>vast_cost: {fmtUsd(t.vast_cost)}</span>
         <span>created: {t.created_at.replace("T", " ").replace("Z", "Z")}</span>
@@ -215,8 +215,8 @@ export function TranscriptDetail({ id, navigate, onRefresh }) {
         <div className="dz-text">
           <div className="dz-title">Delete transcript</div>
           <div className="dz-sub">
-            Removes the row plus its shortlinks. The owning job ({t.id + 76}) is kept;
-            resubmitting the same video will re-run the full pipeline (~{fmtUsd(t.vast_cost || 0.02)}).
+            Removes the row plus its shortlinks. {t.job_id != null && <>The owning job ({t.job_id}) is kept. </>}
+            Resubmitting the same video will re-run the full pipeline (~{fmtUsd(t.vast_cost || 0.02)}).
           </div>
         </div>
         {deleteConfirm ? (
