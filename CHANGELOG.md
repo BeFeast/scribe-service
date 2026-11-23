@@ -4,6 +4,12 @@ All notable changes to this project are documented here. Each `vX.Y.Z`
 section is generated per release from the merged pull-request titles in the
 tag range. See the README for how a release is cut.
 
+## [v0.25.4] - 2026-11-24
+
+_Bump: patch_
+
+- fix(spa): display the owning transcript job ID (#497)
+
 ## [v0.25.3] - 2026-11-24
 
 _Bump: patch_
